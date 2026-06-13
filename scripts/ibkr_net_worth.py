@@ -140,7 +140,11 @@ def net_liquidation_value(ledger: dict[str, Any]) -> float:
             return value
 
     return sum(
-        as_float(entry.get("netliquidationvalue")) / as_float(entry.get("exchangerate"), 1.0)
+        to_base_currency(
+            as_float(entry.get("netliquidationvalue")),
+            str(entry.get("currency") or currency),
+            exchange_rates(ledger),
+        )
         for entry in ledger.values()
         if isinstance(entry, dict)
     )
@@ -160,7 +164,7 @@ def to_base_currency(value: float, currency: str, rates: dict[str, float]) -> fl
     rate = rates.get(currency, 1.0)
     if rate == 0:
         return value
-    return value / rate
+    return value * rate
 
 
 def cash_assets(account_id_value: str, ledger: dict[str, Any]) -> list[Asset]:
