@@ -64,3 +64,36 @@ brokerage session and are prepared for IBKR to disconnect competing sessions.
 
 Position values and cash balances are converted into the account base currency
 using ledger exchange rates before percentages are calculated.
+
+## Trading 212 Net Worth Percentages
+
+The Trading 212 script prints the same net worth percentage table using the
+Trading 212 public API. Pass the API key, API secret, and account id on the
+command line so credentials are not stored in this repository or in a config
+file.
+
+```powershell
+python .\scripts\trading212_net_worth.py --api-key "YOUR_API_KEY" --api-secret "YOUR_API_SECRET" --account-id "YOUR_ACCOUNT_ID"
+```
+
+For a demo account:
+
+```powershell
+python .\scripts\trading212_net_worth.py --api-key "YOUR_DEMO_API_KEY" --api-secret "YOUR_DEMO_API_SECRET" --account-id "YOUR_DEMO_ACCOUNT_ID" --demo
+```
+
+Optional arguments:
+
+```powershell
+python .\scripts\trading212_net_worth.py --base-url https://live.trading212.com/api/v0
+python .\scripts\trading212_net_worth.py --skip-metadata
+python .\scripts\trading212_net_worth.py --timeout 30
+python .\scripts\trading212_net_worth.py --user-agent "Mozilla/5.0 ..."
+```
+
+The script calls:
+
+- `GET /equity/account/summary` to read account currency, cash, and total value.
+- `GET /equity/positions` to read open positions.
+- `GET /equity/metadata/instruments` to display instrument currencies unless
+  `--skip-metadata` is used.

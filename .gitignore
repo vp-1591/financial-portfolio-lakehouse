@@ -2,4 +2,4 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 pytest-cache-files-*/
-client-portal-gateway/
+client-portal-gateway-ibkr/
