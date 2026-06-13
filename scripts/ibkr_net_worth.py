@@ -27,6 +27,15 @@ class IbkrError(RuntimeError):
     pass
 
 
+class IbkrHttpError(IbkrError):
+    def __init__(self, method: str, url: str, code: int, details: str) -> None:
+        self.method = method
+        self.url = url
+        self.code = code
+        self.details = details
+        super().__init__(f"{method} {url} failed: HTTP {code} {details}")
+
+
 @dataclass(frozen=True)
 class Asset:
     account_id: str
@@ -58,7 +67,7 @@ class IbkrClient:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="replace")
-            raise IbkrError(f"{method} {url} failed: HTTP {exc.code} {details}") from exc
+            raise IbkrHttpError(method, url, exc.code, details) from exc
         except urllib.error.URLError as exc:
             raise IbkrError(
                 f"{method} {url} failed: {exc.reason}. Is the IBKR Client Portal "
@@ -73,9 +82,34 @@ class IbkrClient:
             raise IbkrError(f"{method} {url} returned non-JSON response: {raw[:200]}") from exc
 
     def auth_status(self) -> dict[str, Any]:
-        status = self.request("POST", "/iserver/auth/status", {})
+        try:
+            status = self.request("POST", "/iserver/auth/status", {})
+        except IbkrHttpError as exc:
+            if exc.code == 401:
+                raise IbkrError(
+                    "IBKR brokerage session is not authenticated. This endpoint "
+                    "requires the single active brokerage session for your username; "
+                    "log out of TWS/Client Portal/IBKR Mobile or approve resetting "
+                    "the other session, then reauthenticate the gateway."
+                ) from exc
+            raise
         if not isinstance(status, dict):
             raise IbkrError("Unexpected authentication status response.")
+        return status
+
+    def sso_validate(self) -> dict[str, Any]:
+        try:
+            status = self.request("GET", "/sso/validate")
+        except IbkrHttpError as exc:
+            if exc.code == 401:
+                raise IbkrError(
+                    "IBKR gateway is not logged in. Open https://localhost:5000 "
+                    "on this machine, complete login, and wait for the page to show "
+                    "'Client login succeeds' before running the script."
+                ) from exc
+            raise
+        if not isinstance(status, dict):
+            raise IbkrError("Unexpected SSO validation response.")
         return status
 
     def accounts(self) -> list[dict[str, Any]]:
@@ -275,9 +309,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-auth-check",
         action="store_true",
-        help="Skip /iserver/auth/status before reading portfolio data.",
+        help="Skip gateway session validation before reading portfolio data.",
+    )
+    parser.add_argument(
+        "--require-brokerage-session",
+        action="store_true",
+        help=(
+            "Require /iserver/auth/status before reading portfolio data. "
+            "This can conflict with TWS, Client Portal, or IBKR Mobile because "
+            "IBKR allows one brokerage session per username."
+        ),
     )
     return parser.parse_args()
+
+
+def validate_gateway_session(client: IbkrClient, require_brokerage_session: bool) -> None:
+    if require_brokerage_session:
+        status = client.auth_status()
+        if not status.get("authenticated"):
+            message = status.get("message") or "not authenticated"
+            raise IbkrError(
+                f"IBKR brokerage session is not authenticated ({message}). "
+                "Open the gateway in your browser and sign in first."
+            )
+        return
+
+    status = client.sso_validate()
+    if not status.get("RESULT"):
+        raise IbkrError(
+            "IBKR gateway SSO session is not valid. Open the gateway in your "
+            "browser and sign in first."
+        )
 
 
 def main() -> int:
@@ -286,13 +348,7 @@ def main() -> int:
 
     try:
         if not args.skip_auth_check:
-            status = client.auth_status()
-            if not status.get("authenticated"):
-                message = status.get("message") or "not authenticated"
-                raise IbkrError(
-                    f"IBKR gateway session is not authenticated ({message}). "
-                    "Open the gateway in your browser and sign in first."
-                )
+            validate_gateway_session(client, args.require_brokerage_session)
 
         started = time.monotonic()
         assets, net_worth = load_assets(client, args.account)

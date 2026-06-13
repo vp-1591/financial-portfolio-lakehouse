@@ -19,7 +19,23 @@ Web API and prints each position and cash balance as a percentage of net worth.
 
 4. Open `https://localhost:5000` in a browser on the same machine and sign in.
    The local gateway uses a self-signed certificate by default, so the browser
-   warning is expected for localhost.
+   warning is expected for localhost. After approving the mobile notification or
+   QR login, wait until the gateway page reports that the client login succeeded.
+
+The script validates the gateway SSO session with `GET /sso/validate` before it
+reads portfolio data. It does not require the `/iserver` brokerage session by
+default, because IBKR allows only one active brokerage session per username. If
+you log in to TWS, Client Portal, or the IBKR mobile app, IBKR may ask to reset
+other sessions and the gateway brokerage session can be invalidated. In that
+case the portfolio script can still work as long as the gateway SSO session is
+valid.
+
+If the browser remains stuck on the QR-code login page after mobile approval,
+restart the Client Portal Gateway, reopen `https://localhost:5000`, and complete
+login there before running the script. A raw `HTTP 401` from
+`/iserver/auth/status` usually means the brokerage session was not established or
+was taken over by another IBKR product, not that the local Python script failed
+to scan the QR code.
 
 ### Run
 
@@ -32,14 +48,19 @@ Optional arguments:
 ```powershell
 python .\scripts\ibkr_net_worth.py --account U1234567
 python .\scripts\ibkr_net_worth.py --base-url https://localhost:5001/v1/api
+python .\scripts\ibkr_net_worth.py --require-brokerage-session
 ```
 
 The script calls:
 
-- `POST /iserver/auth/status` to verify the gateway session.
+- `GET /sso/validate` to verify the gateway login session.
 - `GET /portfolio/accounts` to discover accounts.
 - `GET /portfolio2/{accountId}/positions` to fetch near-real-time positions.
 - `GET /portfolio/{accountId}/ledger` to fetch cash and net liquidation value.
+
+With `--require-brokerage-session`, the script also calls
+`POST /iserver/auth/status`. Use that only when you need to verify the active
+brokerage session and are prepared for IBKR to disconnect competing sessions.
 
 Position values and cash balances are converted into the account base currency
 using ledger exchange rates before percentages are calculated.

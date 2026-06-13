@@ -33,6 +33,19 @@ class FakeClient:
         }
 
 
+class FakeSessionClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def sso_validate(self) -> dict[str, object]:
+        self.calls.append("sso_validate")
+        return {"RESULT": True}
+
+    def auth_status(self) -> dict[str, object]:
+        self.calls.append("auth_status")
+        return {"authenticated": True}
+
+
 def test_to_base_currency_uses_exchange_rate_as_base_value_per_unit() -> None:
     assert ibkr.to_base_currency(100.0, "EUR", {"EUR": 1.2}) == 120.0
 
@@ -55,3 +68,19 @@ def test_load_assets_percentages_sum_to_net_worth_after_currency_conversion() ->
         ("CASH EUR", 120.0),
     ]
     assert sum(asset.value / net_worth * 100 for asset in assets) == 100.0
+
+
+def test_validate_gateway_session_uses_sso_for_portfolio_reads_by_default() -> None:
+    client = FakeSessionClient()
+
+    ibkr.validate_gateway_session(client, require_brokerage_session=False)
+
+    assert client.calls == ["sso_validate"]
+
+
+def test_validate_gateway_session_can_require_brokerage_session() -> None:
+    client = FakeSessionClient()
+
+    ibkr.validate_gateway_session(client, require_brokerage_session=True)
+
+    assert client.calls == ["auth_status"]
