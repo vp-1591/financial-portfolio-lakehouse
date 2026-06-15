@@ -30,6 +30,9 @@ class FakeIbkrClientWithBasePlaceholder:
             }
         ]
 
+    def contract_info(self, conid: object) -> dict[str, object]:
+        raise AssertionError("contract info should not be requested without conid")
+
     def ledger(self, account_id: str) -> dict[str, dict[str, object]]:
         return {
             "BASE": {
@@ -38,6 +41,60 @@ class FakeIbkrClientWithBasePlaceholder:
                 "exchangerate": 1.0,
             }
         }
+
+
+class FakeIbkrClientWithContractInfo:
+    def __init__(self, base_url: str, verify_tls: bool, timeout: float) -> None:
+        self.base_url = base_url
+        self.verify_tls = verify_tls
+        self.timeout = timeout
+
+    def accounts(self) -> list[dict[str, str]]:
+        return [{"accountId": "U123"}]
+
+    def positions(self, account_id: str) -> list[dict[str, object]]:
+        return [
+            {
+                "conid": 208813719,
+                "contractDesc": "GOOGL",
+                "currency": "USD",
+                "mktValue": 100.0,
+            }
+        ]
+
+    def contract_info(self, conid: object) -> dict[str, object]:
+        assert conid == "208813719"
+        return {"companyName": "Alphabet Inc Class A"}
+
+    def ledger(self, account_id: str) -> dict[str, dict[str, object]]:
+        return {
+            "BASE": {
+                "currency": "EUR",
+                "netliquidationvalue": 100.0,
+                "exchangerate": 1.0,
+            },
+            "USD": {
+                "currency": "USD",
+                "cashbalance": 0.0,
+                "exchangerate": 0.9,
+            },
+        }
+
+
+class FakeTrading212Client:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        api_secret: str,
+        timeout: float,
+        user_agent: str,
+    ) -> None:
+        self.base_url = base_url
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.timeout = timeout
+        self.user_agent = user_agent
 
 
 def test_aggregate_percentages_converts_and_groups_by_ticker_and_broker() -> None:
@@ -54,8 +111,9 @@ def test_aggregate_percentages_converts_and_groups_by_ticker_and_broker() -> Non
                 "VWCE",
                 "USD",
                 50.0,
-                isin="IE00BK5BQT80",
-                name="Vanguard FTSE All-World UCITS ETF",
+                identifier="ISIN:IE00BK5BQT80",
+                security_currency="USD",
+                description="Vanguard FTSE All-World UCITS ETF",
             ),
             connectors.Holding("XTB", "CASH PLN", "PLN", 80.0),
             connectors.Holding("IBKR", "AAPL", "EUR", 100.0),
@@ -64,15 +122,71 @@ def test_aggregate_percentages_converts_and_groups_by_ticker_and_broker() -> Non
     )
 
     assert rows == [
-        (
+        connectors.PortfolioRow(
             "VWCE",
             50.0,
             "Trading 212",
-            "IE00BK5BQT80",
+            "ISIN:IE00BK5BQT80",
+            "USD",
             "Vanguard FTSE All-World UCITS ETF",
         ),
-        ("AAPL", 41.66666666666667, "IBKR", "", ""),
-        ("CASH PLN", 8.333333333333332, "XTB", "", ""),
+        connectors.PortfolioRow("AAPL", 41.66666666666667, "IBKR", "-", "-", "-"),
+        connectors.PortfolioRow("CASH PLN", 8.333333333333332, "XTB", "-", "-", "-"),
+    ]
+
+
+def test_trading212_holdings_display_security_currency_not_wallet_currency(
+    monkeypatch,
+) -> None:
+    def fake_load_assets(
+        client: FakeTrading212Client,
+        account_id_value: str,
+        include_metadata: bool,
+    ) -> tuple[list[object], float]:
+        assert include_metadata is True
+        return (
+            [
+                connectors.trading212.Asset(
+                    "T212",
+                    "IS3Nd_EQ",
+                    "iShares Core MSCI World UCITS ETF",
+                    "EQUITY",
+                    "PLN",
+                    100.0,
+                    isin="IE00B4L5Y983",
+                    security_currency="EUR",
+                )
+            ],
+            100.0,
+        )
+
+    monkeypatch.setattr(
+        connectors.trading212,
+        "Trading212Client",
+        FakeTrading212Client,
+    )
+    monkeypatch.setattr(connectors.trading212, "load_assets", fake_load_assets)
+
+    holdings = connectors.load_trading212_holdings(
+        api_key="key",
+        api_secret="secret",
+        account_id="T212",
+        base_url="https://example.test",
+        timeout=20.0,
+        user_agent="agent",
+        include_metadata=True,
+    )
+
+    assert holdings == [
+        connectors.Holding(
+            "Trading 212",
+            "IS3N",
+            "PLN",
+            100.0,
+            identifier="ISIN:IE00B4L5Y983",
+            security_currency="EUR",
+            description="iShares Core MSCI World UCITS ETF",
+        )
     ]
 
 
@@ -86,14 +200,23 @@ def test_aggregate_percentages_fills_missing_isin_from_override_map() -> None:
                 "SXR8.DE",
                 "EUR",
                 100.0,
-                name="SXR8.DE",
+                description="SXR8.DE",
             ),
         ],
         converter,
         isin_overrides={"SXR8.DE": "IE00B5BMR087"},
     )
 
-    assert rows == [("SXR8.DE", 100.0, "XTB", "IE00B5BMR087", "SXR8.DE")]
+    assert rows == [
+        connectors.PortfolioRow(
+            "SXR8.DE",
+            100.0,
+            "XTB",
+            "ISIN:IE00B5BMR087",
+            "-",
+            "SXR8.DE",
+        )
+    ]
 
 
 def test_load_isin_map_reads_ticker_and_isin_columns() -> None:
@@ -109,17 +232,25 @@ def test_load_isin_map_reads_ticker_and_isin_columns() -> None:
         path.unlink(missing_ok=True)
 
 
-def test_portfolio_output_contains_requested_ai_context_columns(capsys) -> None:
+def test_portfolio_output_contains_requested_identifier_context_columns(capsys) -> None:
     portfolio_percentages.print_rows(
         [
-            (
+            connectors.PortfolioRow(
                 "VWCE",
                 75.0,
                 "Trading 212",
-                "IE00BK5BQT80",
+                "ISIN:IE00BK5BQT80",
+                "EUR",
                 "Vanguard FTSE All-World UCITS ETF",
             ),
-            ("AAPL", 25.0, "IBKR", "US0378331005", "Apple Inc."),
+            connectors.PortfolioRow(
+                "AAPL",
+                25.0,
+                "IBKR",
+                "IBKR:265598",
+                "USD",
+                "Apple Inc.",
+            ),
         ]
     )
 
@@ -128,14 +259,16 @@ def test_portfolio_output_contains_requested_ai_context_columns(capsys) -> None:
     assert "Ticker" in output
     assert "%" in output
     assert "Broker" in output
-    assert "ISIN" in output
-    assert "Name" in output
+    assert "Identifier" in output
+    assert "Ccy" in output
+    assert "Description" in output
+    assert "Name" not in output
     assert "Value" not in output
-    assert "Currency" not in output
     assert "Net worth" not in output
     assert "VWCE" in output
     assert "75.00%" in output
-    assert "IE00BK5BQT80" in output
+    assert "ISIN:IE00BK5BQT80" in output
+    assert "IBKR:265598" in output
     assert "Vanguard FTSE All-World UCITS ETF" in output
 
 
@@ -180,7 +313,39 @@ def test_ibkr_base_placeholder_uses_explicit_base_currency(monkeypatch) -> None:
     )
 
     assert holdings == [
-        connectors.Holding("IBKR", "VWCE", "EUR", 100.0, name="VWCE")
+        connectors.Holding(
+            "IBKR",
+            "VWCE",
+            "EUR",
+            100.0,
+            security_currency="EUR",
+            description="VWCE",
+        )
+    ]
+
+
+def test_ibkr_holdings_use_conid_identifier_and_contract_description(monkeypatch) -> None:
+    monkeypatch.setattr(connectors.ibkr, "IbkrClient", FakeIbkrClientWithContractInfo)
+
+    holdings = connectors.load_ibkr_holdings(
+        base_url="https://localhost:5000/v1/api",
+        account=None,
+        verify_tls=False,
+        timeout=20.0,
+        skip_auth_check=True,
+        require_brokerage_session=False,
+    )
+
+    assert holdings == [
+        connectors.Holding(
+            "IBKR",
+            "GOOGL",
+            "EUR",
+            90.0,
+            identifier="IBKR:208813719",
+            security_currency="USD",
+            description="Alphabet Inc Class A",
+        )
     ]
 
 

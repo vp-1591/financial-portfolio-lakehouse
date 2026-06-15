@@ -32,8 +32,19 @@ class Holding:
     ticker: str
     currency: str
     value: float
-    isin: str = ""
-    name: str = ""
+    identifier: str = ""
+    security_currency: str = ""
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class PortfolioRow:
+    ticker: str
+    percentage: float
+    broker: str
+    identifier: str
+    security_currency: str
+    description: str
 
 
 class CurrencyConverter:
@@ -171,8 +182,9 @@ def load_trading212_holdings(
             normalize_trading212_ticker(asset.label),
             asset.currency,
             asset.value,
-            isin=asset.isin,
-            name=asset.name,
+            identifier=format_identifier("ISIN", asset.isin),
+            security_currency=asset.security_currency,
+            description=asset.name,
         )
         for asset in assets
     ]
@@ -188,8 +200,9 @@ def load_xtb_holdings(report_paths: Iterable[Path]) -> list[Holding]:
                 asset.label,
                 asset.currency,
                 asset.value,
-                isin=asset.isin,
-                name=asset.name,
+                identifier=format_identifier("ISIN", asset.isin),
+                security_currency=asset.currency if asset.label.startswith("CASH ") else "",
+                description=asset.name,
             )
             for asset in assets
         )
@@ -224,14 +237,17 @@ def load_ibkr_holdings(
             if value == 0:
                 continue
             currency = real_currency(position.get("currency"), base_currency)
+            conid = ibkr.position_conid(position)
+            contract_info = load_ibkr_contract_info(client, conid)
             holdings.append(
                 Holding(
                     "IBKR",
                     ibkr.position_label(position),
                     base_currency,
                     ibkr.to_base_currency(value, currency, rates),
-                    isin=ibkr.position_isin(position),
-                    name=ibkr.position_label(position),
+                    identifier=format_identifier("IBKR", conid),
+                    security_currency=currency,
+                    description=ibkr.position_description(position, contract_info),
                 )
             )
 
@@ -248,11 +264,28 @@ def load_ibkr_holdings(
                     f"CASH {currency_code}",
                     base_currency,
                     ibkr.to_base_currency(cash_balance, currency_code, rates),
-                    name=f"Cash {currency_code}",
+                    security_currency=currency_code,
+                    description=f"Cash {currency_code}",
                 )
             )
 
     return holdings
+
+
+def load_ibkr_contract_info(
+    client: ibkr.IbkrClient,
+    conid: str,
+) -> dict[str, object]:
+    if not conid:
+        return {}
+    try:
+        return client.contract_info(conid)
+    except ibkr.IbkrError:
+        return {}
+
+
+def format_identifier(kind: str, value: str) -> str:
+    return f"{kind}:{value}" if value else ""
 
 
 def real_currency(value: object, fallback: str) -> str:
@@ -319,25 +352,29 @@ def aggregate_percentages(
     holdings: Iterable[Holding],
     converter: CurrencyConverter,
     isin_overrides: dict[str, str] | None = None,
-) -> list[tuple[str, float, str, str, str]]:
+) -> list[PortfolioRow]:
     normalized_isin_overrides = {
-        normalize_isin_lookup_key(ticker): isin
+        normalize_isin_lookup_key(ticker): format_identifier("ISIN", isin)
         for ticker, isin in (isin_overrides or {}).items()
     }
     totals: dict[tuple[str, str], float] = {}
-    metadata: dict[tuple[str, str], tuple[str, str]] = {}
+    metadata: dict[tuple[str, str], tuple[str, str, str]] = {}
     for holding in holdings:
         converted_value = converter.convert(holding.value, holding.currency)
         key = (holding.ticker, holding.broker)
         totals[key] = totals.get(key, 0.0) + converted_value
-        current_isin, current_name = metadata.get(key, ("", ""))
+        current_identifier, current_currency, current_description = metadata.get(
+            key,
+            ("", "", ""),
+        )
         override_isin = normalized_isin_overrides.get(
             normalize_isin_lookup_key(holding.ticker),
             "",
         )
         metadata[key] = (
-            current_isin or holding.isin or override_isin,
-            current_name or holding.name,
+            current_identifier or holding.identifier or override_isin,
+            current_currency or holding.security_currency,
+            current_description or holding.description,
         )
 
     net_worth = sum(totals.values())
@@ -345,14 +382,15 @@ def aggregate_percentages(
         raise PortfolioConnectorError("Net worth is zero; cannot calculate percentages.")
 
     rows = [
-        (
-            ticker,
-            value / net_worth * 100,
-            broker,
-            metadata.get((ticker, broker), ("", ""))[0],
-            metadata.get((ticker, broker), ("", ""))[1],
+        PortfolioRow(
+            ticker=ticker,
+            percentage=value / net_worth * 100,
+            broker=broker,
+            identifier=metadata.get((ticker, broker), ("", "", ""))[0] or "-",
+            security_currency=metadata.get((ticker, broker), ("", "", ""))[1] or "-",
+            description=metadata.get((ticker, broker), ("", "", ""))[2] or "-",
         )
         for (ticker, broker), value in totals.items()
         if value != 0
     ]
-    return sorted(rows, key=lambda row: abs(row[1]), reverse=True)
+    return sorted(rows, key=lambda row: abs(row.percentage), reverse=True)

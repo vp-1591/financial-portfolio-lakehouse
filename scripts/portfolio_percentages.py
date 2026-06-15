@@ -179,16 +179,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def print_rows(rows: list[tuple[str, float, str, str, str]]) -> None:
-    print(f"{'Ticker':<18} {'%':>8} {'Broker':<12} {'ISIN':<12} {'Name':<40}")
-    print("-" * 95)
-    for ticker, percentage, broker, isin, name in rows:
+def print_rows(rows: list[connectors.PortfolioRow]) -> None:
+    print(
+        f"{'Ticker':<12} {'%':>8} {'Broker':<12} "
+        f"{'Identifier':<20} {'Ccy':<4} {'Description':<40}"
+    )
+    print("-" * 104)
+    for row in rows:
         print(
-            f"{ticker[:18]:<18} "
-            f"{percentage:>7.2f}% "
-            f"{broker:<12} "
-            f"{isin[:12]:<12} "
-            f"{name[:40]:<40}"
+            f"{row.ticker[:12]:<12} "
+            f"{row.percentage:>7.2f}% "
+            f"{row.broker:<12} "
+            f"{row.identifier[:20]:<20} "
+            f"{row.security_currency[:4]:<4} "
+            f"{row.description[:40]:<40}"
         )
 
 

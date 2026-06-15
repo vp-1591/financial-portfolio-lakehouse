@@ -130,11 +130,22 @@ falls back to the sum of parsed positions and cash.
 
 The consolidated script reads Trading 212, one or more XTB Excel reports, and
 IBKR Client Portal Gateway data, converts all rows to one target currency, and
-prints ticker, percentage, broker, ISIN, and instrument name. Trading 212 broker
-tickers such as `IS3Nd_EQ` and `VWCE_DE_EQ` are normalized to cleaner display
-tickers such as `IS3N` and `VWCE` while ISIN/name metadata is kept for analysis.
-When broker data does not include an ISIN, pass explicit ticker-to-ISIN mappings
-with `--isin` or `--isin-map-file`.
+prints ticker, percentage, broker, identifier, security currency, and
+description. Trading 212 broker tickers such as `IS3Nd_EQ` and `VWCE_DE_EQ` are
+normalized to cleaner display tickers such as `IS3N` and `VWCE`.
+
+Identifiers use the best broker-native value available:
+
+- Trading 212 and XTB use `ISIN:...` when broker data includes an ISIN.
+- IBKR uses `IBKR:<conid>`, because `conid` is IBKR's native unique contract
+  identifier and is more reliable than ISIN in Client Portal position data.
+- Rows without an available identifier display `-`.
+
+IBKR descriptions are enriched from `/iserver/contract/{conid}/info` when the
+gateway allows that endpoint; otherwise the script falls back to position
+description fields. XTB exports may not include instrument currency or
+description, so those rows can show `-` for currency and the symbol as
+description.
 
 ```powershell
 python .\scripts\portfolio_percentages.py `
@@ -143,10 +154,25 @@ python .\scripts\portfolio_percentages.py `
   --trading212-account-id "YOUR_ACCOUNT_ID" `
   --xtb-file "C:\path\to\xtb-report-1.xlsx" `
   --xtb-file "C:\path\to\xtb-report-2.xlsx" `
-  --isin SXR8.DE=IE00B5BMR087 `
-  --isin-map-file "C:\path\to\isins.csv" `
   --ibkr-base-currency EUR `
   --target-currency EUR
+```
+
+Example output:
+
+```text
+Ticker              % Broker       Identifier           Ccy  Description
+----------------------------------------------------------------------------------------
+GOOGL           6.19% IBKR         IBKR:208813719       USD  Alphabet Inc Class A
+IS3N            6.50% Trading 212  ISIN:IE00...         EUR  iShares Core MSCI World
+VVSM.DE         3.70% XTB          -                    -    VVSM.DE
+```
+
+When broker data does not include an ISIN, you can still pass explicit
+ticker-to-ISIN mappings with `--isin` or `--isin-map-file`:
+
+```powershell
+python .\scripts\portfolio_percentages.py ... --isin SXR8.DE=IE00B5BMR087 --isin-map-file "C:\path\to\isins.csv"
 ```
 
 The ISIN map CSV must contain `ticker` and `isin` columns:

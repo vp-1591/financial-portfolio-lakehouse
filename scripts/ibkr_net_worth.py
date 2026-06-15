@@ -44,6 +44,8 @@ class Asset:
     currency: str
     value: float
     isin: str = ""
+    conid: str = ""
+    description: str = ""
 
 
 class IbkrClient:
@@ -135,6 +137,13 @@ class IbkrClient:
             raise IbkrError(f"Unexpected ledger response for account {account_id}.")
         return ledger
 
+    def contract_info(self, conid: object) -> dict[str, Any]:
+        path_conid = urllib.parse.quote(str(conid), safe="")
+        details = self.request("GET", f"/iserver/contract/{path_conid}/info")
+        if not isinstance(details, dict):
+            raise IbkrError(f"Unexpected contract info response for conid {conid}.")
+        return details
+
 
 def as_float(value: Any, default: float = 0.0) -> float:
     if value in (None, ""):
@@ -165,6 +174,43 @@ def position_label(position: dict[str, Any]) -> str:
         if value not in (None, ""):
             return str(value)
     return "UNKNOWN"
+
+
+def position_conid(position: dict[str, Any]) -> str:
+    value = position.get("conid")
+    return str(value) if value not in (None, "") else ""
+
+
+def first_value(data: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def position_description(
+    position: dict[str, Any],
+    contract_info: dict[str, Any] | None = None,
+) -> str:
+    contract_info = contract_info or {}
+    return (
+        first_value(
+            contract_info,
+            (
+                "companyName",
+                "companyHeader",
+                "description",
+                "contractDesc",
+                "symbol",
+            ),
+        )
+        or first_value(
+            position,
+            ("companyName", "description", "fullName", "contractDesc", "symbol"),
+        )
+        or position_label(position)
+    )
 
 
 def position_isin(position: dict[str, Any]) -> str:
@@ -270,6 +316,8 @@ def load_assets(client: IbkrClient, selected_account: str | None) -> tuple[list[
                     currency=currency,
                     value=to_base_currency(value, currency, rates),
                     isin=position_isin(position),
+                    conid=position_conid(position),
+                    description=position_description(position),
                 )
             )
         assets.extend(cash_assets(account_id_value, ledger))

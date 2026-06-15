@@ -82,6 +82,21 @@ def test_position_isin_reads_common_ibkr_fields() -> None:
     assert ibkr.position_isin({"secIdType": "CUSIP", "secId": "037833100"}) == ""
 
 
+def test_position_identifier_and_description_helpers() -> None:
+    position = {
+        "conid": 208813719,
+        "contractDesc": "GOOGL",
+        "currency": "USD",
+    }
+
+    assert ibkr.position_conid(position) == "208813719"
+    assert (
+        ibkr.position_description(position, {"companyName": "Alphabet Inc Class A"})
+        == "Alphabet Inc Class A"
+    )
+    assert ibkr.position_description(position) == "GOOGL"
+
+
 def test_validate_gateway_session_uses_sso_for_portfolio_reads_by_default() -> None:
     client = FakeSessionClient()
 

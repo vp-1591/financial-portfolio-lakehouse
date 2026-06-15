@@ -56,6 +56,7 @@ class Asset:
     currency: str
     value: float
     isin: str = ""
+    security_currency: str = ""
 
 
 class Trading212Client:
@@ -326,6 +327,31 @@ def position_currency(
     return fallback
 
 
+def position_security_currency(
+    position: dict[str, Any],
+    instrument_currencies: dict[str, str],
+    fallback: str,
+) -> str:
+    instrument = nested_dict(position, "instrument")
+    currency = first_value(instrument, ("currencyCode", "currency"))
+    if currency:
+        return str(currency)
+
+    ticker = first_value(instrument, ("ticker",))
+    if ticker and str(ticker) in instrument_currencies:
+        return instrument_currencies[str(ticker)]
+
+    currency = first_value(position, ("currencyCode", "currency"))
+    if currency:
+        return str(currency)
+
+    ticker = first_value(position, ("ticker",))
+    if ticker and str(ticker) in instrument_currencies:
+        return instrument_currencies[str(ticker)]
+
+    return fallback
+
+
 def load_assets(
     client: Trading212Client,
     account_id_value: str,
@@ -353,6 +379,11 @@ def load_assets(
                 currency=position_currency(position, instrument_currencies, currency),
                 value=value,
                 isin=position_isin(position, instrument_isins),
+                security_currency=position_security_currency(
+                    position,
+                    instrument_currencies,
+                    currency,
+                ),
             )
         )
 
@@ -366,6 +397,7 @@ def load_assets(
                 asset_class="CASH",
                 currency=currency,
                 value=cash_balance,
+                security_currency=currency,
             )
         )
 

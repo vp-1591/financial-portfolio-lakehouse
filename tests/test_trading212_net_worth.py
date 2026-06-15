@@ -33,6 +33,34 @@ class FakeClient:
         return [{"ticker": "VUAA", "currencyCode": "USD", "name": "Vanguard ETF"}]
 
 
+class FakeClientWithWalletCurrency:
+    def account_summary(self) -> dict[str, object]:
+        return {"currencyCode": "EUR", "free": 0.0, "total": 100.0}
+
+    def positions(self) -> list[dict[str, object]]:
+        return [
+            {
+                "instrument": {
+                    "ticker": "IS3Nd_EQ",
+                    "currencyCode": "EUR",
+                    "name": "iShares Core MSCI World UCITS ETF",
+                    "isin": "IE00B4L5Y983",
+                },
+                "walletImpact": {"currency": "PLN", "currentValue": 100.0},
+            }
+        ]
+
+    def instruments(self) -> list[dict[str, object]]:
+        return [
+            {
+                "ticker": "IS3Nd_EQ",
+                "currencyCode": "EUR",
+                "name": "iShares Core MSCI World UCITS ETF",
+                "isin": "IE00B4L5Y983",
+            }
+        ]
+
+
 class FakeClientWithMarketValue:
     def account_summary(self) -> dict[str, object]:
         return {"currencyCode": "GBP", "free": 30.0}
@@ -61,8 +89,24 @@ def test_load_assets_builds_same_table_shape_from_positions_and_cash() -> None:
 
     assert net_worth == 225.0
     assert assets == [
-        trading212.Asset("T212-1", "VUAA", "Vanguard ETF", "EQUITY", "USD", 200.0),
-        trading212.Asset("T212-1", "CASH EUR", "Cash EUR", "CASH", "EUR", 25.0),
+        trading212.Asset(
+            "T212-1",
+            "VUAA",
+            "Vanguard ETF",
+            "EQUITY",
+            "USD",
+            200.0,
+            security_currency="USD",
+        ),
+        trading212.Asset(
+            "T212-1",
+            "CASH EUR",
+            "Cash EUR",
+            "CASH",
+            "EUR",
+            25.0,
+            security_currency="EUR",
+        ),
     ]
 
 
@@ -75,8 +119,45 @@ def test_position_value_prefers_api_market_value_when_available() -> None:
 
     assert net_worth == 180.0
     assert assets == [
-        trading212.Asset("T212-2", "ABC", "ABC", "EQUITY", "GBP", 150.0),
-        trading212.Asset("T212-2", "CASH GBP", "Cash GBP", "CASH", "GBP", 30.0),
+        trading212.Asset(
+            "T212-2",
+            "ABC",
+            "ABC",
+            "EQUITY",
+            "GBP",
+            150.0,
+            security_currency="GBP",
+        ),
+        trading212.Asset(
+            "T212-2",
+            "CASH GBP",
+            "Cash GBP",
+            "CASH",
+            "GBP",
+            30.0,
+            security_currency="GBP",
+        ),
+    ]
+
+
+def test_load_assets_keeps_wallet_currency_separate_from_security_currency() -> None:
+    assets, _net_worth = trading212.load_assets(
+        FakeClientWithWalletCurrency(),
+        account_id_value="T212-3",
+        include_metadata=True,
+    )
+
+    assert assets == [
+        trading212.Asset(
+            "T212-3",
+            "IS3Nd_EQ",
+            "iShares Core MSCI World UCITS ETF",
+            "EQUITY",
+            "PLN",
+            100.0,
+            isin="IE00B4L5Y983",
+            security_currency="EUR",
+        )
     ]
 
 
@@ -98,6 +179,7 @@ def test_position_mapping_uses_documented_nested_position_schema() -> None:
     assert trading212.position_isin(position, {}) == "IE00BK5BQT80"
     assert trading212.position_value(position) == 1290.0
     assert trading212.position_currency(position, {}, "EUR") == "PLN"
+    assert trading212.position_security_currency(position, {}, "EUR") == "EUR"
 
 
 def test_position_isin_uses_instrument_metadata_lookup() -> None:
