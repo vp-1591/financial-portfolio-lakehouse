@@ -97,3 +97,31 @@ The script calls:
 - `GET /equity/positions` to read open positions.
 - `GET /equity/metadata/instruments` to display instrument currencies unless
   `--skip-metadata` is used.
+
+## XTB Net Worth Percentages
+
+The XTB script prints the same net worth percentage table from an exported XTB
+Excel report. Pass an absolute path to the `.xlsx` file so the script can be run
+from any working directory.
+
+```powershell
+python .\scripts\xtb_net_worth.py --file "C:\Users\you\Downloads\account_00000000_en_xlsx_2005-12-31_2026-06-15.xlsx"
+```
+
+Optional arguments:
+
+```powershell
+python .\scripts\xtb_net_worth.py --file "C:\path\to\report.xlsx" --account-id "XTB-1"
+```
+
+The script reads:
+
+- The `OPEN POSITION...` sheet to parse account id, currency, balance, equity,
+  and open positions.
+- The `CASH OPERATION...` sheet as a fallback source for cash when the open
+  position sheet does not contain a balance.
+
+Each XTB open-position row is a lot. The script calculates lot value as
+`Purchase value + Gross P/L`, then aggregates lots by symbol so the output has
+one row per asset. Net worth uses the report `Equity` when present, otherwise it
+falls back to the sum of parsed positions and cash.
