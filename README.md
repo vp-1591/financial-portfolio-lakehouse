@@ -125,3 +125,38 @@ Each XTB open-position row is a lot. The script calculates lot value as
 `Purchase value + Gross P/L`, then aggregates lots by symbol so the output has
 one row per asset. Net worth uses the report `Equity` when present, otherwise it
 falls back to the sum of parsed positions and cash.
+
+## Consolidated Ticker Percentages
+
+The consolidated script reads Trading 212, one or more XTB Excel reports, and
+IBKR Client Portal Gateway data, converts all rows to one target currency, and
+prints only ticker, percentage, and broker.
+
+```powershell
+python .\scripts\portfolio_percentages.py `
+  --trading212-api-key "YOUR_API_KEY" `
+  --trading212-api-secret "YOUR_API_SECRET" `
+  --trading212-account-id "YOUR_ACCOUNT_ID" `
+  --xtb-file "C:\path\to\xtb-report-1.xlsx" `
+  --xtb-file "C:\path\to\xtb-report-2.xlsx" `
+  --ibkr-base-currency EUR `
+  --target-currency EUR
+```
+
+`--ibkr-base-currency` is only required when IBKR reports the account base
+currency as the placeholder `BASE` instead of a real ISO currency code.
+
+Missing FX rates are fetched from Frankfurter first, then Yahoo Finance if the
+first provider fails. To avoid network FX lookups or override a rate, pass rates
+where one source-currency unit equals the given target-currency amount:
+
+```powershell
+python .\scripts\portfolio_percentages.py ... --fx-rate USD=0.92 --fx-rate PLN=0.23
+```
+
+To run the live FX integration check:
+
+```powershell
+$env:RUN_LIVE_FX_TESTS = "1"
+python -m pytest tests\test_live_fx.py
+```
