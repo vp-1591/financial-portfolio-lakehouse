@@ -49,7 +49,14 @@ def test_aggregate_percentages_converts_and_groups_by_ticker_and_broker() -> Non
     rows = connectors.aggregate_percentages(
         [
             connectors.Holding("Trading 212", "VWCE", "USD", 100.0),
-            connectors.Holding("Trading 212", "VWCE", "USD", 50.0),
+            connectors.Holding(
+                "Trading 212",
+                "VWCE",
+                "USD",
+                50.0,
+                isin="IE00BK5BQT80",
+                name="Vanguard FTSE All-World UCITS ETF",
+            ),
             connectors.Holding("XTB", "CASH PLN", "PLN", 80.0),
             connectors.Holding("IBKR", "AAPL", "EUR", 100.0),
         ],
@@ -57,17 +64,62 @@ def test_aggregate_percentages_converts_and_groups_by_ticker_and_broker() -> Non
     )
 
     assert rows == [
-        ("VWCE", 50.0, "Trading 212"),
-        ("AAPL", 41.66666666666667, "IBKR"),
-        ("CASH PLN", 8.333333333333332, "XTB"),
+        (
+            "VWCE",
+            50.0,
+            "Trading 212",
+            "IE00BK5BQT80",
+            "Vanguard FTSE All-World UCITS ETF",
+        ),
+        ("AAPL", 41.66666666666667, "IBKR", "", ""),
+        ("CASH PLN", 8.333333333333332, "XTB", "", ""),
     ]
 
 
-def test_portfolio_output_only_contains_ticker_percentage_and_broker(capsys) -> None:
+def test_aggregate_percentages_fills_missing_isin_from_override_map() -> None:
+    converter = connectors.CurrencyConverter("EUR")
+
+    rows = connectors.aggregate_percentages(
+        [
+            connectors.Holding(
+                "XTB",
+                "SXR8.DE",
+                "EUR",
+                100.0,
+                name="SXR8.DE",
+            ),
+        ],
+        converter,
+        isin_overrides={"SXR8.DE": "IE00B5BMR087"},
+    )
+
+    assert rows == [("SXR8.DE", 100.0, "XTB", "IE00B5BMR087", "SXR8.DE")]
+
+
+def test_load_isin_map_reads_ticker_and_isin_columns() -> None:
+    path = ROOT / ".tmp-tests" / "isins.csv"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("ticker,isin\nSXR8.DE,IE00B5BMR087\n", encoding="utf-8")
+
+    try:
+        assert portfolio_percentages.load_isin_map(path) == {
+            "SXR8.DE": "IE00B5BMR087",
+        }
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_portfolio_output_contains_requested_ai_context_columns(capsys) -> None:
     portfolio_percentages.print_rows(
         [
-            ("VWCE", 75.0, "Trading 212"),
-            ("AAPL", 25.0, "IBKR"),
+            (
+                "VWCE",
+                75.0,
+                "Trading 212",
+                "IE00BK5BQT80",
+                "Vanguard FTSE All-World UCITS ETF",
+            ),
+            ("AAPL", 25.0, "IBKR", "US0378331005", "Apple Inc."),
         ]
     )
 
@@ -76,11 +128,22 @@ def test_portfolio_output_only_contains_ticker_percentage_and_broker(capsys) -> 
     assert "Ticker" in output
     assert "%" in output
     assert "Broker" in output
+    assert "ISIN" in output
+    assert "Name" in output
     assert "Value" not in output
     assert "Currency" not in output
     assert "Net worth" not in output
     assert "VWCE" in output
     assert "75.00%" in output
+    assert "IE00BK5BQT80" in output
+    assert "Vanguard FTSE All-World UCITS ETF" in output
+
+
+def test_normalize_trading212_ticker_removes_broker_suffixes() -> None:
+    assert connectors.normalize_trading212_ticker("IS3Nd_EQ") == "IS3N"
+    assert connectors.normalize_trading212_ticker("VWCE_DE_EQ") == "VWCE"
+    assert connectors.normalize_trading212_ticker("CASH EUR") == "CASH EUR"
+    assert connectors.normalize_trading212_ticker("alreadylower") == "alreadylower"
 
 
 def test_ibkr_base_placeholder_requires_explicit_base_currency(monkeypatch) -> None:
@@ -116,7 +179,9 @@ def test_ibkr_base_placeholder_uses_explicit_base_currency(monkeypatch) -> None:
         base_currency_override="EUR",
     )
 
-    assert holdings == [connectors.Holding("IBKR", "VWCE", "EUR", 100.0)]
+    assert holdings == [
+        connectors.Holding("IBKR", "VWCE", "EUR", 100.0, name="VWCE")
+    ]
 
 
 def test_currency_converter_uses_frankfurter_rate(monkeypatch) -> None:

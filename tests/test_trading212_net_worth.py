@@ -86,6 +86,7 @@ def test_position_mapping_uses_documented_nested_position_schema() -> None:
             "ticker": "VWCE_DE_EQ",
             "currencyCode": "EUR",
             "name": "VWCE ETF",
+            "isin": "IE00BK5BQT80",
         },
         "quantity": 3,
         "currentPrice": 100.0,
@@ -94,8 +95,18 @@ def test_position_mapping_uses_documented_nested_position_schema() -> None:
 
     assert trading212.position_label(position) == "VWCE_DE_EQ"
     assert trading212.position_name(position, {}) == "VWCE ETF"
+    assert trading212.position_isin(position, {}) == "IE00BK5BQT80"
     assert trading212.position_value(position) == 1290.0
     assert trading212.position_currency(position, {}, "EUR") == "PLN"
+
+
+def test_position_isin_uses_instrument_metadata_lookup() -> None:
+    position = {"ticker": "VWCE_DE_EQ"}
+
+    assert (
+        trading212.position_isin(position, {"VWCE_DE_EQ": "IE00BK5BQT80"})
+        == "IE00BK5BQT80"
+    )
 
 
 def test_print_assets_includes_asset_name_column(capsys) -> None:

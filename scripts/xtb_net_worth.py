@@ -32,6 +32,7 @@ class Asset:
     asset_class: str
     currency: str
     value: float
+    isin: str = ""
 
 
 def as_float(value: Any, default: float = 0.0) -> float:
@@ -167,6 +168,7 @@ def load_open_position_assets(
 ) -> list[Asset]:
     header_index, headers = find_open_positions_header(rows)
     values_by_symbol: dict[tuple[str, str], float] = {}
+    isins_by_symbol: dict[str, str] = {}
 
     for row in rows[header_index + 1 :]:
         position = row.get(headers["position"])
@@ -185,6 +187,9 @@ def load_open_position_assets(
 
         key = (str(symbol), currency)
         values_by_symbol[key] = values_by_symbol.get(key, 0.0) + current_value
+        isin = row_isin(row, headers)
+        if isin:
+            isins_by_symbol.setdefault(str(symbol), isin)
 
     return [
         Asset(
@@ -194,10 +199,19 @@ def load_open_position_assets(
             asset_class="EQUITY",
             currency=symbol_currency,
             value=value,
+            isin=isins_by_symbol.get(symbol, ""),
         )
         for (symbol, symbol_currency), value in values_by_symbol.items()
         if value != 0
     ]
+
+
+def row_isin(row: dict[str, Any], headers: dict[str, str]) -> str:
+    for header in ("isin", "isin code", "instrument isin"):
+        column = headers.get(header)
+        if column and row.get(column) not in (None, ""):
+            return str(row[column]).strip()
+    return ""
 
 
 def cash_operations_total(rows: list[dict[str, Any]]) -> float:

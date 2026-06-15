@@ -34,7 +34,7 @@ def sheet(rows: list[str]) -> str:
     )
 
 
-def write_xtb_workbook(path: Path) -> None:
+def write_xtb_workbook(path: Path, include_isin: bool = False) -> None:
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
@@ -70,15 +70,44 @@ def write_xtb_workbook(path: Path) -> None:
         "</Types>"
     )
 
+    header_row = {
+        "B": "Position",
+        "C": "Symbol",
+        "D": "Type",
+        "E": "Volume",
+        "I": "Purchase value",
+        "P": "Gross P/L",
+    }
+    first_position = {
+        "B": 1001,
+        "C": "VWCE.DE",
+        "D": "BUY",
+        "E": 2,
+        "I": 150,
+        "P": 25,
+    }
+    second_position = {
+        "B": 1002,
+        "C": "VWCE.DE",
+        "D": "BUY",
+        "E": 1,
+        "I": 40,
+        "P": -20,
+    }
+    if include_isin:
+        header_row["Q"] = "ISIN"
+        first_position["Q"] = "IE00BK5BQT80"
+        second_position["Q"] = "IE00BK5BQT80"
+
     open_sheet = sheet(
         [
             row(5, {"F": "Name and surname", "I": "Account", "L": "Currency"}),
             row(6, {"F": "Anon User", "I": "123456", "L": "PLN"}),
             row(7, {"F": "Balance", "I": "Equity"}),
             row(8, {"F": 25, "I": 220}),
-            row(11, {"B": "Position", "C": "Symbol", "D": "Type", "E": "Volume", "I": "Purchase value", "P": "Gross P/L"}),
-            row(12, {"B": 1001, "C": "VWCE.DE", "D": "BUY", "E": 2, "I": 150, "P": 25}),
-            row(13, {"B": 1002, "C": "VWCE.DE", "D": "BUY", "E": 1, "I": 40, "P": -20}),
+            row(11, header_row),
+            row(12, first_position),
+            row(13, second_position),
             row(14, {"B": "Total", "I": 190, "P": 5}),
         ]
     )
@@ -132,6 +161,18 @@ def test_load_assets_can_override_account_id() -> None:
         report.unlink(missing_ok=True)
 
     assert {asset.account_id for asset in assets} == {"XTB-1"}
+
+
+def test_load_assets_preserves_isin_when_report_contains_column() -> None:
+    report = temporary_report_path()
+    write_xtb_workbook(report, include_isin=True)
+
+    try:
+        assets, _net_worth = xtb.load_assets(report.resolve())
+    finally:
+        report.unlink(missing_ok=True)
+
+    assert assets[0].isin == "IE00BK5BQT80"
 
 
 def test_relative_file_path_is_rejected() -> None:

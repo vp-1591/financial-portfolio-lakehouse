@@ -22,6 +22,8 @@ class FakeClient:
                 "assetClass": "STK",
                 "currency": "EUR",
                 "mktValue": 100.0,
+                "secIdType": "ISIN",
+                "secId": "IE00BK5BQT80",
             }
         ]
 
@@ -67,7 +69,17 @@ def test_load_assets_percentages_sum_to_net_worth_after_currency_conversion() ->
         ("EUR ETF", 120.0),
         ("CASH EUR", 120.0),
     ]
+    assert assets[0].isin == "IE00BK5BQT80"
     assert sum(asset.value / net_worth * 100 for asset in assets) == 100.0
+
+
+def test_position_isin_reads_common_ibkr_fields() -> None:
+    assert ibkr.position_isin({"isin": "US0378331005"}) == "US0378331005"
+    assert (
+        ibkr.position_isin({"secIdType": "ISIN", "secId": "IE00BK5BQT80"})
+        == "IE00BK5BQT80"
+    )
+    assert ibkr.position_isin({"secIdType": "CUSIP", "secId": "037833100"}) == ""
 
 
 def test_validate_gateway_session_uses_sso_for_portfolio_reads_by_default() -> None:

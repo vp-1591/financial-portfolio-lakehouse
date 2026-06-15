@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 
@@ -26,6 +27,35 @@ def parse_fx_rate(value: str) -> tuple[str, float]:
     if rate <= 0:
         raise argparse.ArgumentTypeError("FX rate must be greater than zero.")
     return currency, rate
+
+
+def parse_isin_override(value: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("ISIN overrides must use TICKER=ISIN format.")
+    ticker, isin = value.split("=", 1)
+    ticker = ticker.strip()
+    isin = isin.strip().upper()
+    if not ticker:
+        raise argparse.ArgumentTypeError("ISIN override ticker cannot be empty.")
+    if not isin:
+        raise argparse.ArgumentTypeError("ISIN override value cannot be empty.")
+    return ticker, isin
+
+
+def load_isin_map(path: Path) -> dict[str, str]:
+    if not path.exists():
+        raise connectors.PortfolioConnectorError(f"ISIN map file does not exist: {path}")
+
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+
+    isin_map: dict[str, str] = {}
+    for row in rows:
+        ticker = (row.get("ticker") or row.get("Ticker") or "").strip()
+        isin = (row.get("isin") or row.get("ISIN") or "").strip().upper()
+        if ticker and isin:
+            isin_map[ticker] = isin
+    return isin_map
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,6 +93,24 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=20.0,
         help="HTTP request timeout in seconds. Default: 20",
+    )
+    parser.add_argument(
+        "--isin",
+        action="append",
+        type=parse_isin_override,
+        default=[],
+        metavar="TICKER=ISIN",
+        help=(
+            "Fill a missing ISIN for a displayed ticker. Can be passed multiple "
+            "times, for example --isin SXR8.DE=IE00B5BMR087."
+        ),
+    )
+    parser.add_argument(
+        "--isin-map-file",
+        action="append",
+        type=Path,
+        default=[],
+        help="CSV file with ticker and isin columns. Can be passed multiple times.",
     )
 
     parser.add_argument("--trading212-api-key", required=True)
@@ -131,11 +179,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def print_rows(rows: list[tuple[str, float, str]]) -> None:
-    print(f"{'Ticker':<24} {'%':>8} {'Broker':<12}")
-    print("-" * 46)
-    for ticker, percentage, broker in rows:
-        print(f"{ticker[:24]:<24} {percentage:>7.2f}% {broker:<12}")
+def print_rows(rows: list[tuple[str, float, str, str, str]]) -> None:
+    print(f"{'Ticker':<18} {'%':>8} {'Broker':<12} {'ISIN':<12} {'Name':<40}")
+    print("-" * 95)
+    for ticker, percentage, broker, isin, name in rows:
+        print(
+            f"{ticker[:18]:<18} "
+            f"{percentage:>7.2f}% "
+            f"{broker:<12} "
+            f"{isin[:12]:<12} "
+            f"{name[:40]:<40}"
+        )
 
 
 def main() -> int:
@@ -152,6 +206,11 @@ def main() -> int:
     )
 
     try:
+        isin_overrides = {}
+        for isin_map_file in args.isin_map_file:
+            isin_overrides.update(load_isin_map(isin_map_file))
+        isin_overrides.update(dict(args.isin))
+
         holdings = []
         holdings.extend(
             connectors.load_trading212_holdings(
@@ -176,7 +235,13 @@ def main() -> int:
                 base_currency_override=args.ibkr_base_currency,
             )
         )
-        print_rows(connectors.aggregate_percentages(holdings, converter))
+        print_rows(
+            connectors.aggregate_percentages(
+                holdings,
+                converter,
+                isin_overrides=isin_overrides,
+            )
+        )
         return 0
     except (
         connectors.PortfolioConnectorError,

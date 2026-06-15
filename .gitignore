@@ -5,3 +5,10 @@ pytest-cache-files-*/
 .tmp-tests/
 client-portal-gateway-ibkr/
 *.xlsx
+
+# Codex
+*.err
+*.out
+
+# Random notes
+roadmap*.md

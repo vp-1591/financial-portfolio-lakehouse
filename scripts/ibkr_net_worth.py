@@ -43,6 +43,7 @@ class Asset:
     asset_class: str
     currency: str
     value: float
+    isin: str = ""
 
 
 class IbkrClient:
@@ -166,6 +167,20 @@ def position_label(position: dict[str, Any]) -> str:
     return "UNKNOWN"
 
 
+def position_isin(position: dict[str, Any]) -> str:
+    for key in ("isin", "ISIN", "securityId", "securityID"):
+        value = position.get(key)
+        if value not in (None, ""):
+            return str(value)
+
+    sec_id_type = str(position.get("secIdType") or position.get("secidType") or "")
+    sec_id = position.get("secId") or position.get("secid")
+    if sec_id_type.upper() == "ISIN" and sec_id not in (None, ""):
+        return str(sec_id)
+
+    return ""
+
+
 def net_liquidation_value(ledger: dict[str, Any]) -> float:
     base = ledger.get("BASE")
     if isinstance(base, dict):
@@ -254,6 +269,7 @@ def load_assets(client: IbkrClient, selected_account: str | None) -> tuple[list[
                     ),
                     currency=currency,
                     value=to_base_currency(value, currency, rates),
+                    isin=position_isin(position),
                 )
             )
         assets.extend(cash_assets(account_id_value, ledger))

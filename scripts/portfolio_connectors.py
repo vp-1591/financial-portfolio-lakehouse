@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,6 +32,8 @@ class Holding:
     ticker: str
     currency: str
     value: float
+    isin: str = ""
+    name: str = ""
 
 
 class CurrencyConverter:
@@ -163,7 +166,14 @@ def load_trading212_holdings(
         include_metadata=include_metadata,
     )
     return [
-        Holding("Trading 212", asset.label, asset.currency, asset.value)
+        Holding(
+            "Trading 212",
+            normalize_trading212_ticker(asset.label),
+            asset.currency,
+            asset.value,
+            isin=asset.isin,
+            name=asset.name,
+        )
         for asset in assets
     ]
 
@@ -173,7 +183,14 @@ def load_xtb_holdings(report_paths: Iterable[Path]) -> list[Holding]:
     for report_path in report_paths:
         assets, _net_worth = xtb.load_assets(report_path)
         holdings.extend(
-            Holding("XTB", asset.label, asset.currency, asset.value)
+            Holding(
+                "XTB",
+                asset.label,
+                asset.currency,
+                asset.value,
+                isin=asset.isin,
+                name=asset.name,
+            )
             for asset in assets
         )
     return holdings
@@ -213,6 +230,8 @@ def load_ibkr_holdings(
                     ibkr.position_label(position),
                     base_currency,
                     ibkr.to_base_currency(value, currency, rates),
+                    isin=ibkr.position_isin(position),
+                    name=ibkr.position_label(position),
                 )
             )
 
@@ -229,6 +248,7 @@ def load_ibkr_holdings(
                     f"CASH {currency_code}",
                     base_currency,
                     ibkr.to_base_currency(cash_balance, currency_code, rates),
+                    name=f"Cash {currency_code}",
                 )
             )
 
@@ -240,6 +260,32 @@ def real_currency(value: object, fallback: str) -> str:
     if not currency or currency == "BASE":
         return fallback
     return currency
+
+
+def normalize_trading212_ticker(ticker: str) -> str:
+    if ticker.startswith("CASH "):
+        return ticker
+
+    removed_broker_suffix = False
+    for suffix in ("_EQ", "_ETF"):
+        if ticker.endswith(suffix):
+            ticker = ticker[: -len(suffix)]
+            removed_broker_suffix = True
+            break
+
+    market_suffix = re.fullmatch(r"(.+)_([A-Z]{2})", ticker)
+    if market_suffix:
+        return market_suffix.group(1)
+
+    lowercase_exchange_suffix = re.fullmatch(r"(.+)[a-z]", ticker)
+    if removed_broker_suffix and lowercase_exchange_suffix:
+        return lowercase_exchange_suffix.group(1)
+
+    return ticker
+
+
+def normalize_isin_lookup_key(ticker: str) -> str:
+    return ticker.strip().upper()
 
 
 def ibkr_base_currency(
@@ -272,19 +318,40 @@ def ibkr_base_currency(
 def aggregate_percentages(
     holdings: Iterable[Holding],
     converter: CurrencyConverter,
-) -> list[tuple[str, float, str]]:
+    isin_overrides: dict[str, str] | None = None,
+) -> list[tuple[str, float, str, str, str]]:
+    normalized_isin_overrides = {
+        normalize_isin_lookup_key(ticker): isin
+        for ticker, isin in (isin_overrides or {}).items()
+    }
     totals: dict[tuple[str, str], float] = {}
+    metadata: dict[tuple[str, str], tuple[str, str]] = {}
     for holding in holdings:
         converted_value = converter.convert(holding.value, holding.currency)
         key = (holding.ticker, holding.broker)
         totals[key] = totals.get(key, 0.0) + converted_value
+        current_isin, current_name = metadata.get(key, ("", ""))
+        override_isin = normalized_isin_overrides.get(
+            normalize_isin_lookup_key(holding.ticker),
+            "",
+        )
+        metadata[key] = (
+            current_isin or holding.isin or override_isin,
+            current_name or holding.name,
+        )
 
     net_worth = sum(totals.values())
     if net_worth == 0:
         raise PortfolioConnectorError("Net worth is zero; cannot calculate percentages.")
 
     rows = [
-        (ticker, value / net_worth * 100, broker)
+        (
+            ticker,
+            value / net_worth * 100,
+            broker,
+            metadata.get((ticker, broker), ("", ""))[0],
+            metadata.get((ticker, broker), ("", ""))[1],
+        )
         for (ticker, broker), value in totals.items()
         if value != 0
     ]

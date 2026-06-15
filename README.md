@@ -130,7 +130,11 @@ falls back to the sum of parsed positions and cash.
 
 The consolidated script reads Trading 212, one or more XTB Excel reports, and
 IBKR Client Portal Gateway data, converts all rows to one target currency, and
-prints only ticker, percentage, and broker.
+prints ticker, percentage, broker, ISIN, and instrument name. Trading 212 broker
+tickers such as `IS3Nd_EQ` and `VWCE_DE_EQ` are normalized to cleaner display
+tickers such as `IS3N` and `VWCE` while ISIN/name metadata is kept for analysis.
+When broker data does not include an ISIN, pass explicit ticker-to-ISIN mappings
+with `--isin` or `--isin-map-file`.
 
 ```powershell
 python .\scripts\portfolio_percentages.py `
@@ -139,8 +143,18 @@ python .\scripts\portfolio_percentages.py `
   --trading212-account-id "YOUR_ACCOUNT_ID" `
   --xtb-file "C:\path\to\xtb-report-1.xlsx" `
   --xtb-file "C:\path\to\xtb-report-2.xlsx" `
+  --isin SXR8.DE=IE00B5BMR087 `
+  --isin-map-file "C:\path\to\isins.csv" `
   --ibkr-base-currency EUR `
   --target-currency EUR
+```
+
+The ISIN map CSV must contain `ticker` and `isin` columns:
+
+```csv
+ticker,isin
+SXR8.DE,IE00B5BMR087
+SXRV.DE,IE00B53SZB19
 ```
 
 `--ibkr-base-currency` is only required when IBKR reports the account base

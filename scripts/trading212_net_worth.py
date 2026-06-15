@@ -55,6 +55,7 @@ class Asset:
     asset_class: str
     currency: str
     value: float
+    isin: str = ""
 
 
 class Trading212Client:
@@ -228,6 +229,16 @@ def instrument_name_by_ticker(instruments: list[dict[str, Any]]) -> dict[str, st
     return names
 
 
+def instrument_isin_by_ticker(instruments: list[dict[str, Any]]) -> dict[str, str]:
+    isins: dict[str, str] = {}
+    for instrument in instruments:
+        ticker = first_value(instrument, ("ticker",))
+        isin = first_value(instrument, ("isin",))
+        if ticker and isin:
+            isins[str(ticker)] = str(isin)
+    return isins
+
+
 def position_label(position: dict[str, Any]) -> str:
     instrument = nested_dict(position, "instrument")
     value = first_value(instrument, ("ticker", "name", "shortName", "isin"))
@@ -251,6 +262,24 @@ def position_name(position: dict[str, Any], instrument_names: dict[str, str]) ->
         return instrument_names[str(ticker)]
 
     return position_label(position)
+
+
+def position_isin(position: dict[str, Any], instrument_isins: dict[str, str]) -> str:
+    instrument = nested_dict(position, "instrument")
+    value = first_value(instrument, ("isin",))
+    if value:
+        return str(value)
+
+    ticker = first_value(instrument, ("ticker",))
+    if ticker and str(ticker) in instrument_isins:
+        return instrument_isins[str(ticker)]
+
+    ticker = first_value(position, ("ticker",))
+    if ticker and str(ticker) in instrument_isins:
+        return instrument_isins[str(ticker)]
+
+    value = first_value(position, ("isin",))
+    return str(value) if value else ""
 
 
 def position_value(position: dict[str, Any]) -> float:
@@ -308,6 +337,7 @@ def load_assets(
     instruments = client.instruments() if include_metadata else []
     instrument_currencies = instrument_currency_by_ticker(instruments)
     instrument_names = instrument_name_by_ticker(instruments)
+    instrument_isins = instrument_isin_by_ticker(instruments)
 
     assets: list[Asset] = []
     for position in positions:
@@ -322,6 +352,7 @@ def load_assets(
                 asset_class="EQUITY",
                 currency=position_currency(position, instrument_currencies, currency),
                 value=value,
+                isin=position_isin(position, instrument_isins),
             )
         )
 
