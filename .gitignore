@@ -12,3 +12,10 @@ client-portal-gateway-ibkr/
 
 # Random notes
 roadmap*.md
+
+# Pipeline data and secrets
+data/
+.secrets/
+
+# Build artifacts
+*.egg-info/
