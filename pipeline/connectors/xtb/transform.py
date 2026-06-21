@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pyarrow as pa
 
-from pipeline.crypto import encrypt_float
+from pipeline.crypto import decrypt, encrypt_float
 from pipeline.normalized.models import xtb_cdc_normalized_schema, xtb_snapshot_normalized_schema
 
 
@@ -33,6 +33,12 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         payload_bytes = row["payload"]
         if isinstance(payload_bytes, memoryview):
             payload_bytes = bytes(payload_bytes)
+
+        # Payloads are stored encrypted in the raw Delta table — decrypt first
+        try:
+            payload_bytes = decrypt(payload_bytes, fernet_key)
+        except Exception:
+            continue
 
         try:
             parsed = json.loads(payload_bytes)
@@ -98,6 +104,12 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         payload_bytes = row["payload"]
         if isinstance(payload_bytes, memoryview):
             payload_bytes = bytes(payload_bytes)
+
+        # Payloads are stored encrypted in the raw Delta table — decrypt first
+        try:
+            payload_bytes = decrypt(payload_bytes, fernet_key)
+        except Exception:
+            continue
 
         try:
             operations = json.loads(payload_bytes)

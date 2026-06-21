@@ -6,7 +6,6 @@ interception for pipeline ingestion, plus CDC endpoint methods.
 
 from __future__ import annotations
 
-import base64
 import json
 import urllib.error
 import urllib.request
@@ -56,7 +55,7 @@ class Trading212Client:
     api_key:
         Trading 212 API key.
     api_secret:
-        Trading 212 API secret.
+        Trading 212 API secret (unused — kept for backward compatibility).
     timeout:
         HTTP request timeout in seconds.
     user_agent:
@@ -70,14 +69,14 @@ class Trading212Client:
         self,
         base_url: str,
         api_key: str,
-        api_secret: str,
+        api_secret: str = "",
         timeout: float = 20.0,
         user_agent: str = DEFAULT_USER_AGENT,
         capture_raw: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
-        self.api_secret = api_secret.strip()
+        self.api_secret = api_secret.strip() if api_secret else ""
         self.timeout = timeout
         self.user_agent = user_agent
         self.capture_raw = capture_raw
@@ -90,7 +89,7 @@ class Trading212Client:
             url,
             headers={
                 "Accept": "application/json",
-                "Authorization": basic_auth_header(self.api_key, self.api_secret),
+                "Authorization": bearer_auth_header(self.api_key),
                 "User-Agent": self.user_agent,
             },
             method=method,
@@ -201,10 +200,9 @@ def concise_details(details: str, limit: int = 500) -> str:
     return json.dumps(parsed, ensure_ascii=True)[:limit]
 
 
-def basic_auth_header(api_key: str, api_secret: str) -> str:
-    credentials = f"{api_key.strip()}:{api_secret.strip()}".encode("utf-8")
-    encoded_credentials = base64.b64encode(credentials).decode("ascii")
-    return f"Basic {encoded_credentials}"
+def bearer_auth_header(api_key: str) -> str:
+    """Return a Bearer authorization header for the Trading 212 API."""
+    return f"Bearer {api_key.strip()}"
 
 
 def first_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:

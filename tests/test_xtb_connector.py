@@ -32,7 +32,7 @@ from pipeline.connectors.xtb.parser import (
     value_below_label,
 )
 from pipeline.connectors.xtb.transform import transform_cdc, transform_snapshot
-from pipeline.crypto import decrypt_float, generate_key
+from pipeline.crypto import decrypt, decrypt_float, encrypt, generate_key
 
 
 # --- XLS test helpers (preserved from tests/test_xtb_net_worth.py) ---
@@ -257,20 +257,28 @@ class TestTransformSnapshot:
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
-        return generate_key()
+        key = generate_key()
+        self._fernet_key = key
+        return key
 
     def _build_raw_table(self, positions_data: dict, account_id: str = "123456") -> pa.Table:
-        """Build a raw-layer table from parsed XTB data."""
+        """Build a raw-layer table from parsed XTB data.
+
+        Payloads are encrypted to match the real pipeline flow where
+        raw Delta tables store encrypted payloads.
+        """
+        key = self._fernet_key
+        raw_payload = json.dumps(positions_data).encode("utf-8")
+        encrypted_payload = encrypt(raw_payload, key)
         now = datetime.now(timezone.utc)
-        payload = json.dumps(positions_data).encode("utf-8")
 
         return pa.table(
             {
                 "fetched_at": [now],
                 "broker": ["XTB"],
                 "source": ["OPEN POSITION"],
-                "payload": [payload],
-                "payload_hash": [hashlib.sha256(payload).hexdigest()],
+                "payload": [encrypted_payload],
+                "payload_hash": [hashlib.sha256(raw_payload).hexdigest()],
                 "account_id": [account_id],
                 "source_file": ["test_report.xlsx"],
             },
@@ -338,15 +346,16 @@ class TestTransformCDC:
             {"operation_id": "2", "operation_type": "Dividend", "amount": 5.0,
              "currency": "EUR", "comment": "VWCE dividend", "operation_date": "2026-03-15"},
         ]
-        payload = json.dumps(ops_data).encode("utf-8")
+        raw_payload = json.dumps(ops_data).encode("utf-8")
+        encrypted_payload = encrypt(raw_payload, fernet_key)
 
         raw = pa.table(
             {
                 "fetched_at": [now],
                 "broker": ["XTB"],
                 "source": ["CASH OPERATION"],
-                "payload": [payload],
-                "payload_hash": [hashlib.sha256(payload).hexdigest()],
+                "payload": [encrypted_payload],
+                "payload_hash": [hashlib.sha256(raw_payload).hexdigest()],
                 "account_id": ["123456"],
                 "source_file": ["test_report.xlsx"],
             },

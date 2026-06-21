@@ -26,7 +26,7 @@ from pipeline.connectors.ibkr.client import (
     to_base_currency,
 )
 from pipeline.connectors.ibkr.transform import transform_snapshot
-from pipeline.crypto import decrypt_float, generate_key
+from pipeline.crypto import decrypt, decrypt_float, encrypt, generate_key
 
 
 class TestClientParsing:
@@ -99,7 +99,9 @@ class TestTransformSnapshot:
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
-        return generate_key()
+        key = generate_key()
+        self._fernet_key = key
+        return key
 
     def _build_raw_table(
         self,
@@ -107,12 +109,21 @@ class TestTransformSnapshot:
         ledger: dict,
         account_id: str = "U123",
     ) -> pa.Table:
-        """Build a raw-layer table from fake API responses."""
-        positions_bytes = json.dumps(positions).encode("utf-8")
-        ledger_bytes = json.dumps(ledger).encode("utf-8")
+        """Build a raw-layer table from fake API responses.
+
+        Payloads are encrypted to match the real pipeline flow where
+        raw Delta tables store encrypted payloads.
+        """
+        key = self._fernet_key
+        positions_bytes = encrypt(json.dumps(positions).encode("utf-8"), key)
+        ledger_bytes = encrypt(json.dumps(ledger).encode("utf-8"), key)
         now = datetime.now(timezone.utc)
 
         import hashlib
+
+        # Hash the original (unencrypted) payloads for dedup
+        positions_hash = hashlib.sha256(json.dumps(positions).encode("utf-8")).hexdigest()
+        ledger_hash = hashlib.sha256(json.dumps(ledger).encode("utf-8")).hexdigest()
 
         return pa.table(
             {
@@ -123,10 +134,7 @@ class TestTransformSnapshot:
                     f"/portfolio/{account_id}/ledger",
                 ],
                 "payload": [positions_bytes, ledger_bytes],
-                "payload_hash": [
-                    hashlib.sha256(positions_bytes).hexdigest(),
-                    hashlib.sha256(ledger_bytes).hexdigest(),
-                ],
+                "payload_hash": [positions_hash, ledger_hash],
                 "account_id": [account_id, account_id],
                 "source_file": ["", ""],
             },

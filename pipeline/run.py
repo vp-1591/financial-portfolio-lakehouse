@@ -201,6 +201,9 @@ def cmd_transform(args: argparse.Namespace) -> int:
                 norm_path = str(NORMALIZED_DIR / f"{connector.name}_{layer}")
                 Path(norm_path).parent.mkdir(parents=True, exist_ok=True)
                 from deltalake import write_deltalake
+                if normalized.num_rows == 0:
+                    print(f"  {connector.display_name} {layer}: no data to transform")
+                    continue
                 write_deltalake(norm_path, normalized, mode="append")
                 print(f"  {connector.display_name} {layer}: {normalized.num_rows} rows transformed")
             except NotImplementedError:
@@ -240,6 +243,9 @@ def cmd_allocate(args: argparse.Namespace) -> int:
         result = allocate_percentages(fernet_key=fernet_key)
         print_allocation(result)
         return 0
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

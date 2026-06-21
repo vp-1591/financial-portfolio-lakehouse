@@ -267,7 +267,7 @@ def test_client_sends_configurable_user_agent(monkeypatch) -> None:
     )
 
     assert client.account_summary() == {"currencyCode": "EUR"}
-    assert captured_headers["Authorization"] == "Basic YXBpLWtleTphcGktc2VjcmV0"
+    assert captured_headers["Authorization"] == "Bearer api-key"
     assert captured_headers["User-agent"] == "custom-agent"
 
 
@@ -301,8 +301,8 @@ def test_concise_details_returns_plain_text_body() -> None:
     assert trading212.concise_details("unauthorized") == "unauthorized"
 
 
-def test_basic_auth_header_uses_key_as_username_and_secret_as_password() -> None:
+def test_bearer_auth_header_uses_key_as_token() -> None:
     assert (
-        trading212.basic_auth_header(" api-key ", " api-secret ")
-        == "Basic YXBpLWtleTphcGktc2VjcmV0"
+        trading212.bearer_auth_header(" api-key ")
+        == "Bearer api-key"
     )

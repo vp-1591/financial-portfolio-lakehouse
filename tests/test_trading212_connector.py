@@ -17,7 +17,7 @@ from pipeline.connectors.trading212.client import (
     Trading212HttpError,
     account_currency,
     as_float,
-    basic_auth_header,
+    bearer_auth_header,
     cash_value,
     concise_details,
     first_value,
@@ -35,7 +35,7 @@ from pipeline.connectors.trading212.client import (
     position_value,
 )
 from pipeline.connectors.trading212.transform import transform_snapshot
-from pipeline.crypto import decrypt_float, generate_key
+from pipeline.crypto import decrypt, decrypt_float, encrypt, generate_key
 
 
 class TestClientParsing:
@@ -55,10 +55,10 @@ class TestClientParsing:
     def test_concise_details_returns_plain_text_body(self) -> None:
         assert concise_details("unauthorized") == "unauthorized"
 
-    def test_basic_auth_header(self) -> None:
+    def test_bearer_auth_header(self) -> None:
         assert (
-            basic_auth_header(" api-key ", " api-secret ")
-            == "Basic YXBpLWtleTphcGktc2VjcmV0"
+            bearer_auth_header(" api-key ")
+            == "Bearer api-key"
         )
 
     def test_account_currency(self) -> None:
@@ -173,7 +173,9 @@ class TestTransformSnapshot:
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
-        return generate_key()
+        key = generate_key()
+        self._fernet_key = key
+        return key
 
     def _build_raw_table(
         self,
@@ -182,26 +184,34 @@ class TestTransformSnapshot:
         instruments: list[dict] | None = None,
         account_id: str = "T212-1",
     ) -> pa.Table:
-        """Build a raw-layer table from fake API responses."""
+        """Build a raw-layer table from fake API responses.
+
+        Payloads are encrypted to match the real pipeline flow where
+        raw Delta tables store encrypted payloads.
+        """
         import hashlib
 
+        key = self._fernet_key
         now = datetime.now(timezone.utc)
         sources = ["/equity/account/summary", "/equity/positions"]
-        payloads_data = [
+        raw_payloads = [
             json.dumps(summary).encode("utf-8"),
             json.dumps(positions).encode("utf-8"),
         ]
         if instruments is not None:
             sources.append("/equity/metadata/instruments")
-            payloads_data.append(json.dumps(instruments).encode("utf-8"))
+            raw_payloads.append(json.dumps(instruments).encode("utf-8"))
+
+        # Encrypt payloads like the real pipeline does in ingest_raw
+        encrypted_payloads = [encrypt(p, key) for p in raw_payloads]
 
         return pa.table(
             {
                 "fetched_at": [now] * len(sources),
                 "broker": ["Trading 212"] * len(sources),
                 "source": sources,
-                "payload": payloads_data,
-                "payload_hash": [hashlib.sha256(p).hexdigest() for p in payloads_data],
+                "payload": encrypted_payloads,
+                "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
                 "account_id": [account_id] * len(sources),
                 "source_file": [""] * len(sources),
             },

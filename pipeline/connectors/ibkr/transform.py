@@ -20,7 +20,7 @@ from pipeline.connectors.ibkr.client import (
     position_value,
     to_base_currency,
 )
-from pipeline.crypto import encrypt_float, encrypt_string
+from pipeline.crypto import decrypt, encrypt_float, encrypt_string
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 
 
@@ -87,10 +87,15 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_override:
         for _, row in acct_group.iterrows():
             source = row["source"]
             payload_bytes = row["payload"]
-            # payload is raw bytes (possibly encrypted in raw layer, but we
-            # transform before ingestion so it should still be plaintext here)
             if isinstance(payload_bytes, memoryview):
                 payload_bytes = bytes(payload_bytes)
+
+            # Payloads are stored encrypted in the raw Delta table — decrypt first
+            try:
+                payload_bytes = decrypt(payload_bytes, fernet_key)
+            except Exception:
+                continue
+
             try:
                 parsed = json.loads(payload_bytes)
             except (json.JSONDecodeError, TypeError):

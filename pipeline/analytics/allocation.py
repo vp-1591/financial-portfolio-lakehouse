@@ -52,7 +52,13 @@ def allocate_percentages(
 
     from deltalake import DeltaTable
 
-    dt = DeltaTable(table_path)
+    try:
+        dt = DeltaTable(table_path)
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"Consolidated holdings table not found at {table_path}. "
+            "Run the fetch and transform steps first to populate the table."
+        ) from exc
     df = dt.to_pandas()
 
     # Decrypt value column

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import sys
 import time
@@ -80,7 +79,7 @@ class Trading212Client:
             url,
             headers={
                 "Accept": "application/json",
-                "Authorization": basic_auth_header(self.api_key, self.api_secret),
+                "Authorization": bearer_auth_header(self.api_key),
                 "User-Agent": self.user_agent,
             },
             method=method,
@@ -153,10 +152,9 @@ def concise_details(details: str, limit: int = 500) -> str:
     return json.dumps(parsed, ensure_ascii=True)[:limit]
 
 
-def basic_auth_header(api_key: str, api_secret: str) -> str:
-    credentials = f"{api_key.strip()}:{api_secret.strip()}".encode("utf-8")
-    encoded_credentials = base64.b64encode(credentials).decode("ascii")
-    return f"Basic {encoded_credentials}"
+def bearer_auth_header(api_key: str) -> str:
+    """Return a Bearer authorization header for the Trading 212 API."""
+    return f"Bearer {api_key.strip()}"
 
 
 def first_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
