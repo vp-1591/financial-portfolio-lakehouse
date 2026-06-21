@@ -8,7 +8,12 @@ _CONNECTORS: dict[str, BrokerConnector] = {}
 
 
 def register(connector: BrokerConnector) -> BrokerConnector:
-    """Register a connector.  Returns the connector for convenience."""
+    """Register a connector.  Accepts an instance or a class (auto-instantiated).
+
+    Returns the connector instance for convenience.
+    """
+    if isinstance(connector, type):
+        connector = connector()
     _CONNECTORS[connector.name] = connector
     return connector
 

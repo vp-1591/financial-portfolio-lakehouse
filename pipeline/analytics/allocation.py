@@ -47,6 +47,9 @@ def allocate_percentages(
     if analytics_path is None:
         analytics_path = str(ANALYTICS_PORTFOLIO_ALLOCATION)
 
+    from pathlib import Path
+    Path(analytics_path).parent.mkdir(parents=True, exist_ok=True)
+
     from deltalake import DeltaTable
 
     dt = DeltaTable(table_path)

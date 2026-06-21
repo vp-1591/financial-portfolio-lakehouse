@@ -86,12 +86,8 @@ def encrypt_raw_payloads(table: pa.Table, fernet_key: bytes) -> pa.Table:
     """
     payloads = table.column("payload").to_pylist()
     encrypted = [encrypt(p, fernet_key) for p in payloads]
-    return table.set_column(
-        table.schema.get_field_index("payload"),
-        "payload",
-        [pa.binary()],
-        [encrypted],
-    )
+    idx = table.schema.get_field_index("payload")
+    return table.set_column(idx, "payload", pa.array(encrypted, type=pa.binary()))
 
 
 def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
@@ -142,5 +138,7 @@ def ingest_raw(
     deduped = dedup_raw(encrypted, table_path)
     if deduped.num_rows == 0:
         return 0
+    from pathlib import Path
+    Path(table_path).parent.mkdir(parents=True, exist_ok=True)
     write_deltalake(table_path, deduped, mode="append")
     return deduped.num_rows

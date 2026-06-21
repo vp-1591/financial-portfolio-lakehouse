@@ -2,10 +2,10 @@
 
 Usage::
 
-    python -m pipeline.run fetch [connector options]
+    python -m pipeline.run fetch --ibkr [--xtb-file report.xlsx] [--t212-api-key KEY]
     python -m pipeline.run transform
     python -m pipeline.run allocate --target-currency EUR [--isin-map-file isins.csv]
-    python -m pipeline.run full [connector options]
+    python -m pipeline.run full --ibkr [--xtb-file report.xlsx] [--t212-api-key KEY]
     python -m pipeline.run keygen
 """
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from pipeline.connectors.registry import all, get
 from pipeline.crypto import generate_key, load_key
@@ -20,6 +21,7 @@ from pipeline.paths import ENCRYPTION_KEY_FILE, SECRETS_DIR
 
 
 def add_ibkr_args(parser: argparse._ArgumentGroup) -> None:
+    parser.add_argument("--ibkr", action="store_true", help="Enable IBKR connector (connects to the default Client Portal Gateway URL)")
     parser.add_argument("--ibkr-base-url", default="https://localhost:5000/v1/api")
     parser.add_argument("--ibkr-account", default=None)
     parser.add_argument("--ibkr-base-currency", default=None)
@@ -32,6 +34,7 @@ def add_trading212_args(parser: argparse._ArgumentGroup) -> None:
     parser.add_argument("--t212-api-key", default=None)
     parser.add_argument("--t212-api-secret", default=None)
     parser.add_argument("--t212-account-id", default=None)
+    parser.add_argument("--t212-base-url", default=None)
     parser.add_argument("--t212-demo", action="store_true")
     parser.add_argument("--t212-skip-metadata", action="store_true")
     parser.add_argument("--t212-user-agent", default=None)
@@ -91,9 +94,13 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     connectors = all()
 
     for connector in connectors:
-        connector_kwargs = {}
+        snapshot_kwargs: dict = {}
+        cdc_kwargs: dict = {}
         if connector.name == "ibkr":
-            connector_kwargs = {
+            if not args.ibkr:
+                print(f"Skipping {connector.display_name}: use --ibkr to enable")
+                continue
+            snapshot_kwargs = cdc_kwargs = {
                 "base_url": args.ibkr_base_url,
                 "account": args.ibkr_account,
                 "verify_tls": args.ibkr_verify_tls,
@@ -105,26 +112,28 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 print(f"Skipping {connector.display_name}: no API key provided")
                 continue
             base_url = "https://demo.trading212.com/api/v0" if args.t212_demo else (args.t212_base_url or "https://live.trading212.com/api/v0")
-            connector_kwargs = {
+            common = {
                 "api_key": args.t212_api_key,
                 "api_secret": args.t212_api_secret or "",
                 "account_id": args.t212_account_id or "",
                 "base_url": base_url,
-                "include_metadata": not args.t212_skip_metadata,
                 "user_agent": args.t212_user_agent or "Mozilla/5.0",
             }
+            snapshot_kwargs = {**common, "include_metadata": not args.t212_skip_metadata}
+            cdc_kwargs = common
         elif connector.name == "xtb":
             if not args.xtb_file:
                 print(f"Skipping {connector.display_name}: no --xtb-file provided")
                 continue
             for xtb_file in args.xtb_file:
-                connector_kwargs = {
+                xtb_kwargs = {
                     "file_path": xtb_file,
                     "account_id": args.xtb_account_id,
                 }
                 try:
-                    raw = connector.fetch_snapshot(**connector_kwargs)
+                    raw = connector.fetch_snapshot(**xtb_kwargs)
                     table_path = str(get_raw_path(connector.name, "snapshot"))
+                    Path(table_path).parent.mkdir(parents=True, exist_ok=True)
                     count = ingest_raw(raw, table_path, fernet_key)
                     print(f"  {connector.display_name} snapshot: {count} rows written")
                 except Exception as exc:
@@ -132,8 +141,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             continue
 
         try:
-            raw = connector.fetch_snapshot(**connector_kwargs)
+            raw = connector.fetch_snapshot(**snapshot_kwargs)
             table_path = str(get_raw_path(connector.name, "snapshot"))
+            Path(table_path).parent.mkdir(parents=True, exist_ok=True)
             count = ingest_raw(raw, table_path, fernet_key)
             print(f"  {connector.display_name} snapshot: {count} rows written")
         except NotImplementedError:
@@ -143,8 +153,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
         # Try CDC
         try:
-            raw_cdc = connector.fetch_cdc(**connector_kwargs)
+            raw_cdc = connector.fetch_cdc(**cdc_kwargs)
             cdc_path = str(get_raw_path(connector.name, "cdc"))
+            Path(cdc_path).parent.mkdir(parents=True, exist_ok=True)
             count = ingest_raw(raw_cdc, cdc_path, fernet_key)
             print(f"  {connector.display_name} CDC: {count} rows written")
         except NotImplementedError:
@@ -185,8 +196,10 @@ def cmd_transform(args: argparse.Namespace) -> int:
                 else:
                     normalized = connector.transform_cdc(raw_table, fernet_key)
 
+                from pathlib import Path
                 from pipeline.paths import NORMALIZED_DIR
                 norm_path = str(NORMALIZED_DIR / f"{connector.name}_{layer}")
+                Path(norm_path).parent.mkdir(parents=True, exist_ok=True)
                 from deltalake import write_deltalake
                 write_deltalake(norm_path, normalized, mode="append")
                 print(f"  {connector.display_name} {layer}: {normalized.num_rows} rows transformed")

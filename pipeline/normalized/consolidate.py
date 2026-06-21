@@ -276,6 +276,9 @@ def consolidate_holdings(
     if table_path is None:
         table_path = str(NORMALIZED_CONSOLIDATED_HOLDINGS)
 
+    from pathlib import Path
+    Path(table_path).parent.mkdir(parents=True, exist_ok=True)
+
     now = datetime.now(timezone.utc)
     normalized_isin_overrides = {
         normalize_isin_lookup_key(ticker): isin
