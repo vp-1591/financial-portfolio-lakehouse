@@ -68,18 +68,17 @@ using ledger exchange rates before percentages are calculated.
 ## Trading 212 Net Worth Percentages
 
 The Trading 212 script prints the same net worth percentage table using the
-Trading 212 public API. Pass the API key, API secret, and account id on the
-command line so credentials are not stored in this repository or in a config
-file.
+Trading 212 public API. Pass the API key on the command line so credentials
+are not stored in this repository or in a config file.
 
 ```powershell
-python .\scripts\trading212_net_worth.py --api-key "YOUR_API_KEY" --api-secret "YOUR_API_SECRET" --account-id "YOUR_ACCOUNT_ID"
+python .\scripts\trading212_net_worth.py --api-key "YOUR_API_KEY" --account-id "YOUR_ACCOUNT_ID"
 ```
 
 For a demo account:
 
 ```powershell
-python .\scripts\trading212_net_worth.py --api-key "YOUR_DEMO_API_KEY" --api-secret "YOUR_DEMO_API_SECRET" --account-id "YOUR_DEMO_ACCOUNT_ID" --demo
+python .\scripts\trading212_net_worth.py --api-key "YOUR_DEMO_API_KEY" --account-id "YOUR_DEMO_ACCOUNT_ID" --demo
 ```
 
 Optional arguments:
@@ -199,4 +198,53 @@ To run the live FX integration check:
 ```powershell
 $env:RUN_LIVE_FX_TESTS = "1"
 python -m pytest tests\test_live_fx.py
+```
+
+## Medallion Pipeline
+
+The `pipeline/` package implements a medallion architecture (raw → normalized →
+analytics) with Delta tables and Fernet encryption for sensitive financial data.
+
+### Setup
+
+Create a venv and install dependencies:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[pipeline]"
+```
+
+Generate an encryption key (only needed once):
+
+```powershell
+.venv\Scripts\python -m pipeline.run keygen
+```
+
+### Run the pipeline
+
+Full pipeline (fetch → transform → allocate):
+
+```powershell
+.venv\Scripts\python -m pipeline.run full --ibkr --t212-api-key "YOUR_API_KEY" --xtb-file "C:\path\to\report.xlsx"
+```
+
+Or run individual steps:
+
+```powershell
+.venv\Scripts\python -m pipeline.run fetch --ibkr --t212-api-key "KEY" --xtb-file "report.xlsx"
+.venv\Scripts\python -m pipeline.run transform
+.venv\Scripts\python -m pipeline.run allocate --target-currency EUR
+```
+
+Broker flags:
+
+- `--ibkr` — enable IBKR connector (connects to `https://localhost:5000/v1/api` by default)
+- `--t212-api-key KEY` — enable Trading 212 connector (uses Bearer token auth)
+- `--xtb-file FILE` — enable XTB connector (can be specified multiple times)
+
+### Tests
+
+```powershell
+.venv\Scripts\python -m pytest
 ```
