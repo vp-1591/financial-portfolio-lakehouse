@@ -113,26 +113,26 @@ def parse_args() -> argparse.Namespace:
         help="CSV file with ticker and isin columns. Can be passed multiple times.",
     )
 
-    parser.add_argument("--trading212-api-key", required=True)
-    parser.add_argument("--trading212-api-secret", required=True)
-    parser.add_argument("--trading212-account-id", required=True)
+    parser.add_argument("--t212-api-key", required=True)
+    parser.add_argument("--t212-api-secret", required=True)
+    parser.add_argument("--t212-account-id", required=False, default="")
     parser.add_argument(
-        "--trading212-base-url",
+        "--t212-base-url",
         default=trading212.DEFAULT_BASE_URL,
         help=f"Trading 212 API base URL. Default: {trading212.DEFAULT_BASE_URL}",
     )
     parser.add_argument(
-        "--trading212-demo",
+        "--t212-demo",
         action="store_true",
         help=f"Use the Trading 212 demo API base URL: {trading212.DEMO_BASE_URL}",
     )
     parser.add_argument(
-        "--trading212-skip-metadata",
+        "--t212-skip-metadata",
         action="store_true",
         help="Skip Trading 212 instruments metadata lookup.",
     )
     parser.add_argument(
-        "--trading212-user-agent",
+        "--t212-user-agent",
         default=trading212.DEFAULT_USER_AGENT,
         help="Trading 212 HTTP User-Agent header.",
     )
@@ -195,7 +195,7 @@ def print_rows(rows: list[connectors.PortfolioRow]) -> None:
 def main() -> int:
     args = parse_args()
     trading212_base_url = (
-        trading212.DEMO_BASE_URL if args.trading212_demo else args.trading212_base_url
+        trading212.DEMO_BASE_URL if args.t212_demo else args.t212_base_url
     )
     converter = connectors.CurrencyConverter(
         args.target_currency,
@@ -214,13 +214,13 @@ def main() -> int:
         holdings = []
         holdings.extend(
             connectors.load_trading212_holdings(
-                api_key=args.trading212_api_key,
-                api_secret=args.trading212_api_secret,
-                account_id=args.trading212_account_id,
+                api_key=args.t212_api_key,
+                api_secret=args.t212_api_secret,
+                account_id=args.t212_account_id,
                 base_url=trading212_base_url,
                 timeout=args.timeout,
-                user_agent=args.trading212_user_agent,
-                include_metadata=not args.trading212_skip_metadata,
+                user_agent=args.t212_user_agent,
+                include_metadata=not args.t212_skip_metadata,
             )
         )
         holdings.extend(connectors.load_xtb_holdings(path.resolve() for path in args.xtb_file))

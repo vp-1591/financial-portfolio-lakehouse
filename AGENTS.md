@@ -23,3 +23,5 @@ Pipeline dependencies (`deltalake`, `duckdb`, `cryptography`, `pyarrow`,
 Record every feature, fix, infrastructure change, behavior change, or notable implementation decision in `docs/adr/`.
 
 Use one Markdown file per decision with a descriptive kebab-case name, such as `docs/adr/0001-add-local-kafka-transform-tests.md`. Include the context, decision, consequences, and any validation performed.
+
+Before making any change, check existing ADR filenames in `docs/adr/` and review any ADRs related to the area being touched. If a relevant ADR conflicts with the current user requirements, stop and notify the user, then ask how to proceed before continuing.

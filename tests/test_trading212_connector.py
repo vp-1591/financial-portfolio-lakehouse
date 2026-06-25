@@ -17,7 +17,7 @@ from pipeline.connectors.trading212.client import (
     Trading212HttpError,
     account_currency,
     as_float,
-    bearer_auth_header,
+    basic_auth_header,
     cash_value,
     concise_details,
     first_value,
@@ -55,11 +55,28 @@ class TestClientParsing:
     def test_concise_details_returns_plain_text_body(self) -> None:
         assert concise_details("unauthorized") == "unauthorized"
 
-    def test_bearer_auth_header(self) -> None:
-        assert (
-            bearer_auth_header(" api-key ")
-            == "Bearer api-key"
-        )
+    def test_basic_auth_header(self) -> None:
+        import base64 as b64
+
+        expected = b64.b64encode(b"api-key:api-secret").decode("ascii")
+        assert basic_auth_header(" api-key ", " api-secret ") == f"Basic {expected}"
+
+    def test_auth_method_is_basic_with_key_and_secret(self) -> None:
+        """Regression test: T212 API requires HTTP Basic auth (key:secret), not Bearer.
+
+        Commit f7c3674 changed Basic → Bearer based on a misdiagnosed 401
+        (the real cause was an IP-restricted API key). The local API spec
+        at docs/docs.trading212.com/api/section/general-information/api.json
+        defines authWithSecretKey as { scheme: basic }. This test prevents
+        a silent downgrade to Bearer or any other auth method.
+        """
+        import base64 as b64
+
+        header = basic_auth_header("mykey", "mysecret")
+        # Must start with "Basic " — never "Bearer " or a raw key
+        assert header.startswith("Basic "), f"Expected Basic auth, got: {header}"
+        decoded = b64.b64decode(header[len("Basic "):]).decode("utf-8")
+        assert decoded == "mykey:mysecret", f"Expected key:secret, got: {decoded}"
 
     def test_account_currency(self) -> None:
         assert account_currency({"currencyCode": "EUR"}) == "EUR"

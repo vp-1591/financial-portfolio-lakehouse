@@ -8,6 +8,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import base64
+
 import trading212_net_worth as trading212
 
 
@@ -267,7 +269,8 @@ def test_client_sends_configurable_user_agent(monkeypatch) -> None:
     )
 
     assert client.account_summary() == {"currencyCode": "EUR"}
-    assert captured_headers["Authorization"] == "Bearer api-key"
+    expected_credentials = base64.b64encode(b"api-key:api-secret").decode("ascii")
+    assert captured_headers["Authorization"] == f"Basic {expected_credentials}"
     assert captured_headers["User-agent"] == "custom-agent"
 
 
@@ -301,8 +304,25 @@ def test_concise_details_returns_plain_text_body() -> None:
     assert trading212.concise_details("unauthorized") == "unauthorized"
 
 
-def test_bearer_auth_header_uses_key_as_token() -> None:
+def test_basic_auth_header_encodes_key_and_secret() -> None:
+    expected_credentials = base64.b64encode(b"api-key:api-secret").decode("ascii")
     assert (
-        trading212.bearer_auth_header(" api-key ")
-        == "Bearer api-key"
+        trading212.basic_auth_header(" api-key ", " api-secret ")
+        == f"Basic {expected_credentials}"
     )
+
+
+def test_auth_method_is_basic_with_key_and_secret() -> None:
+    """Regression test: T212 API requires HTTP Basic auth (key:secret), not Bearer.
+
+    Commit f7c3674 changed Basic → Bearer based on a misdiagnosed 401
+    (the real cause was an IP-restricted API key). The local API spec
+    at docs/docs.trading212.com/api/section/general-information/api.json
+    defines authWithSecretKey as { scheme: basic }. This test prevents
+    a silent downgrade to Bearer or any other auth method.
+    """
+    header = trading212.basic_auth_header("mykey", "mysecret")
+    # Must start with "Basic " — never "Bearer " or a raw key
+    assert header.startswith("Basic "), f"Expected Basic auth, got: {header}"
+    decoded = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+    assert decoded == "mykey:mysecret", f"Expected key:secret, got: {decoded}"

@@ -146,27 +146,56 @@ class TestT212CdcKwargsSeparation:
         assert "include_metadata" not in cdc_call_kwargs
 
 
-class TestT212BearerAuth:
-    """Test that Trading 212 client uses Bearer token authentication.
+class TestT212BasicAuth:
+    """Test that Trading 212 client uses HTTP Basic authentication.
 
-    The T212 API v0 uses Authorization: Bearer <API_KEY>, not Basic Auth.
-    This was changed from Basic Auth after HTTP 401 errors in production.
+    The T212 API v0 requires Authorization: Basic <base64(API_KEY:API_SECRET)>.
+    This was changed back from Bearer token after discovering that the Bearer
+    change (commit f7c3674) was based on a misdiagnosed 401 — the real cause
+    was an IP-restricted API key. The local API spec at
+    docs/docs.trading212.com/api/section/general-information/api.json defines
+    authWithSecretKey as { scheme: basic }.
     """
 
-    def test_bearer_auth_header_format(self) -> None:
-        from pipeline.connectors.trading212.client import bearer_auth_header
+    def test_basic_auth_header_format(self) -> None:
+        import base64
 
-        result = bearer_auth_header(" my-api-key ")
-        assert result == "Bearer my-api-key"
+        from pipeline.connectors.trading212.client import basic_auth_header
 
-    def test_bearer_auth_header_strips_whitespace(self) -> None:
-        from pipeline.connectors.trading212.client import bearer_auth_header
+        result = basic_auth_header("my-api-key", "my-api-secret")
+        expected = base64.b64encode(b"my-api-key:my-api-secret").decode("ascii")
+        assert result == f"Basic {expected}"
 
-        result = bearer_auth_header("  test-key-123  ")
-        assert result == "Bearer test-key-123"
+    def test_basic_auth_header_strips_whitespace(self) -> None:
+        import base64
+
+        from pipeline.connectors.trading212.client import basic_auth_header
+
+        result = basic_auth_header("  test-key-123  ", "  test-secret-456  ")
+        expected = base64.b64encode(b"test-key-123:test-secret-456").decode("ascii")
+        assert result == f"Basic {expected}"
+
+    def test_auth_method_is_basic_with_key_and_secret(self) -> None:
+        """Regression test: prevents silent downgrade to Bearer or raw-key auth.
+
+        Commit f7c3674 changed Basic → Bearer based on a misdiagnosed 401.
+        The real cause was an IP-restricted API key. This test ensures
+        the auth method stays as HTTP Basic with key:secret encoding.
+        """
+        import base64
+
+        from pipeline.connectors.trading212.client import basic_auth_header
+
+        header = basic_auth_header("mykey", "mysecret")
+        # Must start with "Basic " — never "Bearer " or a raw key
+        assert header.startswith("Basic "), f"Expected Basic auth, got: {header}"
+        decoded = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+        assert decoded == "mykey:mysecret", f"Expected key:secret, got: {decoded}"
 
     @patch("urllib.request.urlopen")
-    def test_client_sends_bearer_token(self, mock_urlopen: MagicMock) -> None:
+    def test_client_sends_basic_auth(self, mock_urlopen: MagicMock) -> None:
+        import base64
+
         from pipeline.connectors.trading212.client import Trading212Client
 
         # Mock the response
@@ -179,13 +208,15 @@ class TestT212BearerAuth:
         client = Trading212Client(
             base_url="https://live.trading212.com/api/v0",
             api_key="test-key",
+            api_secret="test-secret",
         )
         client.account_summary()
 
-        # Verify the request was made with Bearer auth
+        # Verify the request was made with Basic auth
         call_args = mock_urlopen.call_args
         request = call_args[0][0]
-        assert request.get_header("Authorization") == "Bearer test-key"
+        expected = base64.b64encode(b"test-key:test-secret").decode("ascii")
+        assert request.get_header("Authorization") == f"Basic {expected}"
 
 
 class TestTransformDecryptsPayloads:

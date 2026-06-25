@@ -12,10 +12,11 @@ Second end-to-end run of the medallion pipeline exposed four bugs:
    normalized tables. The `fernet_key` was already passed to all transforms but
    never used for decryption.
 
-2. **T212 uses Basic Auth instead of Bearer token**: Trading 212's public API v0
-   expects `Authorization: Bearer <API_KEY>`, but the client sent `Authorization:
-   Basic base64(key:secret)`. This caused HTTP 401 errors even with valid
-   credentials. The API doesn't use a secret — only the API key as a Bearer token.
+2. **T212 auth was incorrectly changed from Basic to Bearer token**: This change
+   was based on a misdiagnosed 401 error — the real cause was an IP-restricted API
+   key, not the auth method. The Trading 212 API v0 requires HTTP Basic Authentication
+   (`Authorization: Basic <base64(API_KEY:API_SECRET)>`) as documented in the local
+   API spec. This was reverted in ADR 0010.
 
 3. **`allocate_percentages` crashes on missing Delta table**: When no data was
    successfully fetched/transformed, `DeltaTable(table_path)` throws a low-level
@@ -32,11 +33,11 @@ Second end-to-end run of the medallion pipeline exposed four bugs:
   `decrypt(payload_bytes, fernet_key)` before `json.loads()`. Failed decryptions
   are silently skipped (same pattern as failed JSON parsing).
 
-- **Switch T212 auth to Bearer token**: Replaced `basic_auth_header(key, secret)`
+- **Incorrectly switched T212 auth to Bearer token**: Replaced `basic_auth_header(key, secret)`
   with `bearer_auth_header(key)` returning `Bearer <key>`. The `api_secret`
-  parameter is kept in `Trading212Client.__init__` for backward compatibility
-  but defaults to empty string and is unused. The legacy script
-  `scripts/trading212_net_worth.py` is also updated.
+  parameter was made optional and unused. This was a misdiagnosis — the 401 was
+  caused by IP restrictions on the API key, not the auth format. Reverted in
+  ADR 0010 back to HTTP Basic Authentication.
 
 - **Graceful error for missing Delta table**: `allocate_percentages()` now wraps
   `DeltaTable(table_path)` in a try/except and raises `FileNotFoundError` with a
@@ -52,7 +53,7 @@ Second end-to-end run of the medallion pipeline exposed four bugs:
 ## Consequences
 
 - Transforms now correctly decrypt and parse raw Delta table payloads
-- T212 API calls use the correct Bearer token authentication
+- T212 API calls use HTTP Basic Authentication (reverted from Bearer — see ADR 0010)
 - Pipeline exits with a clear error message when no data is available
 - All 129 tests pass (6 new integration tests added)
 
@@ -62,8 +63,9 @@ Second end-to-end run of the medallion pipeline exposed four bugs:
   with encrypted payloads
 - `test_t212_transform_decrypts_encrypted_payload`: verifies T212 transform
   works with encrypted payloads
-- `test_bearer_auth_header_format`: verifies Bearer header format
-- `test_client_sends_bearer_token`: verifies Trading212Client sends Bearer token
+- `test_basic_auth_header_format`: verifies Basic auth header format
+- `test_auth_method_is_basic_with_key_and_secret`: regression test preventing downgrade from Basic auth
+- `test_client_sends_basic_auth`: verifies Trading212Client sends Basic auth
 - `test_allocate_raises_filenotfound_for_missing_table`: verifies graceful error
   for missing Delta table
 - All existing connector transform tests updated to encrypt payloads

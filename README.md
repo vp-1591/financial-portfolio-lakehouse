@@ -62,17 +62,17 @@ using ledger exchange rates before percentages are calculated.
 ## Trading 212 Net Worth Percentages
 
 The Trading 212 script prints the same net worth percentage table using the
-Trading 212 public API. Pass the API key on the command line so credentials
-are not stored in this repository or in a config file.
+Trading 212 public API. Pass both the API key and API secret on the command line so credentials
+are not stored in this repository or in a config file. The `--account-id` parameter is optional.
 
 ```powershell
-python .\scripts\trading212_net_worth.py --api-key "YOUR_API_KEY" --account-id "YOUR_ACCOUNT_ID"
+python .\scripts\trading212_net_worth.py --api-key "YOUR_API_KEY" --api-secret "YOUR_API_SECRET"
 ```
 
 For a demo account:
 
 ```powershell
-python .\scripts\trading212_net_worth.py --api-key "YOUR_DEMO_API_KEY" --account-id "YOUR_DEMO_ACCOUNT_ID" --demo
+python .\scripts\trading212_net_worth.py --api-key "YOUR_DEMO_API_KEY" --api-secret "YOUR_DEMO_API_SECRET" --demo
 ```
 
 Optional arguments:
@@ -127,6 +127,8 @@ prints ticker, percentage, broker, identifier, security currency, and
 description. Trading 212 broker tickers such as `IS3Nd_EQ` and `VWCE_DE_EQ` are
 normalized to cleaner display tickers such as `IS3N` and `VWCE`.
 
+The `--t212-account-id` argument is optional and will default to an empty string if not provided.
+
 Identifiers use the best broker-native value available:
 
 - Trading 212 and XTB use `ISIN:...` when broker data includes an ISIN.
@@ -140,9 +142,8 @@ for currency and the symbol as description.
 
 ```powershell
 python .\scripts\portfolio_percentages.py `
-  --trading212-api-key "YOUR_API_KEY" `
-  --trading212-api-secret "YOUR_API_SECRET" `
-  --trading212-account-id "YOUR_ACCOUNT_ID" `
+  --t212-api-key "YOUR_API_KEY" `
+  --t212-api-secret "YOUR_API_SECRET" `
   --xtb-file "C:\path\to\xtb-report-1.xlsx" `
   --xtb-file "C:\path\to\xtb-report-2.xlsx" `
   --ibkr-flex-token "YOUR_FLEX_TOKEN" `
@@ -233,7 +234,7 @@ Or run individual steps:
 Broker flags:
 
 - `--ibkr` — enable IBKR connector (connects to `https://localhost:5000/v1/api` by default)
-- `--t212-api-key KEY` — enable Trading 212 connector (uses Bearer token auth)
+- `--t212-api-key KEY` — enable Trading 212 connector (uses HTTP Basic auth with API key and secret)
 - `--xtb-file FILE` — enable XTB connector (can be specified multiple times)
 
 ### Tests

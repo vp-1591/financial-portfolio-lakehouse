@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import sys
 import time
@@ -79,7 +80,7 @@ class Trading212Client:
             url,
             headers={
                 "Accept": "application/json",
-                "Authorization": bearer_auth_header(self.api_key),
+                "Authorization": basic_auth_header(self.api_key, self.api_secret),
                 "User-Agent": self.user_agent,
             },
             method=method,
@@ -152,9 +153,15 @@ def concise_details(details: str, limit: int = 500) -> str:
     return json.dumps(parsed, ensure_ascii=True)[:limit]
 
 
-def bearer_auth_header(api_key: str) -> str:
-    """Return a Bearer authorization header for the Trading 212 API."""
-    return f"Bearer {api_key.strip()}"
+def basic_auth_header(api_key: str, api_secret: str) -> str:
+    """Return a Basic authorization header for the Trading 212 API.
+
+    Trading 212 API v0 requires HTTP Basic Authentication where the
+    API Key is the username and the API Secret is the password.
+    """
+    credentials = f"{api_key.strip()}:{api_secret.strip()}"
+    encoded = base64.b64encode(credentials.encode("utf-8")).decode("ascii")
+    return f"Basic {encoded}"
 
 
 def first_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -450,7 +457,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--account-id",
-        required=True,
+        required=False,
+        default="",
         help="Trading 212 account id or label to display in the Account column.",
     )
     parser.add_argument(
