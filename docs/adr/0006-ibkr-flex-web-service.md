@@ -18,8 +18,8 @@ IBKR Flex Web Service API. The standalone script now:
 
 - Uses `IbkrFlexClient` (two-step HTTP flow: SendRequest → GetStatement)
 - Accepts `--ibkr-flex-token` (required) and `--ibkr-flex-query-id` (default 1554188)
-- Parses XML `<OpenPosition>` and `<AccountInformation>` elements for positions, cash,
-  net liquidation value, and FX rates
+- Parses XML `<OpenPosition>`, `<AccountInformation>`, and optionally `<CashReport>` elements
+  for positions, cash, net liquidation value, and FX rates
 - Removed: `--base-url`, `--account`, `--verify-tls`, `--skip-auth-check`,
   `--require-brokerage-session`
 
@@ -36,9 +36,18 @@ and will be migrated separately.
 - Data has 15–30 minute delay (acceptable for portfolio snapshots)
 - Simpler CLI: `python scripts/ibkr_net_worth.py --ibkr-flex-token TOKEN`
 - `--ibkr-base-currency` no longer needed (Flex provides `fxRateToBase`)
+- Cash balances resolved through 3-source priority:
+  1. **Cash Report** (per-currency `endingCash`) — most precise, requires Cash Report section in Flex Query
+     - Summary rows (e.g. `currency="BASE SUMMARY"`) are filtered out to prevent double-counting
+  2. **AccountInformation `cashBalance`** — single-currency field from Account Information section
+  3. **Derived from NLV minus positions** — fallback when neither source is present; produces single CASH entry in base currency
+- FX rates for cash conversion: `fxRateToBase` from OpenPositions → `<ConversionRate>` elements → warning on missing rate
 - Pipeline connector migration is a separate follow-up task
 
 ## Validation
 
-All 134 tests pass. Flex XML parsing verified with fixture data covering positions,
-cash, FX conversion, net worth calculation, and error handling.
+All 147 tests pass (1 skipped). Flex XML parsing verified with fixture data covering positions,
+cash (Cash Report, cashBalance, and NLV-derived), FX conversion, net worth calculation,
+and error handling. Cash Report filtering excludes summary rows (BASE SUMMARY) that would
+double-count per-currency entries. A warning is emitted to stderr when a non-base-currency
+cash entry has no available FX rate (previously defaulted silently to 1.0).

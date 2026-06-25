@@ -2,9 +2,13 @@
 """Print IBKR portfolio assets as percentages of account net worth.
 
 This script uses the IBKR Flex Web Service API to fetch positions and account
-data. It requires a Flex Query (Activity Flex Query with Open Positions and
-Account Information sections) and a Flex Web Service token. No local gateway
-or browser login is needed.
+data. It requires a Flex Query (Activity Flex Query with Open Positions,
+Account Information, and optionally Cash Report sections) and a Flex Web
+Service token. No local gateway or browser login is needed.
+
+When the Cash Report section is included in the Flex Query, per-currency
+cash balances (endingCash) are used directly. Otherwise, it falls back to
+AccountInformation.cashBalance if available.
 
 The data has a 15–30 minute delay compared to real-time positions from the
 Client Portal Gateway.
@@ -13,6 +17,7 @@ Client Portal Gateway.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 import urllib.error
@@ -21,6 +26,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
+
+# ISO 4217 currency codes are exactly 3 uppercase letters.
+_IS_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 
 DEFAULT_FLEX_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
@@ -217,6 +225,67 @@ def parse_account_info(root: ET.Element) -> list[dict[str, Any]]:
     return accounts
 
 
+def parse_cash_report(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse cash report entries from a Flex XML response.
+
+    IBKR uses <CashReportCurrency> elements inside the <CashReport> section.
+    Each element represents a currency row with fields like endingCash,
+    startingCash, and currency. The Cash Report section must be included
+    in the Flex Query configuration for these elements to appear.
+
+    Summary rows (e.g. currency="BASE SUMMARY") are excluded — they are
+    subtotals that would double-count per-currency entries.
+
+    Returns a list of attribute dicts, one per per-currency <CashReportCurrency>.
+    """
+    entries: list[dict[str, Any]] = []
+    for cr in root.iter("CashReportCurrency"):
+        attribs = dict(cr.attrib)
+        currency = str(attribs.get("currency", "") or "").upper()
+        # Skip summary/total rows: IBKR includes rows like "BASE SUMMARY",
+        # "Total", etc. that are subtotals, not actual currency balances.
+        if currency and not _IS_CURRENCY_RE.match(currency):
+            continue
+        entries.append(attribs)
+    return entries
+
+
+def parse_conversion_rates(root: ET.Element) -> dict[str, float]:
+    """Parse <ConversionRate> elements from a Flex XML response.
+
+    Returns a dict mapping from currency code to the conversion rate
+    (e.g. {"EUR": 1.1, "USD": 1.0}) where the rate converts from that
+    currency to the account's base currency.
+    """
+    rates: dict[str, float] = {}
+    for cr in root.iter("ConversionRate"):
+        from_ccy = str(cr.get("fromCurrency", "") or "").upper()
+        rate = as_float(cr.get("rate"))
+        if from_ccy and rate:
+            rates[from_ccy] = rate
+    return rates
+
+
+def infer_base_currency_from_rates(
+    conversion_rates: dict[str, float],
+    account_ids: set[str],
+) -> dict[str, str]:
+    """Infer the base currency from ConversionRate entries.
+
+    The base currency has a rate of exactly 1.0 (or is absent from the
+    rates dict, meaning it converts 1:1 to itself). If no rate equals 1.0,
+    falls back to the most common currency across positions and cash entries.
+    Returns a dict mapping account_id -> base_currency.
+    """
+    # Find the currency with rate=1.0 — that's the base
+    for ccy, rate in conversion_rates.items():
+        if rate == 1.0:
+            return {acct_id: ccy for acct_id in account_ids}
+
+    # No rate=1.0 found — can't determine base currency
+    return {}
+
+
 def position_label(position: dict[str, Any]) -> str:
     for key in ("symbol", "description", "conid"):
         value = position.get(key)
@@ -249,41 +318,57 @@ def load_assets(
     client: IbkrFlexClient,
     retries: int = 6,
     delay: float = 3.0,
+    root: ET.Element | None = None,
 ) -> tuple[list[Asset], float]:
-    """Fetch IBKR positions and cash via Flex Web Service and return assets with net worth."""
-    ref_code = client.request_report()
-    root = client.fetch_report(ref_code, retries=retries, delay=delay)
+    """Fetch IBKR positions and cash via Flex Web Service and return assets with net worth.
+
+    If *root* is provided (a pre-parsed XML element), it is used directly instead of
+    making a new Flex request. This avoids duplicate requests when the caller has
+    already fetched the report (e.g. for debug inspection).
+    """
+    if root is None:
+        ref_code = client.request_report()
+        root = client.fetch_report(ref_code, retries=retries, delay=delay)
 
     positions = parse_positions(root)
     account_infos = parse_account_info(root)
+    cash_report_entries = parse_cash_report(root)
+    conversion_rates = parse_conversion_rates(root)
 
-    # Build a lookup of account_id -> net liquidation value and base currency
-    # from AccountInformation elements
-    net_liq_by_account: dict[str, float] = {}
+    # Build a lookup of account_id -> base currency from AccountInformation elements
     base_currency_by_account: dict[str, str] = {}
-    cash_by_account_currency: dict[tuple[str, str], float] = {}
 
     for info in account_infos:
         acct_id = str(info.get("accountId", ""))
-        nlv = as_float(info.get("netLiquidationValue"))
-        if nlv:
-            net_liq_by_account[acct_id] = nlv
         currency = str(info.get("currency", "") or "").upper()
         if currency and currency != "BASE":
             base_currency_by_account[acct_id] = currency
         elif not base_currency_by_account.get(acct_id):
             base_currency_by_account[acct_id] = "USD"
-        # Track cash balance per account
-        cash_balance = as_float(info.get("cashBalance"))
-        if cash_balance:
-            cash_currency = str(info.get("currency", currency) or currency)
-            if cash_currency:
-                key = (acct_id, cash_currency)
-                cash_by_account_currency[key] = cash_by_account_currency.get(key, 0.0) + cash_balance
 
     # If no AccountInformation, try to infer base currency from positions' fxRateToBase
     assets: list[Asset] = []
     net_worth = 0.0
+
+    # Build FX rate lookup from OpenPositions and ConversionRates.
+    # The Cash Report section does not include fxRateToBase, so we reuse rates
+    # from position data and the <ConversionRate> section for the same currencies.
+    fx_rate_lookup: dict[tuple[str, str], float] = {}
+    for pos in positions:
+        pos_acct = str(pos.get("accountId", ""))
+        pos_currency = str(pos.get("currency", "") or "").upper()
+        if pos_acct and pos_currency:
+            fx_rate_lookup[(pos_acct, pos_currency)] = as_float(
+                pos.get("fxRateToBase"), 1.0
+            )
+
+    # Supplement with global conversion rates (currency -> rate) from <ConversionRate>.
+    # These apply across all accounts and cover currencies not in OpenPositions.
+    for acct_id in base_currency_by_account:
+        for ccy, rate in conversion_rates.items():
+            key = (acct_id, ccy)
+            if key not in fx_rate_lookup:
+                fx_rate_lookup[key] = rate
 
     # Process positions
     for pos in positions:
@@ -322,35 +407,97 @@ def load_assets(
             security_currency=currency,
         ))
 
-    # Process cash from AccountInformation
-    for (acct_id, cash_currency), cash_balance in cash_by_account_currency.items():
-        base_currency = base_currency_by_account.get(acct_id, cash_currency)
-        fx_rate = 1.0
-        # Check if we have fxRateToBase from positions for this currency
-        for pos in positions:
-            pos_acct = str(pos.get("accountId", ""))
-            pos_currency = str(pos.get("currency", "") or "").upper()
-            if pos_acct == acct_id and pos_currency == cash_currency:
-                fx_rate = as_float(pos.get("fxRateToBase"), 1.0)
-                break
+    # --- Cash processing (3 sources in priority order) ---
+    #
+    # 1. Cash Report (per-currency endingCash) — most precise, gives each
+    #    currency's cash balance individually (e.g. CASH EUR 500, CASH USD 200).
+    #    Requires the "Cash Report" section in the Flex Query configuration.
+    #
+    # 2. AccountInformation.cashBalance — single-currency field from the
+    #    Account Information section. Less precise: only the base-currency
+    #    balance.
+    #
+    # 3. Derived from NLV minus positions — fallback when neither Cash Report
+    #    nor cashBalance are present. Produces a single CASH entry in base
+    #    currency per account.
 
-        base_value = cash_balance * fx_rate if cash_currency != base_currency else cash_balance
-        if base_value != 0:
-            assets.append(Asset(
-                account_id=acct_id,
-                label=f"CASH {cash_currency}",
-                asset_class="CASH",
-                currency=base_currency,
-                value=base_value,
-            ))
+    cash_from_report = False  # Whether we got cash from Cash Report
 
-    # Calculate net worth
-    for acct_id, nlv in net_liq_by_account.items():
-        net_worth += nlv
+    # Source 1: Cash Report (per-currency endingCash)
+    if cash_report_entries:
+        for entry in cash_report_entries:
+            acct_id = str(entry.get("accountId", ""))
+            currency = str(entry.get("currency", "") or "").upper()
+            ending_cash = as_float(entry.get("endingCash"))
+            if ending_cash == 0:
+                # Also try startingCash if endingCash is zero/missing
+                ending_cash = as_float(entry.get("startingCash"))
 
-    # Fallback: sum asset values if no AccountInformation
-    if net_worth == 0:
-        net_worth = sum(asset.value for asset in assets)
+            if not currency or ending_cash == 0:
+                continue
+
+            base_currency = base_currency_by_account.get(acct_id, currency)
+            # CashReport doesn't include fxRateToBase — use the rate from
+            # OpenPositions for the same account+currency, or from ConversionRates.
+            fx_rate = fx_rate_lookup.get((acct_id, currency))
+            if fx_rate is None:
+                # No FX rate found — check if currency IS the base currency
+                # (no conversion needed) or if this is a missing-rate situation.
+                if currency != base_currency:
+                    print(
+                        f"Warning: No FX rate for {currency}→{base_currency}; "
+                        f"treating {ending_cash:,.2f} {currency} as {base_currency}. "
+                        f"Add OpenPositions or ConversionRates data for {currency}.",
+                        file=sys.stderr,
+                    )
+                fx_rate = 1.0
+
+            # Convert to base currency
+            if currency != base_currency and fx_rate and fx_rate != 0:
+                base_value = ending_cash * fx_rate
+            else:
+                base_value = ending_cash
+
+            if base_value != 0:
+                assets.append(Asset(
+                    account_id=acct_id,
+                    label=f"CASH {currency}",
+                    asset_class="CASH",
+                    currency=base_currency,
+                    value=base_value,
+                    security_currency=currency,
+                ))
+                cash_from_report = True
+
+    # Source 2: AccountInformation.cashBalance
+    if not cash_from_report:
+        cash_by_account_currency: dict[tuple[str, str], float] = {}
+        for info in account_infos:
+            acct_id = str(info.get("accountId", ""))
+            cash_balance = as_float(info.get("cashBalance"))
+            if cash_balance:
+                currency = str(info.get("currency", "") or "").upper()
+                if currency:
+                    key = (acct_id, currency)
+                    cash_by_account_currency[key] = cash_by_account_currency.get(key, 0.0) + cash_balance
+
+        for (acct_id, cash_currency), cash_balance in cash_by_account_currency.items():
+            base_currency = base_currency_by_account.get(acct_id, cash_currency)
+            fx_rate = fx_rate_lookup.get((acct_id, cash_currency), 1.0)
+
+            base_value = cash_balance * fx_rate if cash_currency != base_currency else cash_balance
+            if base_value != 0:
+                assets.append(Asset(
+                    account_id=acct_id,
+                    label=f"CASH {cash_currency}",
+                    asset_class="CASH",
+                    currency=base_currency,
+                    value=base_value,
+                    security_currency=cash_currency,
+                ))
+
+    # Calculate net worth by summing all asset values
+    net_worth = sum(asset.value for asset in assets)
 
     return assets, net_worth
 
@@ -374,6 +521,33 @@ def print_assets(assets: list[Asset], net_worth: float) -> None:
             f"{asset.value:>16,.2f} "
             f"{percentage:>11.2f}%"
         )
+
+
+def dump_xml_structure(root: ET.Element, max_depth: int = 5) -> None:
+    """Print a summary of the XML structure for debugging."""
+    print("=== XML Structure Debug ===")
+
+    def _walk(elem: ET.Element, depth: int) -> None:
+        if depth > max_depth:
+            return
+        attrs = dict(elem.attrib)
+        for k, v in attrs.items():
+            if len(v) > 60:
+                attrs[k] = v[:57] + "..."
+        if attrs:
+            attr_str = " " + " ".join(f'{k}="{v}"' for k, v in attrs.items())
+        else:
+            attr_str = ""
+        children = list(elem)
+        child_tags = [c.tag for c in children]
+        indent = "  " * depth
+        child_info = f"  [{len(children)} children: {', '.join(child_tags[:5])}]" if children else ""
+        print(f"{indent}<{elem.tag}{attr_str}>{child_info}")
+        for child in children:
+            _walk(child, depth + 1)
+
+    _walk(root, 0)
+    print("=== End XML Structure ===\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -413,6 +587,11 @@ def parse_args() -> argparse.Namespace:
         default=3.0,
         help="Seconds to wait between retries. Default: 3",
     )
+    parser.add_argument(
+        "--debug-xml",
+        action="store_true",
+        help="Print the XML structure from the Flex response for debugging.",
+    )
     return parser.parse_args()
 
 
@@ -427,7 +606,13 @@ def main() -> int:
 
     try:
         started = time.monotonic()
-        assets, net_worth = load_assets(client, retries=args.retries, delay=args.retry_delay)
+        ref_code = client.request_report()
+        root = client.fetch_report(ref_code, retries=args.retries, delay=args.retry_delay)
+
+        if args.debug_xml:
+            dump_xml_structure(root)
+
+        assets, net_worth = load_assets(client, retries=args.retries, delay=args.retry_delay, root=root)
         print_assets(assets, net_worth)
         print(f"\nFetched in {time.monotonic() - started:.1f}s")
         return 0
