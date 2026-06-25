@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-DEFAULT_FLEX_BASE_URL = "https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService"
+DEFAULT_FLEX_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 DEFAULT_QUERY_ID = "1554188"
 
 
@@ -73,10 +73,10 @@ class IbkrFlexClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def _request(self, params: dict[str, str]) -> str:
+    def _request(self, path: str, params: dict[str, str]) -> str:
         """Make an HTTP GET request and return the response body as text."""
         query_string = urllib.parse.urlencode(params)
-        url = f"{self.base_url}?{query_string}"
+        url = f"{self.base_url}/{path}?{query_string}"
         req = urllib.request.Request(url, headers={"Accept": "application/xml"})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
@@ -97,7 +97,7 @@ class IbkrFlexClient:
         or query ID).
         """
         params = {"t": self.token, "q": self.query_id, "v": "3"}
-        body = self._request(params)
+        body = self._request("SendRequest", params)
         root = ET.fromstring(body)
 
         status = root.findtext("Status")
@@ -132,7 +132,7 @@ class IbkrFlexClient:
         last_error: str = ""
 
         for attempt in range(1, retries + 1):
-            body = self._request(params)
+            body = self._request("GetStatement", params)
             root = ET.fromstring(body)
 
             # Successful report: root tag is FlexQueryResponse or

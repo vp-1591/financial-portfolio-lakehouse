@@ -200,7 +200,7 @@ def test_ibkr_flex_client_request_report_parses_reference_code() -> None:
 </FlexStatementResponse>
 """
     client = ibkr.IbkrFlexClient(token="test-token", query_id="1554188")
-    client._request = lambda params: response_xml  # type: ignore[assignment]
+    client._request = lambda path, params: response_xml  # type: ignore[assignment]
 
     ref_code = client.request_report()
     assert ref_code == "98765432"
@@ -216,7 +216,7 @@ def test_ibkr_flex_client_request_report_raises_on_error() -> None:
 </FlexStatementResponse>
 """
     client = ibkr.IbkrFlexClient(token="bad-token", query_id="1554188")
-    client._request = lambda params: response_xml  # type: ignore[assignment]
+    client._request = lambda path, params: response_xml  # type: ignore[assignment]
 
     try:
         client.request_report()
