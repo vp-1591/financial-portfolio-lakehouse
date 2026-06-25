@@ -146,35 +146,31 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--ibkr-base-url",
-        default=ibkr.DEFAULT_BASE_URL,
-        help=f"Client Portal Gateway API base URL. Default: {ibkr.DEFAULT_BASE_URL}",
+        "--ibkr-flex-token",
+        required=True,
+        help="IBKR Flex Web Service token (generated in Client Portal → Flex Queries).",
     )
     parser.add_argument(
-        "--ibkr-account",
-        help="Optional IBKR account id. By default all portfolio accounts are included.",
+        "--ibkr-flex-query-id",
+        default=ibkr.DEFAULT_QUERY_ID,
+        help=f"IBKR Flex Query ID. Default: {ibkr.DEFAULT_QUERY_ID}",
     )
     parser.add_argument(
-        "--ibkr-base-currency",
-        help=(
-            "IBKR account base currency. Use this when the Client Portal ledger "
-            "returns the placeholder currency BASE."
-        ),
+        "--ibkr-flex-base-url",
+        default=ibkr.DEFAULT_FLEX_BASE_URL,
+        help=f"Flex Web Service base URL. Default: {ibkr.DEFAULT_FLEX_BASE_URL}",
     )
     parser.add_argument(
-        "--ibkr-verify-tls",
-        action="store_true",
-        help="Verify gateway TLS certificate.",
+        "--ibkr-retries",
+        type=int,
+        default=6,
+        help="Number of retries when polling for the Flex report. Default: 6",
     )
     parser.add_argument(
-        "--ibkr-skip-auth-check",
-        action="store_true",
-        help="Skip IBKR gateway session validation before reading portfolio data.",
-    )
-    parser.add_argument(
-        "--ibkr-require-brokerage-session",
-        action="store_true",
-        help="Require /iserver/auth/status before reading IBKR portfolio data.",
+        "--ibkr-retry-delay",
+        type=float,
+        default=3.0,
+        help="Seconds to wait between Flex report retries. Default: 3",
     )
     return parser.parse_args()
 
@@ -230,13 +226,12 @@ def main() -> int:
         holdings.extend(connectors.load_xtb_holdings(path.resolve() for path in args.xtb_file))
         holdings.extend(
             connectors.load_ibkr_holdings(
-                base_url=args.ibkr_base_url,
-                account=args.ibkr_account,
-                verify_tls=args.ibkr_verify_tls,
+                flex_token=args.ibkr_flex_token,
+                flex_query_id=args.ibkr_flex_query_id,
+                flex_base_url=args.ibkr_flex_base_url,
                 timeout=args.timeout,
-                skip_auth_check=args.ibkr_skip_auth_check,
-                require_brokerage_session=args.ibkr_require_brokerage_session,
-                base_currency_override=args.ibkr_base_currency,
+                retries=args.ibkr_retries,
+                retry_delay=args.ibkr_retry_delay,
             )
         )
         print_rows(

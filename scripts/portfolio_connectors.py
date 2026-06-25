@@ -210,89 +210,43 @@ def load_xtb_holdings(report_paths: Iterable[Path]) -> list[Holding]:
 
 
 def load_ibkr_holdings(
-    base_url: str,
-    account: str | None,
-    verify_tls: bool,
-    timeout: float,
-    skip_auth_check: bool,
-    require_brokerage_session: bool,
-    base_currency_override: str | None = None,
+    flex_token: str,
+    flex_query_id: str = ibkr.DEFAULT_QUERY_ID,
+    flex_base_url: str = ibkr.DEFAULT_FLEX_BASE_URL,
+    timeout: float = 30.0,
+    retries: int = 6,
+    retry_delay: float = 3.0,
 ) -> list[Holding]:
-    client = ibkr.IbkrClient(base_url, verify_tls=verify_tls, timeout=timeout)
-    if not skip_auth_check:
-        ibkr.validate_gateway_session(client, require_brokerage_session)
-
-    accounts = client.accounts()
-    account_ids = [account] if account else [ibkr.account_id(item) for item in accounts]
+    client = ibkr.IbkrFlexClient(
+        token=flex_token,
+        query_id=flex_query_id,
+        base_url=flex_base_url,
+        timeout=timeout,
+    )
+    assets, _net_worth = ibkr.load_assets(client, retries=retries, delay=retry_delay)
 
     holdings: list[Holding] = []
-    for account_id in account_ids:
-        positions = client.positions(account_id)
-        ledger = client.ledger(account_id)
-        rates = ibkr.exchange_rates(ledger)
-        base_currency = ibkr_base_currency(ledger, base_currency_override)
-
-        for position in positions:
-            value = ibkr.position_value(position)
-            if value == 0:
-                continue
-            currency = real_currency(position.get("currency"), base_currency)
-            conid = ibkr.position_conid(position)
-            contract_info = load_ibkr_contract_info(client, conid)
-            holdings.append(
-                Holding(
-                    "IBKR",
-                    ibkr.position_label(position),
-                    base_currency,
-                    ibkr.to_base_currency(value, currency, rates),
-                    identifier=format_identifier("IBKR", conid),
-                    security_currency=currency,
-                    description=ibkr.position_description(position, contract_info),
-                )
+    for asset in assets:
+        identifier = format_identifier("IBKR", asset.conid) if asset.conid else ""
+        if not identifier and asset.isin:
+            identifier = format_identifier("ISIN", asset.isin)
+        holdings.append(
+            Holding(
+                broker="IBKR",
+                ticker=asset.label,
+                currency=asset.currency,
+                value=asset.value,
+                identifier=identifier,
+                security_currency=asset.security_currency or asset.currency,
+                description=asset.description,
             )
-
-        for currency, entry in ledger.items():
-            if currency == "BASE" or not isinstance(entry, dict):
-                continue
-            cash_balance = ibkr.as_float(entry.get("cashbalance"))
-            if cash_balance == 0:
-                continue
-            currency_code = real_currency(entry.get("currency") or currency, base_currency)
-            holdings.append(
-                Holding(
-                    "IBKR",
-                    f"CASH {currency_code}",
-                    base_currency,
-                    ibkr.to_base_currency(cash_balance, currency_code, rates),
-                    security_currency=currency_code,
-                    description=f"Cash {currency_code}",
-                )
-            )
-
+        )
     return holdings
-
-
-def load_ibkr_contract_info(
-    client: ibkr.IbkrClient,
-    conid: str,
-) -> dict[str, object]:
-    if not conid:
-        return {}
-    try:
-        return client.contract_info(conid)
-    except ibkr.IbkrError:
-        return {}
 
 
 def format_identifier(kind: str, value: str) -> str:
     return f"{kind}:{value}" if value else ""
 
-
-def real_currency(value: object, fallback: str) -> str:
-    currency = str(value or "").upper()
-    if not currency or currency == "BASE":
-        return fallback
-    return currency
 
 
 def normalize_trading212_ticker(ticker: str) -> str:
@@ -320,32 +274,6 @@ def normalize_trading212_ticker(ticker: str) -> str:
 def normalize_isin_lookup_key(ticker: str) -> str:
     return ticker.strip().upper()
 
-
-def ibkr_base_currency(
-    ledger: dict[str, object],
-    override: str | None = None,
-) -> str:
-    if override:
-        return override.upper()
-
-    base = ledger.get("BASE")
-    if isinstance(base, dict):
-        currency = base.get("currency")
-        if currency and str(currency).upper() != "BASE":
-            return str(currency).upper()
-
-    for currency, entry in ledger.items():
-        if not isinstance(entry, dict):
-            continue
-        if ibkr.as_float(entry.get("exchangerate")) == 1.0:
-            inferred = real_currency(entry.get("currency") or currency, "")
-            if inferred:
-                return inferred
-
-    raise PortfolioConnectorError(
-        "IBKR ledger reports base currency as BASE. Pass --ibkr-base-currency "
-        "with the account base currency, for example --ibkr-base-currency EUR."
-    )
 
 
 def aggregate_percentages(

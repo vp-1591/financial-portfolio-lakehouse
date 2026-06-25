@@ -4,51 +4,45 @@ Utilities for consolidating broker assets into a single portfolio view.
 
 ## IBKR Net Worth Percentages
 
-The first script reads Interactive Brokers assets through the IBKR Client Portal
-Web API and prints each position and cash balance as a percentage of net worth.
+The first script reads Interactive Brokers assets through the IBKR Flex Web
+Service API and prints each position and cash balance as a percentage of net
+worth. No local gateway or browser login is required.
+
+> **Note:** Flex Query data has a 15–30 minute delay compared to real-time
+> positions from the Client Portal Gateway.
 
 ### IBKR setup
 
-1. Install Java 8 update 192 or newer.
-2. Download and unzip the Interactive Brokers Client Portal Gateway.
-3. Start the gateway from its directory:
-
-   ```powershell
-   bin\run.bat root\conf.yaml
-   ```
-
-4. Open `https://localhost:5000` in a browser on the same machine and sign in.
-   The local gateway uses a self-signed certificate by default, so the browser
-   warning is expected for localhost. After approving the mobile notification or
-   QR login, wait until the gateway page reports that the client login succeeded.
-
-The script validates the gateway SSO session with `GET /sso/validate` before it
-reads portfolio data. It does not require the `/iserver` brokerage session by
-default, because IBKR allows only one active brokerage session per username. If
-you log in to TWS, Client Portal, or the IBKR mobile app, IBKR may ask to reset
-other sessions and the gateway brokerage session can be invalidated. In that
-case the portfolio script can still work as long as the gateway SSO session is
-valid.
-
-If the browser remains stuck on the QR-code login page after mobile approval,
-restart the Client Portal Gateway, reopen `https://localhost:5000`, and complete
-login there before running the script. A raw `HTTP 401` from
-`/iserver/auth/status` usually means the brokerage session was not established or
-was taken over by another IBKR product, not that the local Python script failed
-to scan the QR code.
+1. Log in to [IBKR Client Portal](https://portal.interactivebrokers.com).
+2. Navigate to **Performance & Reports → Flex Queries**.
+3. Click the **+** icon in the **Activity Flex Query** section to create a new
+   query named `get-open-positions`.
+4. In the **Open Positions** section, select these fields: Account ID, Currency,
+   FX Rate To Base, Asset Class, Symbol, Description, Conid, ISIN, Listing
+   Exchange, Report Date, Quantity, Mark Price, Position Value, Cost Basis
+   Price, Cost Basis Money, Percent of NAV, Unrealized P/L, Side.
+5. In the **Account Information** section, select: Net Liquidation Value,
+   Cash Balance, Currency.
+6. Set **Format** to XML, **Period** to Last Business Day, and
+   **Include Currency Rates** to Yes.
+7. Click **Continue → Create** and note the **Query ID** (a number like
+   `1554188`).
+8. On the same page, click the **gear icon ⚙️** next to **Flex Web Service
+   Configuration**, toggle it to **Enable**, and click **Generate A New Token**.
+   Copy the token immediately — it is shown only once.
 
 ### Run
 
 ```powershell
-python .\scripts\ibkr_net_worth.py
+python .\scripts\ibkr_net_worth.py --ibkr-flex-token YOUR_TOKEN
 ```
 
 Optional arguments:
 
 ```powershell
-python .\scripts\ibkr_net_worth.py --account U1234567
-python .\scripts\ibkr_net_worth.py --base-url https://localhost:5001/v1/api
-python .\scripts\ibkr_net_worth.py --require-brokerage-session
+python .\scripts\ibkr_net_worth.py --ibkr-flex-token YOUR_TOKEN --ibkr-flex-query-id 1554188
+python .\scripts\ibkr_net_worth.py --ibkr-flex-token YOUR_TOKEN --retries 10 --retry-delay 5
+python .\scripts\ibkr_net_worth.py --ibkr-flex-token YOUR_TOKEN --timeout 60
 ```
 
 The script calls:
@@ -140,11 +134,9 @@ Identifiers use the best broker-native value available:
   identifier and is more reliable than ISIN in Client Portal position data.
 - Rows without an available identifier display `-`.
 
-IBKR descriptions are enriched from `/iserver/contract/{conid}/info` when the
-gateway allows that endpoint; otherwise the script falls back to position
-description fields. XTB exports may not include instrument currency or
-description, so those rows can show `-` for currency and the symbol as
-description.
+IBKR descriptions come from the Flex Query `description` field. XTB exports
+may not include instrument currency or description, so those rows can show `-`
+for currency and the symbol as description.
 
 ```powershell
 python .\scripts\portfolio_percentages.py `
@@ -153,7 +145,8 @@ python .\scripts\portfolio_percentages.py `
   --trading212-account-id "YOUR_ACCOUNT_ID" `
   --xtb-file "C:\path\to\xtb-report-1.xlsx" `
   --xtb-file "C:\path\to\xtb-report-2.xlsx" `
-  --ibkr-base-currency EUR `
+  --ibkr-flex-token "YOUR_FLEX_TOKEN" `
+  --ibkr-flex-query-id 1554188 `
   --target-currency EUR
 ```
 
@@ -182,8 +175,8 @@ SXR8.DE,IE00B5BMR087
 SXRV.DE,IE00B53SZB19
 ```
 
-`--ibkr-base-currency` is only required when IBKR reports the account base
-currency as the placeholder `BASE` instead of a real ISO currency code.
+The Flex Query includes `FX Rate To Base` for each position, so currency
+conversion to the account base currency is automatic.
 
 Missing FX rates are fetched from Frankfurter first, then Yahoo Finance if the
 first provider fails. To avoid network FX lookups or override a rate, pass rates

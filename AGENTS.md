@@ -3,14 +3,7 @@ To create a single dashboard that consolidates assests from different brokers.
 
 ## Python environment
 
-A virtual environment lives at `.venv/`. Activate it before running scripts or
-tests:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Or run commands through it directly:
+A virtual environment lives at `.venv/`. Run commands through it directly:
 
 ```powershell
 .venv\Scripts\python -m pytest

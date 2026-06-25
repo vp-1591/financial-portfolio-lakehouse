@@ -12,73 +12,63 @@ import portfolio_connectors as connectors
 import portfolio_percentages
 
 
-class FakeIbkrClientWithBasePlaceholder:
-    def __init__(self, base_url: str, verify_tls: bool, timeout: float) -> None:
+class FakeIbkrFlexClient:
+    """Fake Flex client that returns a fixed XML response."""
+
+    def __init__(self, token: str = "test-token", query_id: str = "1554188",
+                 base_url: str = "https://example.test", timeout: float = 30.0) -> None:
+        self.token = token
+        self.query_id = query_id
         self.base_url = base_url
-        self.verify_tls = verify_tls
         self.timeout = timeout
 
-    def accounts(self) -> list[dict[str, str]]:
-        return [{"accountId": "U123"}]
+    def request_report(self) -> str:
+        return "12345678"
 
-    def positions(self, account_id: str) -> list[dict[str, object]]:
-        return [
-            {
-                "contractDesc": "VWCE",
-                "currency": "BASE",
-                "mktValue": 100.0,
-            }
-        ]
-
-    def contract_info(self, conid: object) -> dict[str, object]:
-        raise AssertionError("contract info should not be requested without conid")
-
-    def ledger(self, account_id: str) -> dict[str, dict[str, object]]:
-        return {
-            "BASE": {
-                "currency": "BASE",
-                "netliquidationvalue": 100.0,
-                "exchangerate": 1.0,
-            }
-        }
+    def fetch_report(self, reference_code: str, retries: int = 6, delay: float = 3.0) -> object:
+        import xml.etree.ElementTree as ET
+        return ET.fromstring(FLEX_XML_BASIC)
 
 
-class FakeIbkrClientWithContractInfo:
-    def __init__(self, base_url: str, verify_tls: bool, timeout: float) -> None:
-        self.base_url = base_url
-        self.verify_tls = verify_tls
-        self.timeout = timeout
+FLEX_XML_BASIC = """\
+<FlexQueryResponse queryName="test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">
+      <OpenPositions>
+        <OpenPosition accountId="U123" currency="EUR" fxRateToBase="1.0"
+                      assetClass="STK" symbol="VWCE" description="Vanguard FTSE All-World"
+                      conid="1234567" isin="IE00BK5BQT80"
+                      quantity="100" markPrice="50.0" positionValue="5000.0"
+                      side="Long"/>
+      </OpenPositions>
+      <AccountInformation>
+        <AccountInformation accountId="U123" currency="EUR"
+                           netLiquidationValue="8000.00" cashBalance="3000.00"/>
+      </AccountInformation>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>
+"""
 
-    def accounts(self) -> list[dict[str, str]]:
-        return [{"accountId": "U123"}]
-
-    def positions(self, account_id: str) -> list[dict[str, object]]:
-        return [
-            {
-                "conid": 208813719,
-                "contractDesc": "GOOGL",
-                "currency": "USD",
-                "mktValue": 100.0,
-            }
-        ]
-
-    def contract_info(self, conid: object) -> dict[str, object]:
-        assert conid == "208813719"
-        return {"companyName": "Alphabet Inc Class A"}
-
-    def ledger(self, account_id: str) -> dict[str, dict[str, object]]:
-        return {
-            "BASE": {
-                "currency": "EUR",
-                "netliquidationvalue": 100.0,
-                "exchangerate": 1.0,
-            },
-            "USD": {
-                "currency": "USD",
-                "cashbalance": 0.0,
-                "exchangerate": 0.9,
-            },
-        }
+FLEX_XML_CONID = """\
+<FlexQueryResponse queryName="test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">
+      <OpenPositions>
+        <OpenPosition accountId="U123" currency="USD" fxRateToBase="0.9"
+                      assetClass="STK" symbol="GOOGL" description="Alphabet Inc Class A"
+                      conid="208813719" isin="US0378331005"
+                      quantity="50" markPrice="100.0" positionValue="5000.0"
+                      side="Long"/>
+      </OpenPositions>
+      <AccountInformation>
+        <AccountInformation accountId="U123" currency="EUR"
+                           netLiquidationValue="8000.00" cashBalance="3000.00"/>
+      </AccountInformation>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>
+"""
 
 
 class FakeTrading212Client:
@@ -279,74 +269,50 @@ def test_normalize_trading212_ticker_removes_broker_suffixes() -> None:
     assert connectors.normalize_trading212_ticker("alreadylower") == "alreadylower"
 
 
-def test_ibkr_base_placeholder_requires_explicit_base_currency(monkeypatch) -> None:
-    monkeypatch.setattr(connectors.ibkr, "IbkrClient", FakeIbkrClientWithBasePlaceholder)
+def test_ibkr_flex_holdings_include_positions_and_cash(monkeypatch) -> None:
+    monkeypatch.setattr(connectors.ibkr, "IbkrFlexClient", FakeIbkrFlexClient)
 
-    try:
-        connectors.load_ibkr_holdings(
-            base_url="https://localhost:5000/v1/api",
-            account=None,
-            verify_tls=False,
-            timeout=20.0,
-            skip_auth_check=True,
-            require_brokerage_session=False,
-        )
-    except connectors.PortfolioConnectorError as exc:
-        message = str(exc)
-    else:
-        raise AssertionError("BASE placeholder should require explicit base currency")
+    holdings = connectors.load_ibkr_holdings(flex_token="test-token")
 
-    assert "--ibkr-base-currency" in message
+    # Should have one equity position (VWCE) and one cash entry (EUR)
+    equity = [h for h in holdings if h.ticker == "VWCE"][0]
+    assert equity.broker == "IBKR"
+    assert equity.identifier == "IBKR:1234567"
+    assert equity.security_currency == "EUR"
+    assert equity.description == "Vanguard FTSE All-World"
+
+    cash = [h for h in holdings if h.ticker == "CASH EUR"][0]
+    assert cash.broker == "IBKR"
+    assert cash.value == 3000.0
 
 
-def test_ibkr_base_placeholder_uses_explicit_base_currency(monkeypatch) -> None:
-    monkeypatch.setattr(connectors.ibkr, "IbkrClient", FakeIbkrClientWithBasePlaceholder)
+def test_ibkr_flex_uses_fx_rate_and_provides_isin(monkeypatch) -> None:
+    """Flex provides conid, isin, and description directly — no contract_info call needed."""
+    import xml.etree.ElementTree as ET
 
-    holdings = connectors.load_ibkr_holdings(
-        base_url="https://localhost:5000/v1/api",
-        account=None,
-        verify_tls=False,
-        timeout=20.0,
-        skip_auth_check=True,
-        require_brokerage_session=False,
-        base_currency_override="EUR",
-    )
+    client = FakeIbkrFlexClient()
+    client.fetch_report = lambda ref, retries=6, delay=3.0: ET.fromstring(FLEX_XML_CONID)  # type: ignore[assignment]
+    monkeypatch.setattr(connectors.ibkr, "IbkrFlexClient", lambda **kwargs: client)
 
-    assert holdings == [
-        connectors.Holding(
-            "IBKR",
-            "VWCE",
-            "EUR",
-            100.0,
-            security_currency="EUR",
-            description="VWCE",
-        )
-    ]
+    holdings = connectors.load_ibkr_holdings(flex_token="test-token")
+
+    # GOOGL position: positionValue=5000, fxRateToBase=0.9 → 4500 in EUR base
+    equity = [h for h in holdings if h.ticker == "GOOGL"][0]
+    assert equity.identifier == "IBKR:208813719"
+    assert equity.description == "Alphabet Inc Class A"
+    # FX rate to base: 5000 * 0.9 = 4500
+    assert equity.value == 4500.0
+    assert equity.security_currency == "USD"
 
 
-def test_ibkr_holdings_use_conid_identifier_and_contract_description(monkeypatch) -> None:
-    monkeypatch.setattr(connectors.ibkr, "IbkrClient", FakeIbkrClientWithContractInfo)
+def test_ibkr_flex_identifier_prefers_conid_over_isin(monkeypatch) -> None:
+    """When conid is available, use IBKR:<conid> as identifier."""
+    monkeypatch.setattr(connectors.ibkr, "IbkrFlexClient", FakeIbkrFlexClient)
 
-    holdings = connectors.load_ibkr_holdings(
-        base_url="https://localhost:5000/v1/api",
-        account=None,
-        verify_tls=False,
-        timeout=20.0,
-        skip_auth_check=True,
-        require_brokerage_session=False,
-    )
-
-    assert holdings == [
-        connectors.Holding(
-            "IBKR",
-            "GOOGL",
-            "EUR",
-            90.0,
-            identifier="IBKR:208813719",
-            security_currency="USD",
-            description="Alphabet Inc Class A",
-        )
-    ]
+    holdings = connectors.load_ibkr_holdings(flex_token="test-token")
+    equity = [h for h in holdings if h.ticker == "VWCE"][0]
+    # conid is present, so identifier is IBKR:1234567 (not ISIN:IE00BK5BQT80)
+    assert equity.identifier == "IBKR:1234567"
 
 
 def test_currency_converter_uses_frankfurter_rate(monkeypatch) -> None:
