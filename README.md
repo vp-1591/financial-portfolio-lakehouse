@@ -261,7 +261,7 @@ Generate an encryption key (only needed once):
 
 ### Run the pipeline
 
-Full pipeline (fetch → transform → allocate):
+Full pipeline (fetch → transform → consolidate → allocate):
 
 ```powershell
 .venv\Scripts\python -m pipeline.run full --ibkr --t212-api-key "YOUR_API_KEY" --xtb-file "C:\path\to\report.xlsx"
@@ -272,6 +272,7 @@ Or run individual steps:
 ```powershell
 .venv\Scripts\python -m pipeline.run fetch --ibkr --t212-api-key "KEY" --xtb-file "report.xlsx"
 .venv\Scripts\python -m pipeline.run transform
+.venv\Scripts\python -m pipeline.run consolidate --target-currency EUR
 .venv\Scripts\python -m pipeline.run allocate --target-currency EUR
 ```
 

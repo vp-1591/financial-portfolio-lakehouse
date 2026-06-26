@@ -8,6 +8,9 @@ import duckdb
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
 
+# Resolve project root from this module's location
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
 
 def query(table_path: str | Path, sql: str) -> duckdb.DuckDBPyRelation:
     """Run a SQL query against a Delta table.
@@ -31,10 +34,15 @@ def query(table_path: str | Path, sql: str) -> duckdb.DuckDBPyRelation:
     ...     "SELECT ticker, percentage FROM delta_table ORDER BY percentage DESC",
     ... )
     """
+    # Convert to absolute path for DuckDB
+    path = Path(table_path)
+    if path.is_absolute():
+        abs_path = path.resolve()
+    else:
+        abs_path = (_PROJECT_ROOT / path).resolve()
     conn = duckdb.connect()
     conn.execute(
-        "CREATE VIEW delta_table AS SELECT * FROM delta_scan(?)",
-        [str(table_path)],
+        f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')"
     )
     return conn.sql(sql)
 
@@ -66,10 +74,16 @@ def load_decrypted(
     if key is None:
         key = load_key()
 
+    # Convert to absolute path for DuckDB
+    path = Path(table_path)
+    if path.is_absolute():
+        abs_path = path.resolve()
+    else:
+        abs_path = (_PROJECT_ROOT / path).resolve()
+
     conn = duckdb.connect()
     conn.execute(
-        "CREATE VIEW delta_table AS SELECT * FROM delta_scan(?)",
-        [str(table_path)],
+        f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')"
     )
     result = conn.execute("SELECT * FROM delta_table").fetchall()
     columns = [desc[0] for desc in conn.execute("SELECT * FROM delta_table").description]

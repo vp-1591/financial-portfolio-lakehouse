@@ -5,6 +5,7 @@ Usage::
     python -m pipeline.run fetch --ibkr [--xtb-file report.xlsx] [--t212-api-key KEY]
     python -m pipeline.run fetch --ibkr-flex-token TOKEN [--ibkr-flex-query-id ID]
     python -m pipeline.run transform
+    python -m pipeline.run consolidate --target-currency EUR [--isin-map-file isins.csv]
     python -m pipeline.run allocate --target-currency EUR [--isin-map-file isins.csv]
     python -m pipeline.run full --ibkr [--xtb-file report.xlsx] [--t212-api-key KEY]
     python -m pipeline.run keygen
@@ -215,11 +216,86 @@ def cmd_transform(args: argparse.Namespace) -> int:
                 if normalized.num_rows == 0:
                     print(f"  {connector.display_name} {layer}: no data to transform")
                     continue
-                write_deltalake(norm_path, normalized, mode="append")
+                write_deltalake(norm_path, normalized, mode="overwrite")
                 print(f"  {connector.display_name} {layer}: {normalized.num_rows} rows transformed")
             except NotImplementedError:
                 print(f"  {connector.display_name} {layer} transform: not implemented")
 
+    return 0
+
+
+def cmd_consolidate(args: argparse.Namespace) -> int:
+    """Consolidate normalized broker snapshots into the holdings table."""
+    import csv
+    from pathlib import Path
+
+    from deltalake import DeltaTable
+
+    from pipeline.crypto import load_key
+    from pipeline.normalized.consolidate import (
+        CurrencyConverter,
+        Holding,
+        consolidate_holdings,
+    )
+    from pipeline.normalized.extract import extract_holdings
+    from pipeline.paths import NORMALIZED_DIR
+
+    fernet_key = load_key()
+
+    # Load ISIN overrides
+    isin_overrides: dict[str, str] = {}
+    if args.isin:
+        isin_overrides.update(dict(args.isin))
+    if args.isin_map_file:
+        for map_file in args.isin_map_file:
+            path = Path(map_file)
+            if not path.exists():
+                print(f"ISIN map file does not exist: {path}", file=sys.stderr)
+                return 1
+            with path.open(newline="", encoding="utf-8-sig") as f:
+                for row in csv.DictReader(f):
+                    ticker = (row.get("ticker") or row.get("Ticker") or "").strip()
+                    isin = (row.get("isin") or row.get("ISIN") or "").strip().upper()
+                    if ticker and isin:
+                        isin_overrides[ticker] = isin
+
+    # Manual FX rates
+    manual_rates: dict[str, float] = {}
+    if args.fx_rate:
+        manual_rates.update(dict(args.fx_rate))
+
+    target_currency = args.target_currency.upper()
+    converter = CurrencyConverter(
+        target_currency=target_currency,
+        manual_rates=manual_rates,
+    )
+
+    all_holdings: list[Holding] = []
+    connectors_list = all()
+
+    for connector in connectors_list:
+        snapshot_path = NORMALIZED_DIR / f"{connector.name}_snapshot"
+        try:
+            DeltaTable(str(snapshot_path))
+        except Exception:
+            print(f"  Skipping {connector.display_name}: no normalized snapshot data")
+            continue
+
+        holdings = extract_holdings(connector.name, str(snapshot_path), fernet_key)
+        print(f"  {connector.display_name}: {len(holdings)} holdings extracted")
+        all_holdings.extend(holdings)
+
+    if not all_holdings:
+        print("No holdings found. Run the transform step first.", file=sys.stderr)
+        return 1
+
+    table = consolidate_holdings(
+        holdings=all_holdings,
+        fernet_key=fernet_key,
+        converter=converter,
+        isin_overrides=isin_overrides,
+    )
+    print(f"  Consolidated: {table.num_rows} rows written")
     return 0
 
 
@@ -293,11 +369,14 @@ def get_raw_path(connector_name: str, layer: str) -> "Path":
 
 
 def cmd_full(args: argparse.Namespace) -> int:
-    """Run the full pipeline: fetch → transform → allocate."""
+    """Run the full pipeline: fetch → transform → consolidate → allocate."""
     result = cmd_fetch(args)
     if result != 0:
         return result
     result = cmd_transform(args)
+    if result != 0:
+        return result
+    result = cmd_consolidate(args)
     if result != 0:
         return result
     return cmd_allocate(args)
@@ -323,6 +402,13 @@ def main() -> int:
 
     # transform
     subparsers.add_parser("transform", help="Transform raw data into normalized tables")
+
+    # consolidate
+    consolidate_parser = subparsers.add_parser("consolidate", help="Consolidate normalized snapshots into holdings table")
+    consolidate_parser.add_argument("--target-currency", default="EUR")
+    consolidate_parser.add_argument("--fx-rate", action="append", type=parse_fx_rate, default=[])
+    consolidate_parser.add_argument("--isin", action="append", type=parse_isin_override, default=[])
+    consolidate_parser.add_argument("--isin-map-file", action="append", type=str, default=[])
 
     # allocate
     allocate_parser = subparsers.add_parser("allocate", help="Calculate portfolio allocation")
@@ -350,6 +436,7 @@ def main() -> int:
         "keygen": cmd_keygen,
         "fetch": cmd_fetch,
         "transform": cmd_transform,
+        "consolidate": cmd_consolidate,
         "allocate": cmd_allocate,
         "full": cmd_full,
     }

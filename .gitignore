@@ -19,3 +19,6 @@ data/
 
 # Build artifacts
 *.egg-info/
+
+# Exploration notebooks
+exploration/

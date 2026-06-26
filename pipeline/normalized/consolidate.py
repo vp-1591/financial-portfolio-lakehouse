@@ -324,5 +324,5 @@ def consolidate_holdings(
         schema=consolidated_holdings_schema,
     )
 
-    write_deltalake(table_path, table, mode="append")
+    write_deltalake(table_path, table, mode="overwrite")
     return table
