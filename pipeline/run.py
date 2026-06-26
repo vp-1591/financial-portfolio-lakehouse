@@ -3,6 +3,7 @@
 Usage::
 
     python -m pipeline.run fetch --ibkr [--xtb-file report.xlsx] [--t212-api-key KEY]
+    python -m pipeline.run fetch --ibkr-flex-token TOKEN [--ibkr-flex-query-id ID]
     python -m pipeline.run transform
     python -m pipeline.run allocate --target-currency EUR [--isin-map-file isins.csv]
     python -m pipeline.run full --ibkr [--xtb-file report.xlsx] [--t212-api-key KEY]
@@ -28,6 +29,9 @@ def add_ibkr_args(parser: argparse._ArgumentGroup) -> None:
     parser.add_argument("--ibkr-verify-tls", action="store_true")
     parser.add_argument("--ibkr-skip-auth-check", action="store_true")
     parser.add_argument("--ibkr-require-brokerage-session", action="store_true")
+    parser.add_argument("--ibkr-flex-token", default=None, help="Use Flex Web Service instead of Client Portal Gateway (no local gateway needed)")
+    parser.add_argument("--ibkr-flex-query-id", default="1554188", help="Flex Query ID (default: 1554188)")
+    parser.add_argument("--ibkr-flex-base-url", default="https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService", help="Flex Web Service base URL")
 
 
 def add_trading212_args(parser: argparse._ArgumentGroup) -> None:
@@ -97,8 +101,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         snapshot_kwargs: dict = {}
         cdc_kwargs: dict = {}
         if connector.name == "ibkr":
-            if not args.ibkr:
-                print(f"Skipping {connector.display_name}: use --ibkr to enable")
+            if not args.ibkr and not args.ibkr_flex_token:
+                print(f"Skipping {connector.display_name}: use --ibkr or --ibkr-flex-token to enable")
                 continue
             snapshot_kwargs = cdc_kwargs = {
                 "base_url": args.ibkr_base_url,
@@ -107,6 +111,13 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 "skip_auth_check": args.ibkr_skip_auth_check,
                 "require_brokerage_session": args.ibkr_require_brokerage_session,
             }
+            if args.ibkr_flex_token:
+                snapshot_kwargs = {
+                    "flex_token": args.ibkr_flex_token,
+                    "flex_query_id": args.ibkr_flex_query_id,
+                    "flex_base_url": args.ibkr_flex_base_url,
+                }
+                cdc_kwargs = {}
         elif connector.name == "trading212":
             if not args.t212_api_key:
                 print(f"Skipping {connector.display_name}: no API key provided")

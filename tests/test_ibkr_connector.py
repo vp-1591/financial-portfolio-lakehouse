@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
 
 import pyarrow as pa
 import pytest
@@ -25,7 +24,7 @@ from pipeline.connectors.ibkr.client import (
     position_value,
     to_base_currency,
 )
-from pipeline.connectors.ibkr.transform import transform_snapshot
+from pipeline.connectors.ibkr import transform
 from pipeline.crypto import decrypt, decrypt_float, encrypt, generate_key
 
 
@@ -166,7 +165,7 @@ class TestTransformSnapshot:
         }
 
         raw = self._build_raw_table(positions, ledger)
-        result = transform_snapshot(raw, fernet_key)
+        result = transform.transform_snapshot(raw, fernet_key)
 
         assert result.num_rows == 2  # 1 equity + 1 cash
         # Check position types
@@ -196,7 +195,7 @@ class TestTransformSnapshot:
         }
 
         raw = self._build_raw_table(positions, ledger)
-        result = transform_snapshot(raw, fernet_key)
+        result = transform.transform_snapshot(raw, fernet_key)
 
         isins = result.column("isin").to_pylist()
         assert "US0378331005" in isins
@@ -216,8 +215,395 @@ class TestTransformSnapshot:
         }
 
         raw = self._build_raw_table(positions, ledger)
-        result = transform_snapshot(raw, fernet_key)
+        result = transform.transform_snapshot(raw, fernet_key)
 
         # Only cash if non-zero, or empty if all zero
         position_types = result.column("position_type").to_pylist()
         assert "EQUITY" not in position_types
+
+
+class TestFlexFetchSnapshot:
+    """Tests for the Flex Web Service fetch path."""
+
+    def test_fetch_snapshot_via_flex_stores_xml_payload(self) -> None:
+        """fetch_snapshot_via_flex should return a raw table with the XML payload."""
+        from unittest.mock import patch, MagicMock
+        import xml.etree.ElementTree as ET
+
+        from pipeline.connectors.ibkr.fetch import fetch_snapshot_via_flex
+
+        # Build a minimal Flex XML response
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U123" currency="USD"/>'
+            '<OpenPositions>'
+            '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000" '
+            'assetClass="STK" conid="265598" isin="US0378331005" '
+            'description="Apple Inc" fxRateToBase="1.0"/>'
+            '</OpenPositions>'
+            '</FlexStatement>'
+            '</FlexStatements>'
+            '</FlexQueryResponse>'
+        )
+        root = ET.fromstring(xml_str)
+
+        with patch("scripts.ibkr_net_worth.IbkrFlexClient") as MockClient:
+            mock_instance = MagicMock()
+            MockClient.return_value = mock_instance
+            mock_instance.request_report.return_value = "12345"
+            mock_instance.fetch_report.return_value = root
+
+            result = fetch_snapshot_via_flex(token="test-token")
+
+            assert result.num_rows == 1
+            assert result.column("source")[0].as_py() == "flex"
+            assert result.column("broker")[0].as_py() == "IBKR"
+            MockClient.assert_called_once_with(
+                token="test-token",
+                query_id="1554188",
+                base_url="https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
+                timeout=30.0,
+            )
+            mock_instance.request_report.assert_called_once()
+            mock_instance.fetch_report.assert_called_once_with("12345", retries=6, delay=3.0)
+
+    def test_fetch_snapshot_via_flex_passes_query_id_and_base_url(self) -> None:
+        """Custom query_id and base_url should be forwarded to IbkrFlexClient."""
+        from unittest.mock import patch, MagicMock
+        import xml.etree.ElementTree as ET
+
+        from pipeline.connectors.ibkr.fetch import fetch_snapshot_via_flex
+
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="0"/>'
+            '</FlexQueryResponse>'
+        )
+        root = ET.fromstring(xml_str)
+
+        with patch("scripts.ibkr_net_worth.IbkrFlexClient") as MockClient:
+            mock_instance = MagicMock()
+            MockClient.return_value = mock_instance
+            mock_instance.request_report.return_value = "99999"
+            mock_instance.fetch_report.return_value = root
+
+            fetch_snapshot_via_flex(
+                token="my-token",
+                query_id="42",
+                base_url="https://custom.example.com/api",
+                timeout=60.0,
+                retries=3,
+                delay=5.0,
+            )
+
+            MockClient.assert_called_once_with(
+                token="my-token",
+                query_id="42",
+                base_url="https://custom.example.com/api",
+                timeout=60.0,
+            )
+            mock_instance.fetch_report.assert_called_once_with("99999", retries=3, delay=5.0)
+
+
+class TestFlexTransformSnapshot:
+    """Tests for transforming Flex XML data into normalized schema."""
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        key = generate_key()
+        self._fernet_key = key
+        return key
+
+    def _build_flex_raw_table(
+        self,
+        xml_str: str,
+        account_id: str = "",
+        fernet_key: bytes | None = None,
+    ) -> pa.Table:
+        """Build a raw-layer table with a Flex XML payload."""
+        import hashlib
+
+        key = fernet_key or self._fernet_key
+        from pipeline.crypto import encrypt
+
+        xml_bytes = xml_str.encode("utf-8")
+        encrypted_payload = encrypt(xml_bytes, key)
+        now = datetime.now(timezone.utc)
+        payload_hash = hashlib.sha256(xml_bytes).hexdigest()
+
+        return pa.table(
+            {
+                "fetched_at": [now],
+                "broker": ["IBKR"],
+                "source": ["flex"],
+                "payload": [encrypted_payload],
+                "payload_hash": [payload_hash],
+                "account_id": [account_id],
+                "source_file": [""],
+            },
+            schema=pa.schema([
+                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                pa.field("broker", pa.string()),
+                pa.field("source", pa.string()),
+                pa.field("payload", pa.binary()),
+                pa.field("payload_hash", pa.string()),
+                pa.field("account_id", pa.string()),
+                pa.field("source_file", pa.string()),
+            ]),
+        )
+
+    def test_transform_flex_produces_equity_and_cash(self, fernet_key: bytes) -> None:
+        """Flex XML with positions and cash report should produce equity + cash rows."""
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U123" currency="USD" cashBalance="500.0"/>'
+            '<OpenPositions>'
+            '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000.0" '
+            'assetClass="STK" conid="265598" isin="US0378331005" '
+            'description="Apple Inc" fxRateToBase="1.0"/>'
+            '</OpenPositions>'
+            '<CashReport>'
+            '<CashReportCurrency accountId="U123" currency="USD" endingCash="500.0"/>'
+            '</CashReport>'
+            '</FlexStatement>'
+            '</FlexStatements>'
+            '</FlexQueryResponse>'
+        )
+
+        raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
+        result = transform._transform_flex_snapshot(raw, fernet_key)
+
+        assert result.num_rows >= 2
+        types = result.column("position_type").to_pylist()
+        assert "EQUITY" in types
+        assert "CASH" in types
+
+    def test_transform_flex_preserves_isin(self, fernet_key: bytes) -> None:
+        """ISIN from Flex OpenPosition should appear in normalized output."""
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U456" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U456" currency="EUR"/>'
+            '<OpenPositions>'
+            '<OpenPosition symbol="SAP" currency="EUR" positionValue="5000.0" '
+            'assetClass="STK" conid="12345" isin="DE0007164600" '
+            'description="SAP SE" fxRateToBase="1.0"/>'
+            '</OpenPositions>'
+            '</FlexStatement>'
+            '</FlexStatements>'
+            '</FlexQueryResponse>'
+        )
+
+        raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
+        result = transform._transform_flex_snapshot(raw, fernet_key)
+
+        isins = result.column("isin").to_pylist()
+        assert "DE0007164600" in isins
+
+    def test_transform_flex_skips_zero_value_positions(self, fernet_key: bytes) -> None:
+        """Positions with zero value should be skipped."""
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U789" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U789" currency="USD"/>'
+            '<OpenPositions>'
+            '<OpenPosition symbol="ZERO" currency="USD" positionValue="0.0" '
+            'assetClass="STK" fxRateToBase="1.0"/>'
+            '</OpenPositions>'
+            '</FlexStatement>'
+            '</FlexStatements>'
+            '</FlexQueryResponse>'
+        )
+
+        raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
+        result = transform._transform_flex_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "EQUITY" not in types
+
+    def test_transform_flex_currency_override(self, fernet_key: bytes) -> None:
+        """base_currency_override should override the detected base currency."""
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U999" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U999" currency="BASE"/>'
+            '<OpenPositions>'
+            '<OpenPosition symbol="AAPL" currency="USD" positionValue="5000.0" '
+            'assetClass="STK" fxRateToBase="0.9"/>'
+            '</OpenPositions>'
+            '</FlexStatement>'
+            '</FlexStatements>'
+            '</FlexQueryResponse>'
+        )
+
+        raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
+        result = transform._transform_flex_snapshot(raw, fernet_key, base_currency_override="CHF")
+
+        currencies = result.column("currency").to_pylist()
+        assert all(c == "CHF" for c in currencies)
+
+
+class TestConnectorFlexDispatch:
+    """Tests for IbkrConnector dispatching to Flex vs Gateway path."""
+
+    def test_fetch_snapshot_dispatches_to_flex_when_token_provided(self) -> None:
+        """When flex_token is provided, IbkrConnector should use fetch_snapshot_via_flex."""
+        from unittest.mock import patch, MagicMock
+
+        from pipeline.connectors.registry import get
+
+        with patch("pipeline.connectors.ibkr.fetch.fetch_snapshot_via_flex") as mock_flex:
+            mock_flex.return_value = MagicMock()
+            connector = get("ibkr")
+
+            connector.fetch_snapshot(
+                flex_token="my-token",
+                flex_query_id="42",
+                flex_base_url="https://example.com",
+            )
+
+            mock_flex.assert_called_once_with(
+                token="my-token",
+                query_id="42",
+                base_url="https://example.com",
+                timeout=30.0,
+                retries=6,
+                delay=3.0,
+            )
+
+    def test_fetch_snapshot_dispatches_to_gateway_when_no_token(self) -> None:
+        """When no flex_token is provided, IbkrConnector should use gateway fetch."""
+        from unittest.mock import patch, MagicMock
+
+        from pipeline.connectors.registry import get
+
+        with patch("pipeline.connectors.ibkr.fetch.fetch_snapshot") as mock_gateway:
+            mock_gateway.return_value = MagicMock()
+            connector = get("ibkr")
+
+            connector.fetch_snapshot(
+                base_url="https://localhost:5000/v1/api",
+                account="U123",
+            )
+
+            mock_gateway.assert_called_once_with(
+                base_url="https://localhost:5000/v1/api",
+                account="U123",
+            )
+
+    def test_transform_snapshot_dispatches_to_flex_for_flex_source(self, fernet_key: bytes) -> None:
+        """IbkrConnector.transform_snapshot should use Flex transform for flex source data."""
+        from pipeline.connectors.registry import get
+
+        # Build a minimal flex raw table
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U123" currency="USD"/>'
+            '<OpenPositions>'
+            '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000" '
+            'assetClass="STK" fxRateToBase="1.0"/>'
+            '</OpenPositions>'
+            '</FlexStatement>'
+            '</FlexStatements>'
+            '</FlexQueryResponse>'
+        )
+        from pipeline.crypto import encrypt
+        import hashlib
+
+        xml_bytes = xml_str.encode("utf-8")
+        encrypted_payload = encrypt(xml_bytes, fernet_key)
+        now = datetime.now(timezone.utc)
+
+        raw = pa.table(
+            {
+                "fetched_at": [now],
+                "broker": ["IBKR"],
+                "source": ["flex"],
+                "payload": [encrypted_payload],
+                "payload_hash": [hashlib.sha256(xml_bytes).hexdigest()],
+                "account_id": [""],
+                "source_file": [""],
+            },
+            schema=pa.schema([
+                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                pa.field("broker", pa.string()),
+                pa.field("source", pa.string()),
+                pa.field("payload", pa.binary()),
+                pa.field("payload_hash", pa.string()),
+                pa.field("account_id", pa.string()),
+                pa.field("source_file", pa.string()),
+            ]),
+        )
+
+        connector = get("ibkr")
+        result = connector.transform_snapshot(raw, fernet_key)
+
+        assert result.num_rows >= 1
+        assert "EQUITY" in result.column("position_type").to_pylist()
+
+
+class TestCliFlexArgs:
+    """Tests for --ibkr-flex-token and --ibkr-flex-query-id CLI arguments."""
+
+    def test_flex_args_accepted_by_fetch_parser(self) -> None:
+        """The fetch subcommand should accept --ibkr-flex-token and --ibkr-flex-query-id."""
+        from pipeline.run import main
+        import argparse
+
+        # Parse the fetch command with Flex args
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        fetch_parser = subparsers.add_parser("fetch")
+        from pipeline.run import add_ibkr_args, add_trading212_args, add_xtb_args
+        ibkr_group = fetch_parser.add_argument_group("IBKR")
+        add_ibkr_args(ibkr_group)
+        t212_group = fetch_parser.add_argument_group("Trading 212")
+        add_trading212_args(t212_group)
+        xtb_group = fetch_parser.add_argument_group("XTB")
+        add_xtb_args(xtb_group)
+
+        args = parser.parse_args([
+            "fetch",
+            "--ibkr-flex-token", "my-test-token",
+            "--ibkr-flex-query-id", "42",
+        ])
+
+        assert args.ibkr_flex_token == "my-test-token"
+        assert args.ibkr_flex_query_id == "42"
+        assert args.ibkr_flex_base_url == "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+
+    def test_default_flex_query_id(self) -> None:
+        """Default --ibkr-flex-query-id should be 1554188."""
+        import argparse
+        from pipeline.run import add_ibkr_args
+
+        parser = argparse.ArgumentParser()
+        ibkr_group = parser.add_argument_group("IBKR")
+        add_ibkr_args(ibkr_group)
+
+        args = parser.parse_args(["--ibkr-flex-token", "token123"])
+        assert args.ibkr_flex_query_id == "1554188"
+
+    def test_flex_base_url_custom(self) -> None:
+        """Custom --ibkr-flex-base-url should override the default."""
+        import argparse
+        from pipeline.run import add_ibkr_args
+
+        parser = argparse.ArgumentParser()
+        ibkr_group = parser.add_argument_group("IBKR")
+        add_ibkr_args(ibkr_group)
+
+        args = parser.parse_args([
+            "--ibkr-flex-token", "token123",
+            "--ibkr-flex-base-url", "https://custom.example.com/api",
+        ])
+        assert args.ibkr_flex_base_url == "https://custom.example.com/api"

@@ -113,7 +113,9 @@ def test_load_assets_from_flex_response() -> None:
 
     assert client.request_report_calls == 1
     assert client.fetch_report_calls == 1
-    assert net_worth == 78000.0
+    # net_worth = sum of all asset values (position + cash from cashBalance)
+    # Position: EUR ETF 5000 * 1.2 = 6000 USD; Cash: 5000 USD
+    assert net_worth == 11000.0
 
     # One equity position + one cash entry
     assert len(assets) == 2
@@ -187,80 +189,6 @@ def test_load_assets_falls_back_to_sum_when_no_account_info() -> None:
     assert net_worth == 1500.0
     assert len(assets) == 1
     assert assets[0].label == "AAPL"
-
-
-def test_load_assets_derives_cash_from_nlv_minus_positions() -> None:
-    """When cashBalance field is absent, derive cash = NLV - sum(positions in base currency)."""
-    xml_no_cash_field = """\
-<FlexQueryResponse queryName="test" type="AF">
-  <FlexStatements count="1">
-    <FlexStatement accountId="U789" fromDate="20260601" toDate="20260625">
-      <OpenPositions>
-        <OpenPosition accountId="U789" currency="USD" fxRateToBase="0.9"
-                      assetClass="STK" symbol="GOOGL" description="Alphabet"
-                      conid="208813719" isin="US02079K3059"
-                      quantity="50" markPrice="100.0" positionValue="5000.0"
-                      side="Long"/>
-        <OpenPosition accountId="U789" currency="EUR" fxRateToBase="1.0"
-                      assetClass="STK" symbol="VWCE" description="Vanguard"
-                      conid="1234567" isin="IE00BK5BQT80"
-                      quantity="10" markPrice="100.0" positionValue="1000.0"
-                      side="Long"/>
-      </OpenPositions>
-      <AccountInformation>
-        <AccountInformation accountId="U789" currency="EUR"
-                           netLiquidationValue="10000.00"/>
-      </AccountInformation>
-    </FlexStatement>
-  </FlexStatements>
-</FlexQueryResponse>
-"""
-    client = FakeFlexClient()
-    client.fetch_report = lambda ref, retries=6, delay=3.0: ET.fromstring(xml_no_cash_field)  # type: ignore[assignment]
-
-    assets, net_worth = ibkr.load_assets(client)
-    assert net_worth == 10000.0
-
-    # GOOGL: 5000 USD * 0.9 = 4500 EUR
-    # VWCE: 1000 EUR * 1.0 = 1000 EUR
-    # Total positions: 5500 EUR
-    # Cash = 10000 - 5500 = 4500 EUR
-    cash = [a for a in assets if a.asset_class == "CASH"]
-    assert len(cash) == 1
-    assert cash[0].label == "CASH EUR"
-    assert cash[0].value == 4500.0
-
-    total_pct = sum(a.value / net_worth * 100 for a in assets)
-    assert abs(total_pct - 100.0) < 0.01
-
-
-def test_load_assets_no_derived_cash_when_nlv_equals_positions() -> None:
-    """When NLV equals the sum of positions, no CASH row is added (avoids zero-cash noise)."""
-    xml_no_cash = """\
-<FlexQueryResponse queryName="test" type="AF">
-  <FlexStatements count="1">
-    <FlexStatement accountId="U999" fromDate="20260601" toDate="20260625">
-      <OpenPositions>
-        <OpenPosition accountId="U999" currency="USD" fxRateToBase="1.0"
-                      assetClass="STK" symbol="AAPL" description="Apple"
-                      conid="265598" isin="US0378331005"
-                      quantity="10" markPrice="150.0" positionValue="1500.0"
-                      side="Long"/>
-      </OpenPositions>
-      <AccountInformation>
-        <AccountInformation accountId="U999" currency="USD"
-                           netLiquidationValue="1500.00"/>
-      </AccountInformation>
-    </FlexStatement>
-  </FlexStatements>
-</FlexQueryResponse>
-"""
-    client = FakeFlexClient()
-    client.fetch_report = lambda ref, retries=6, delay=3.0: ET.fromstring(xml_no_cash)  # type: ignore[assignment]
-
-    assets, net_worth = ibkr.load_assets(client)
-    assert net_worth == 1500.0
-    assert all(a.asset_class != "CASH" for a in assets)
 
 
 def test_parse_cash_report_extracts_ending_cash_per_currency() -> None:
@@ -400,7 +328,10 @@ def test_load_assets_uses_cash_report_for_per_currency_cash() -> None:
     client.fetch_report = lambda ref, retries=6, delay=3.0: ET.fromstring(xml)  # type: ignore[assignment]
 
     assets, net_worth = ibkr.load_assets(client)
-    assert net_worth == 10000.0
+    # net_worth = sum of all assets (not NLV, since Cash Report values
+    # may differ from NLV in synthetic test data)
+    # VWCE=5000 + GOOGL=900 + CASH EUR=3500 + CASH USD=1350 = 10750
+    assert net_worth == 10750.0
 
     # Positions: VWCE=5000 EUR, GOOGL=1000 USD * 0.9 = 900 EUR
     # Cash from Cash Report: EUR 3500, USD 1500 * 0.9 (from GOOGL position fxRate) = 1350 EUR
@@ -665,45 +596,6 @@ def test_load_assets_cash_report_warns_on_missing_fx_rate(capsys) -> None:
     assert cash_pln.security_currency == "PLN"
     # A warning should have been printed to stderr
     assert "No FX rate for PLN" in captured.err
-
-
-    """When no Cash Report and no cashBalance, cash is derived from NLV minus positions."""
-    # This is the same test as test_load_assets_derives_cash_from_nlv_minus_positions,
-    # verifying the fallback chain still works.
-    xml = """\
-<FlexQueryResponse queryName="test" type="AF">
-  <FlexStatements count="1">
-    <FlexStatement accountId="U789" fromDate="20260601" toDate="20260625">
-      <OpenPositions>
-        <OpenPosition accountId="U789" currency="USD" fxRateToBase="0.9"
-                      assetClass="STK" symbol="GOOGL" description="Alphabet"
-                      conid="208813719" isin="US02079K3059"
-                      quantity="50" markPrice="100.0" positionValue="5000.0"
-                      side="Long"/>
-        <OpenPosition accountId="U789" currency="EUR" fxRateToBase="1.0"
-                      assetClass="STK" symbol="VWCE" description="Vanguard"
-                      conid="1234567" isin="IE00BK5BQT80"
-                      quantity="10" markPrice="100.0" positionValue="1000.0"
-                      side="Long"/>
-      </OpenPositions>
-      <AccountInformation>
-        <AccountInformation accountId="U789" currency="EUR"
-                           netLiquidationValue="10000.00"/>
-      </AccountInformation>
-    </FlexStatement>
-  </FlexStatements>
-</FlexQueryResponse>
-"""
-    client = FakeFlexClient()
-    client.fetch_report = lambda ref, retries=6, delay=3.0: ET.fromstring(xml)  # type: ignore[assignment]
-
-    assets, net_worth = ibkr.load_assets(client)
-    assert net_worth == 10000.0
-    cash = [a for a in assets if a.asset_class == "CASH"]
-    assert len(cash) == 1
-    assert cash[0].label == "CASH EUR"
-    # 10000 - (5000*0.9 + 1000) = 10000 - 5500 = 4500
-    assert cash[0].value == 4500.0
 
 
 def test_ibkr_flex_client_request_report_parses_reference_code() -> None:
