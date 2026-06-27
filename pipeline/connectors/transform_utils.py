@@ -50,7 +50,7 @@ def parse_json(data: bytes) -> Any | None:
 def coerce_fetched_at(value: Any) -> datetime:
     """Convert a fetched_at value to a timezone-aware datetime.
 
-    Handles: datetime objects, ISO-format strings, and pandas Timestamp objects.
+    Handles: datetime objects, ISO-format strings, and Arrow/Pandas Timestamp objects.
     """
     if isinstance(value, datetime):
         return value
