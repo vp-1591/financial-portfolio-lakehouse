@@ -128,8 +128,7 @@ def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
     if not any(mask):
         return table.slice(0, 0)
 
-    import pyarrow.compute as pc
-    return table.filter(pc.array(mask))
+    return table.filter(pa.array(mask))
 
 
 def ingest_raw(
