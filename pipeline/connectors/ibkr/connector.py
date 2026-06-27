@@ -36,9 +36,7 @@ class IbkrConnector:
         base_currency_override = kwargs.get("base_currency_override")
 
         # Check if this is a Flex-based snapshot by looking for "flex" source rows
-        import pandas as pd
-        raw_df = raw.to_pandas()
-        if "flex" in raw_df["source"].values:
+        if "flex" in raw.column("source").to_pylist():
             return transform._transform_flex_snapshot(
                 raw, fernet_key, base_currency_override=base_currency_override
             )

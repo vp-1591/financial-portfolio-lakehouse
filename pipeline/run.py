@@ -181,6 +181,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 def cmd_transform(args: argparse.Namespace) -> int:
     """Transform raw data into normalized Delta tables."""
     from deltalake import DeltaTable
+
     from pipeline.crypto import load_key
     from pipeline.raw.ingest import encrypt_raw_payloads
 
@@ -195,12 +196,9 @@ def cmd_transform(args: argparse.Namespace) -> int:
             except Exception:
                 continue
 
-            raw = dt.to_pandas()
-            if raw.empty:
+            raw_table = dt.to_pyarrow_table()
+            if raw_table.num_rows == 0:
                 continue
-
-            import pyarrow as pa
-            raw_table = pa.Table.from_pandas(raw)
 
             try:
                 if layer == "snapshot":

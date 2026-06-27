@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import polars as pl
 import pyarrow as pa
 from deltalake import write_deltalake
 
@@ -59,22 +60,35 @@ def allocate_percentages(
             f"Consolidated holdings table not found at {table_path}. "
             "Run the fetch and transform steps first to populate the table."
         ) from exc
-    df = dt.to_pandas()
+
+    # Read via Arrow to preserve schema, then convert to Polars
+    arrow_table = dt.to_pyarrow_table()
+    df = pl.from_arrow(arrow_table)
 
     # Decrypt value column
-    df["value_decrypted"] = df["value"].apply(lambda v: decrypt_float(v, fernet_key))
+    df = df.with_columns(
+        pl.col("value").map_elements(
+            lambda v: decrypt_float(v, fernet_key),
+            return_dtype=pl.Float64,
+        ).alias("value_decrypted")
+    )
 
     # Calculate percentages
     net_worth = df["value_decrypted"].sum()
     if net_worth == 0:
         raise ValueError("Net worth is zero; cannot calculate percentages.")
 
-    df["percentage"] = (df["value_decrypted"] / net_worth * 100).round(4)
+    df = df.with_columns(
+        (pl.col("value_decrypted") / net_worth * 100).round(4).alias("percentage")
+    )
 
     # Aggregate by ticker + broker (sum duplicates)
-    agg = df.groupby(["ticker", "broker"], as_index=False).agg(
-        {"percentage": "sum", "identifier": "first", "security_currency": "first", "description": "first"}
-    )
+    agg = df.group_by(["ticker", "broker"]).agg([
+        pl.col("percentage").sum(),
+        pl.col("identifier").first(),
+        pl.col("security_currency").first(),
+        pl.col("description").first(),
+    ]).sort("percentage", descending=True)
 
     now = datetime.now(timezone.utc)
 
@@ -83,12 +97,12 @@ def allocate_percentages(
     result = pa.table(
         {
             "calculated_at": [now] * len(agg),
-            "ticker": agg["ticker"].tolist(),
-            "percentage": agg["percentage"].tolist(),
-            "broker": agg["broker"].tolist(),
-            "identifier": agg["identifier"].tolist(),
-            "security_currency": agg["security_currency"].tolist(),
-            "description": agg["description"].tolist(),
+            "ticker": agg["ticker"].to_list(),
+            "percentage": agg["percentage"].to_list(),
+            "broker": agg["broker"].to_list(),
+            "identifier": agg["identifier"].to_list(),
+            "security_currency": agg["security_currency"].to_list(),
+            "description": agg["description"].to_list(),
         },
         schema=portfolio_allocation_schema,
     )

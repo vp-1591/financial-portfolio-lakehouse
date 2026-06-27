@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from datetime import datetime, timezone
 
 import pyarrow as pa
@@ -21,7 +22,8 @@ from pipeline.connectors.ibkr.client import (
     position_value,
     to_base_currency,
 )
-from pipeline.crypto import decrypt, encrypt_float, encrypt_string
+from pipeline.connectors.transform_utils import DecodedRow, decode_payload, iter_raw_payloads
+from pipeline.crypto import encrypt_float, encrypt_string
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 
 
@@ -78,34 +80,19 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_override:
     security_currencies: list[str] = []
 
     # Group by account_id, then reconstruct positions + ledger per account
-    import pandas as pd
+    by_account: dict[str, list[DecodedRow]] = defaultdict(list)
+    for row in iter_raw_payloads(raw, fernet_key):
+        by_account[row.account_id].append(row)
 
-    raw_df = raw.to_pandas()
-    for acct_id, acct_group in raw_df.groupby("account_id"):
+    for acct_id, rows in by_account.items():
         positions_data = None
         ledger_data = None
 
-        for _, row in acct_group.iterrows():
-            source = row["source"]
-            payload_bytes = row["payload"]
-            if isinstance(payload_bytes, memoryview):
-                payload_bytes = bytes(payload_bytes)
-
-            # Payloads are stored encrypted in the raw Delta table — decrypt first
-            try:
-                payload_bytes = decrypt(payload_bytes, fernet_key)
-            except Exception:
-                continue
-
-            try:
-                parsed = json.loads(payload_bytes)
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-            if "/positions" in source:
-                positions_data = parsed
-            elif "/ledger" in source:
-                ledger_data = parsed
+        for row in rows:
+            if "/positions" in row.source:
+                positions_data = row.payload_parsed
+            elif "/ledger" in row.source:
+                ledger_data = row.payload_parsed
 
         if positions_data is None or ledger_data is None:
             continue
@@ -116,9 +103,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_override:
         rates = exchange_rates(ledger_data)
         base_currency = _ibkr_base_currency(ledger_data, base_currency_override)
 
-        fetched_at = acct_group["fetched_at"].iloc[0]
-        if isinstance(fetched_at, str):
-            fetched_at = datetime.fromisoformat(fetched_at)
+        fetched_at = rows[0].fetched_at
 
         for position in positions_data:
             value = position_value(position)
@@ -207,24 +192,22 @@ def _transform_flex_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_ove
     descriptions: list[str] = []
     security_currencies: list[str] = []
 
-    import pandas as pd
+    # Flex payloads are XML, not JSON — iterate raw table columns directly
+    sources = raw.column("source").to_pylist()
+    fetched_ats_col = raw.column("fetched_at").to_pylist()
+    payloads = raw.column("payload").to_pylist()
+    account_ids_col = raw.column("account_id").to_pylist()
 
-    raw_df = raw.to_pandas()
-    flex_rows = raw_df[raw_df["source"] == "flex"]
+    for i in range(len(sources)):
+        if sources[i] != "flex":
+            continue
 
-    for _, row in flex_rows.iterrows():
-        payload_bytes = row["payload"]
-        if isinstance(payload_bytes, memoryview):
+        payload_bytes = payloads[i]
+        decrypted = decode_payload(payload_bytes, fernet_key)
+        if decrypted is not None:
+            payload_bytes = decrypted
+        elif isinstance(payload_bytes, memoryview):
             payload_bytes = bytes(payload_bytes)
-
-        # Flex payloads are stored unencrypted in the raw table (they were
-        # captured directly from the Flex API, not via the gateway client).
-        # However, the ingest step may encrypt them, so try decryption first.
-        try:
-            payload_bytes = decrypt(payload_bytes, fernet_key)
-        except Exception:
-            # Not encrypted — use raw bytes directly
-            pass
 
         root = ET.fromstring(payload_bytes)
         positions = parse_positions(root)
@@ -273,7 +256,7 @@ def _transform_flex_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_ove
             if not account_ids_in_payload:
                 account_ids_in_payload = {""}
 
-        fetched_at = row["fetched_at"]
+        fetched_at = fetched_ats_col[i]
         if isinstance(fetched_at, str):
             fetched_at = datetime.fromisoformat(fetched_at)
 

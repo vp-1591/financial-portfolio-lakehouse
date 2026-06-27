@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pyarrow as pa
 
-from pipeline.crypto import decrypt, encrypt_float
+from pipeline.connectors.transform_utils import iter_raw_payloads
+from pipeline.crypto import encrypt_float
 from pipeline.normalized.models import xtb_cdc_normalized_schema, xtb_snapshot_normalized_schema
 
 
 def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """Transform raw XTB snapshot data into the normalized schema."""
-    import pandas as pd
-
     fetched_ats: list[datetime] = []
     account_ids: list[str] = []
     position_types: list[str] = []
@@ -26,39 +24,17 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     value_currencies: list[str] = []
     isins: list[str] = []
 
-    raw_df = raw.to_pandas()
-
-    for _, row in raw_df.iterrows():
-        source = row["source"]
-        payload_bytes = row["payload"]
-        if isinstance(payload_bytes, memoryview):
-            payload_bytes = bytes(payload_bytes)
-
-        # Payloads are stored encrypted in the raw Delta table — decrypt first
-        try:
-            payload_bytes = decrypt(payload_bytes, fernet_key)
-        except Exception:
+    for row in iter_raw_payloads(raw, fernet_key):
+        if "OPEN POSITION" not in row.source.upper():
             continue
 
-        try:
-            parsed = json.loads(payload_bytes)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        if "OPEN POSITION" not in source.upper():
-            continue
-
-        positions = parsed.get("positions", [])
-        fetched_at = row["fetched_at"]
-        if isinstance(fetched_at, str):
-            fetched_at = datetime.fromisoformat(fetched_at)
-
+        positions = row.payload_parsed.get("positions", [])
         for pos in positions:
             if not isinstance(pos, dict):
                 continue
 
-            fetched_ats.append(fetched_at)
-            account_ids.append(str(pos.get("account_id", row["account_id"])))
+            fetched_ats.append(row.fetched_at)
+            account_ids.append(str(pos.get("account_id", row.account_id)))
             position_types.append(pos.get("asset_class", "EQUITY"))
             labels.append(str(pos.get("label", "")))
             names.append(str(pos.get("name", "")))
@@ -87,8 +63,6 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
 def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """Transform raw XTB CDC data into the normalized CDC schema."""
-    import pandas as pd
-
     fetched_ats: list[datetime] = []
     account_ids: list[str] = []
     operation_ids: list[str] = []
@@ -98,37 +72,17 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     comments: list[str] = []
     operation_dates: list[str] = []
 
-    raw_df = raw.to_pandas()
-
-    for _, row in raw_df.iterrows():
-        payload_bytes = row["payload"]
-        if isinstance(payload_bytes, memoryview):
-            payload_bytes = bytes(payload_bytes)
-
-        # Payloads are stored encrypted in the raw Delta table — decrypt first
-        try:
-            payload_bytes = decrypt(payload_bytes, fernet_key)
-        except Exception:
-            continue
-
-        try:
-            operations = json.loads(payload_bytes)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
+    for row in iter_raw_payloads(raw, fernet_key):
+        operations = row.payload_parsed
         if not isinstance(operations, list):
             continue
-
-        fetched_at = row["fetched_at"]
-        if isinstance(fetched_at, str):
-            fetched_at = datetime.fromisoformat(fetched_at)
 
         for op in operations:
             if not isinstance(op, dict):
                 continue
 
-            fetched_ats.append(fetched_at)
-            account_ids.append(str(op.get("account_id", row["account_id"])))
+            fetched_ats.append(row.fetched_at)
+            account_ids.append(str(op.get("account_id", row.account_id)))
             operation_ids.append(str(op.get("operation_id", "")))
             operation_types.append(str(op.get("operation_type", "")))
             amounts.append(encrypt_float(float(op.get("amount", 0)), fernet_key))

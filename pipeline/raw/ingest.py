@@ -102,27 +102,34 @@ def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
     try:
         from deltalake import DeltaTable
 
-        existing = DeltaTable(existing_path)
+        existing_dt = DeltaTable(existing_path)
     except Exception:
         return table
 
-    existing_df = existing.to_pandas()
-    if existing_df.empty:
+    existing = existing_dt.to_pyarrow_table()
+    if existing.num_rows == 0:
         return table
 
     existing_keys = set(
-        zip(existing_df["broker"], existing_df["source"], existing_df["payload_hash"])
+        zip(
+            existing.column("broker").to_pylist(),
+            existing.column("source").to_pylist(),
+            existing.column("payload_hash").to_pylist(),
+        )
     )
-    new_df = table.to_pandas()
-    mask = ~new_df.apply(
-        lambda row: (row["broker"], row["source"], row["payload_hash"]) in existing_keys,
-        axis=1,
-    )
-    if mask.all():
+
+    brokers = table.column("broker").to_pylist()
+    sources = table.column("source").to_pylist()
+    hashes = table.column("payload_hash").to_pylist()
+    mask = [(b, s, h) not in existing_keys for b, s, h in zip(brokers, sources, hashes)]
+
+    if all(mask):
         return table
-    if not mask.any():
+    if not any(mask):
         return table.slice(0, 0)
-    return pa.Table.from_pandas(new_df[mask].reset_index(drop=True), schema=RAW_SCHEMA)
+
+    import pyarrow.compute as pc
+    return table.filter(pc.array(mask))
 
 
 def ingest_raw(

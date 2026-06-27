@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import polars as pl
 from deltalake import DeltaTable
 
 from pipeline.crypto import decrypt_float, load_key
@@ -62,14 +63,17 @@ def extract_holdings(
     except Exception:
         return []
 
-    df = dt.to_pandas()
-    if df.empty:
+    # Read via Arrow to preserve schema, then convert to Polars
+    table = dt.to_pyarrow_table()
+    if table.num_rows == 0:
         return []
+
+    df = pl.from_arrow(table)
 
     holdings: list[Holding] = []
 
     if broker == "ibkr":
-        for _, row in df.iterrows():
+        for row in df.iter_rows(named=True):
             value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
@@ -87,7 +91,7 @@ def extract_holdings(
             ))
 
     elif broker == "trading212":
-        for _, row in df.iterrows():
+        for row in df.iter_rows(named=True):
             value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
@@ -102,7 +106,7 @@ def extract_holdings(
             ))
 
     elif broker == "xtb":
-        for _, row in df.iterrows():
+        for row in df.iter_rows(named=True):
             value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
