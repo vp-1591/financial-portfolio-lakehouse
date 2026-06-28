@@ -13,7 +13,6 @@ import pyarrow as pa
 from deltalake import write_deltalake
 
 from pipeline.crypto import decrypt_float, load_key
-from pipeline.paths import ANALYTICS_PORTFOLIO_ALLOCATION
 
 
 def allocate_percentages(
@@ -38,15 +37,16 @@ def allocate_percentages(
     from pipeline.normalized.models import consolidated_holdings_schema
 
     if table_path is None:
-        from pipeline.paths import NORMALIZED_CONSOLIDATED_HOLDINGS
+        from pipeline.storage import get_storage
 
-        table_path = str(NORMALIZED_CONSOLIDATED_HOLDINGS)
+        table_path = str(get_storage().normalized_dir / "consolidated_holdings")
 
     if fernet_key is None:
         fernet_key = load_key()
 
     if analytics_path is None:
-        analytics_path = str(ANALYTICS_PORTFOLIO_ALLOCATION)
+        from pipeline.storage import get_storage
+        analytics_path = str(get_storage().analytics_dir / "portfolio_allocation")
 
     from pathlib import Path
     Path(analytics_path).parent.mkdir(parents=True, exist_ok=True)

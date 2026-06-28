@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from pipeline.crypto import generate_key
+from pipeline.storage import LocalBackend, StorageConfig, use_storage
 
 
 @pytest.fixture()
@@ -19,22 +19,36 @@ def fernet_key() -> bytes:
 
 @pytest.fixture()
 def tmp_data_dir(tmp_path: Path) -> Path:
-    """Create a temporary data/ directory structure for pipeline tests."""
+    """Create a temporary data/ directory structure for pipeline tests.
+
+    Also injects a ``StorageConfig`` that points at the temp directory
+    so that all code under test resolves paths to ``tmp_path`` instead
+    of the project's real ``data/`` directory.
+    """
     data = tmp_path / "data"
-    (data / "raw" / "ibkr_snapshot").mkdir(parents=True)
-    (data / "raw" / "ibkr_cdc").mkdir(parents=True)
-    (data / "raw" / "trading212_snapshot").mkdir(parents=True)
-    (data / "raw" / "trading212_cdc").mkdir(parents=True)
-    (data / "raw" / "xtb_snapshot").mkdir(parents=True)
-    (data / "raw" / "xtb_cdc").mkdir(parents=True)
-    (data / "normalized" / "ibkr_snapshot").mkdir(parents=True)
-    (data / "normalized" / "ibkr_cdc").mkdir(parents=True)
-    (data / "normalized" / "trading212_snapshot").mkdir(parents=True)
-    (data / "normalized" / "trading212_cdc").mkdir(parents=True)
-    (data / "normalized" / "xtb_snapshot").mkdir(parents=True)
-    (data / "normalized" / "xtb_cdc").mkdir(parents=True)
-    (data / "normalized" / "consolidated_holdings").mkdir(parents=True)
-    (data / "analytics" / "portfolio_allocation").mkdir(parents=True)
+    for subdir in [
+        "raw/ibkr_snapshot", "raw/ibkr_cdc",
+        "raw/trading212_snapshot", "raw/trading212_cdc",
+        "raw/xtb_snapshot", "raw/xtb_cdc",
+        "normalized/ibkr_snapshot", "normalized/ibkr_cdc",
+        "normalized/trading212_snapshot", "normalized/trading212_cdc",
+        "normalized/xtb_snapshot", "normalized/xtb_cdc",
+        "normalized/consolidated_holdings",
+        "analytics/portfolio_allocation",
+    ]:
+        (data / subdir).mkdir(parents=True, exist_ok=True)
+
+    config = StorageConfig(
+        env="test",
+        data_dir=data,
+        raw_dir=data / "raw",
+        normalized_dir=data / "normalized",
+        analytics_dir=data / "analytics",
+        secrets_dir=tmp_path / ".secrets",
+        encryption_key_file=tmp_path / ".secrets" / "encryption.key",
+        backend=LocalBackend(data),
+    )
+    use_storage(config)
     return data
 
 
@@ -49,7 +63,7 @@ def secrets_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def env_key(fernet_key: bytes) -> None:
+def env_key(fernet_key: bytes):
     """Set PORTFOLIO_ENCRYPTION_KEY env var for the duration of a test."""
     os.environ["PORTFOLIO_ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
     try:

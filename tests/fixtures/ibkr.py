@@ -1,0 +1,118 @@
+"""IBKR fixture builders for raw and normalized Delta tables.
+
+Provides factory functions that return realistic ``pa.Table`` objects
+matching the actual schemas used by the IBKR connector.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from typing import Any
+
+import pyarrow as pa
+
+from pipeline.crypto import encrypt, encrypt_float, generate_key
+from pipeline.raw.models import RAW_SCHEMA
+from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+
+
+def ibkr_raw_positions(
+    account_id: str = "U123456",
+    positions: list[dict[str, Any]] | None = None,
+    ledger: dict[str, Any] | None = None,
+    fernet_key: bytes | None = None,
+) -> pa.Table:
+    """Build a raw IBKR snapshot table with encrypted payloads.
+
+    Default data includes 2 equity positions and a EUR cash balance.
+    """
+    if fernet_key is None:
+        fernet_key = generate_key()
+    if positions is None:
+        positions = [
+            {
+                "contractDesc": "VWCE",
+                "assetClass": "STK",
+                "currency": "EUR",
+                "mktValue": 5000.0,
+                "isin": "IE00BK5BQT80",
+                "conid": "12345678",
+                "description": "Vanguard FTSE All-World UCITS ETF",
+            },
+            {
+                "contractDesc": "AAPL",
+                "assetClass": "STK",
+                "currency": "USD",
+                "mktValue": 3000.0,
+                "isin": "US0378331005",
+                "conid": "265598",
+                "description": "Apple Inc",
+            },
+        ]
+    if ledger is None:
+        ledger = {
+            "BASE": {"currency": "EUR", "netliquidationvalue": 10000.0, "exchangerate": 1.0},
+            "EUR": {"currency": "EUR", "cashbalance": 2000.0, "exchangerate": 1.0},
+            "USD": {"currency": "USD", "cashbalance": 500.0, "exchangerate": 0.9},
+        }
+
+    now = datetime.now(timezone.utc)
+    positions_bytes = json.dumps(positions).encode("utf-8")
+    ledger_bytes = json.dumps(ledger).encode("utf-8")
+    encrypted_positions = encrypt(positions_bytes, fernet_key)
+    encrypted_ledger = encrypt(ledger_bytes, fernet_key)
+
+    return pa.table(
+        {
+            "fetched_at": [now, now],
+            "broker": ["IBKR", "IBKR"],
+            "source": [
+                f"/portfolio2/{account_id}/positions?sort=position&direction=d",
+                f"/portfolio/{account_id}/ledger",
+            ],
+            "payload": [encrypted_positions, encrypted_ledger],
+            "payload_hash": [
+                hashlib.sha256(positions_bytes).hexdigest(),
+                hashlib.sha256(ledger_bytes).hexdigest(),
+            ],
+            "account_id": [account_id, account_id],
+            "source_file": ["", ""],
+        },
+        schema=RAW_SCHEMA,
+    )
+
+
+def ibkr_normalized_snapshot(
+    fernet_key: bytes | None = None,
+    account_id: str = "U123456",
+) -> pa.Table:
+    """Build a normalized IBKR snapshot table with encrypted values.
+
+    Default data: 2 equities (VWCE, AAPL) + 1 cash entry (EUR).
+    """
+    if fernet_key is None:
+        fernet_key = generate_key()
+    now = datetime.now(timezone.utc)
+    return pa.table(
+        {
+            "fetched_at": [now, now, now],
+            "account_id": [account_id, account_id, account_id],
+            "position_type": ["EQUITY", "EQUITY", "CASH"],
+            "label": ["VWCE", "AAPL", "CASH:EUR"],
+            "asset_class": ["STK", "STK", "CASH"],
+            "currency": ["EUR", "EUR", "EUR"],
+            "value": [
+                encrypt_float(5000.0, fernet_key),
+                encrypt_float(2700.0, fernet_key),  # 3000 USD * 0.9 EUR/USD
+                encrypt_float(2000.0, fernet_key),
+            ],
+            "value_currency": ["EUR", "USD", "EUR"],
+            "conid": ["12345678", "265598", ""],
+            "isin": ["IE00BK5BQT80", "US0378331005", ""],
+            "description": ["Vanguard FTSE All-World", "Apple Inc", "Cash EUR"],
+            "security_currency": ["EUR", "USD", "EUR"],
+        },
+        schema=ibkr_snapshot_normalized_schema,
+    )

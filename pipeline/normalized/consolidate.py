@@ -22,7 +22,6 @@ from deltalake import write_deltalake
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
 from pipeline.normalized.models import consolidated_holdings_schema
-from pipeline.paths import NORMALIZED_CONSOLIDATED_HOLDINGS
 
 
 FRANKFURTER_BASE_URL = "https://api.frankfurter.app"
@@ -274,7 +273,8 @@ def consolidate_holdings(
     from pipeline.crypto import encrypt_float
 
     if table_path is None:
-        table_path = str(NORMALIZED_CONSOLIDATED_HOLDINGS)
+        from pipeline.storage import get_storage
+        table_path = str(get_storage().normalized_dir / "consolidated_holdings")
 
     from pathlib import Path
     Path(table_path).parent.mkdir(parents=True, exist_ok=True)

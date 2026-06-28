@@ -15,6 +15,7 @@ roadmap*.md
 
 # Pipeline data and secrets
 data/
+data-dev/
 .secrets/
 
 # Build artifacts

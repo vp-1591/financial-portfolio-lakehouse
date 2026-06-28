@@ -32,9 +32,9 @@ def load_key(path: Path | None = None) -> bytes:
         return env_key.encode("utf-8") if isinstance(env_key, str) else env_key
 
     if path is None:
-        from pipeline.paths import ENCRYPTION_KEY_FILE
+        from pipeline.storage import get_storage
 
-        path = ENCRYPTION_KEY_FILE
+        path = get_storage().encryption_key_file
 
     if not path.exists():
         raise FileNotFoundError(

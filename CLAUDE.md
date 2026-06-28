@@ -29,3 +29,8 @@ Never use the system Python (`C:\Python314`). Always prefix commands with the ve
 .venv/Scripts/python -m pytest tests/ -v
 .venv/Scripts/pip install <package>
 ```
+
+## Git workflow
+- Never commit directly to `main`. Always branch first: `git checkout -b feat/<short-description>`
+- After local tests pass, open a PR: `gh pr create --fill`
+- Wait for CI to go green before merging — don't merge with a red check.
