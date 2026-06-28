@@ -296,34 +296,29 @@ A Claude Code hook blocks the agent from calling `bw`, so coding agents can neve
 
 ### Configuration
 
-Non-secret settings live in two YAML files:
+Non-secret settings live in YAML files:
 
 - **`pipeline.defaults.yaml`** — version-controlled defaults (safe for agents to read)
-- **`pipeline.yaml`** — gitignored local overrides
+- **`pipeline.example.yaml`** — committed example with comments; copy to `pipeline.yaml` and fill in your values
+- **`pipeline.yaml`** — gitignored local overrides (never committed)
 
 ```yaml
-# pipeline.defaults.yaml
+# pipeline.defaults.yaml — version-controlled, has safe defaults
 target_currency: EUR
 
 connectors:
   ibkr:
     enabled: false
-    base_url: https://localhost:5000/v1/api
-    flex_query_id: "YOUR_FLEX_QUERY_ID"  # ← replace with your IBKR Flex Query ID
-    flex_base_url: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
-  trading212:
-    enabled: false
-    demo: false
-  xtb:
-    enabled: false
+    flex_query_id: null  # no default; override in pipeline.yaml
+    ...
 ```
 
-> **Note:** `flex_query_id` must be replaced with your own IBKR Flex Query ID
-> (a number like `1554188`). You create this in IBKR Client Portal under
-> **Performance & Reports → Flex Queries**. Override it in your local
-> `pipeline.yaml` so you don't accidentally commit your ID.
+To get started, copy the example file and customize it:
 
-To enable a connector locally, create `pipeline.yaml`:
+```powershell
+copy pipeline.example.yaml pipeline.yaml
+# Then edit pipeline.yaml with your settings
+```
 
 ```yaml
 # pipeline.yaml (gitignored — your local overrides)

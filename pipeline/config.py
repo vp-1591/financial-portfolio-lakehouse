@@ -6,6 +6,9 @@ Configuration precedence (highest wins):
 2. ``pipeline.yaml`` (gitignored local overrides)
 3. ``pipeline.defaults.yaml`` (version-controlled defaults)
 
+See ``pipeline.example.yaml`` for a commented template — copy it to
+``pipeline.yaml`` and fill in your values.
+
 Secrets are **never** stored in these files — they come from Bitwarden
 or environment variables via :mod:`pipeline.secrets`.
 

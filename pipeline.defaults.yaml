@@ -10,7 +10,7 @@ connectors:
     base_url: https://localhost:5000/v1/api
     account: null
     base_currency: null
-    flex_query_id: "YOUR_FLEX_QUERY_ID"
+    flex_query_id: null
     flex_base_url: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
     verify_tls: false
     skip_auth_check: false

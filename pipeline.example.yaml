@@ -1,0 +1,29 @@
+# pipeline.example.yaml — copy this to pipeline.yaml and fill in your values.
+# pipeline.yaml is gitignored so your personal settings are never committed.
+# Secrets (API keys, data paths) go in Bitwarden / env vars, NOT here.
+
+target_currency: EUR  # target currency for consolidation and allocation
+
+connectors:
+  ibkr:
+    enabled: true  # set to false to skip IBKR
+    base_url: https://localhost:5000/v1/api
+    account: null  # your IBKR account ID (optional)
+    base_currency: null  # your IBKR base currency (optional)
+    flex_query_id: "1554188"  # ← replace with YOUR IBKR Flex Query ID
+    flex_base_url: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
+    verify_tls: false
+    skip_auth_check: false
+    require_brokerage_session: false
+
+  trading212:
+    enabled: true  # set to false to skip Trading 212
+    base_url: null  # override API base URL (optional)
+    demo: false  # set to true for demo account
+    skip_metadata: false
+    user_agent: null  # override User-Agent header (optional)
+    account_id: null  # your Trading 212 account ID (optional)
+
+  xtb:
+    enabled: false  # enable to process XTB Excel reports
+    account_id: null  # your XTB account ID (optional)
