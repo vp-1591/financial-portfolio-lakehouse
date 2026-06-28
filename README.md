@@ -309,7 +309,7 @@ connectors:
   ibkr:
     enabled: false
     base_url: https://localhost:5000/v1/api
-    flex_query_id: "1554188"
+    flex_query_id: "YOUR_FLEX_QUERY_ID"  # ← replace with your IBKR Flex Query ID
     flex_base_url: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
   trading212:
     enabled: false
@@ -318,6 +318,11 @@ connectors:
     enabled: false
 ```
 
+> **Note:** `flex_query_id` must be replaced with your own IBKR Flex Query ID
+> (a number like `1554188`). You create this in IBKR Client Portal under
+> **Performance & Reports → Flex Queries**. Override it in your local
+> `pipeline.yaml` so you don't accidentally commit your ID.
+
 To enable a connector locally, create `pipeline.yaml`:
 
 ```yaml
@@ -325,6 +330,7 @@ To enable a connector locally, create `pipeline.yaml`:
 connectors:
   ibkr:
     enabled: true
+    flex_query_id: "1554188"  # your actual Flex Query ID
   trading212:
     enabled: true
 ```
