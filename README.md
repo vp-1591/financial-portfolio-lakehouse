@@ -296,28 +296,16 @@ A Claude Code hook blocks the agent from calling `bw`, so coding agents can neve
 
 ### Configuration
 
-Non-secret settings live in YAML files:
+Non-secret settings use two YAML files:
 
-- **`pipeline.defaults.yaml`** — version-controlled defaults (safe for agents to read)
-- **`pipeline.example.yaml`** — committed example with comments; copy to `pipeline.yaml` and fill in your values
+- **`pipeline.defaults.yaml`** — committed defaults and sample config with comments
 - **`pipeline.yaml`** — gitignored local overrides (never committed)
 
-```yaml
-# pipeline.defaults.yaml — version-controlled, has safe defaults
-target_currency: EUR
-
-connectors:
-  ibkr:
-    enabled: false
-    flex_query_id: null  # no default; override in pipeline.yaml
-    ...
-```
-
-To get started, copy the example file and customize it:
+To get started, copy the defaults file and customize it:
 
 ```powershell
-copy pipeline.example.yaml pipeline.yaml
-# Then edit pipeline.yaml with your settings
+copy pipeline.defaults.yaml pipeline.yaml
+# Then edit pipeline.yaml with your settings (enable connectors, set flex_query_id, etc.)
 ```
 
 ```yaml

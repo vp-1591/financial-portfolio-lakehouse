@@ -4,10 +4,10 @@ Configuration precedence (highest wins):
 
 1. CLI flags
 2. ``pipeline.yaml`` (gitignored local overrides)
-3. ``pipeline.defaults.yaml`` (version-controlled defaults)
+3. ``pipeline.defaults.yaml`` (committed defaults and sample config)
 
-See ``pipeline.example.yaml`` for a commented template — copy it to
-``pipeline.yaml`` and fill in your values.
+Copy ``pipeline.defaults.yaml`` to ``pipeline.yaml`` and customize
+your settings there — ``pipeline.yaml`` is gitignored.
 
 Secrets are **never** stored in these files — they come from Bitwarden
 or environment variables via :mod:`pipeline.secrets`.
