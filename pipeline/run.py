@@ -19,7 +19,7 @@ from pathlib import Path
 
 from pipeline.connectors.registry import all, get
 from pipeline.crypto import generate_key, load_key
-from pipeline.paths import ENCRYPTION_KEY_FILE, SECRETS_DIR
+from pipeline.storage import get_storage
 
 
 def add_ibkr_args(parser: argparse._ArgumentGroup) -> None:
@@ -81,13 +81,14 @@ def parse_isin_override(value: str) -> tuple[str, str]:
 
 def cmd_keygen(args: argparse.Namespace) -> int:
     """Generate a Fernet encryption key."""
-    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
-    if ENCRYPTION_KEY_FILE.exists():
-        print(f"Encryption key already exists at {ENCRYPTION_KEY_FILE}")
+    config = get_storage()
+    config.secrets_dir.mkdir(parents=True, exist_ok=True)
+    if config.encryption_key_file.exists():
+        print(f"Encryption key already exists at {config.encryption_key_file}")
         return 0
     key = generate_key()
-    ENCRYPTION_KEY_FILE.write_bytes(key)
-    print(f"Encryption key written to {ENCRYPTION_KEY_FILE}")
+    config.encryption_key_file.write_bytes(key)
+    print(f"Encryption key written to {config.encryption_key_file}")
     return 0
 
 
@@ -207,8 +208,8 @@ def cmd_transform(args: argparse.Namespace) -> int:
                     normalized = connector.transform_cdc(raw_table, fernet_key)
 
                 from pathlib import Path
-                from pipeline.paths import NORMALIZED_DIR
-                norm_path = str(NORMALIZED_DIR / f"{connector.name}_{layer}")
+                config = get_storage()
+                norm_path = config.normalized_path(f"{connector.name}_{layer}")
                 Path(norm_path).parent.mkdir(parents=True, exist_ok=True)
                 from deltalake import write_deltalake
                 if normalized.num_rows == 0:
@@ -236,7 +237,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         consolidate_holdings,
     )
     from pipeline.normalized.extract import extract_holdings
-    from pipeline.paths import NORMALIZED_DIR
 
     fernet_key = load_key()
 
@@ -272,7 +272,8 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     connectors_list = all()
 
     for connector in connectors_list:
-        snapshot_path = NORMALIZED_DIR / f"{connector.name}_snapshot"
+        config = get_storage()
+        snapshot_path = Path(config.normalized_path(f"{connector.name}_snapshot"))
         try:
             DeltaTable(str(snapshot_path))
         except Exception:
@@ -362,8 +363,8 @@ def print_allocation(table: "pa.Table") -> None:
 
 def get_raw_path(connector_name: str, layer: str) -> "Path":
     """Get the raw data path for a connector and layer."""
-    from pipeline.paths import RAW_DIR
-    return RAW_DIR / f"{connector_name}_{layer}"
+    config = get_storage()
+    return Path(config.raw_path(f"{connector_name}_{layer}"))
 
 
 def cmd_full(args: argparse.Namespace) -> int:
@@ -383,6 +384,13 @@ def cmd_full(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Investment portfolio data pipeline"
+    )
+    parser.add_argument(
+        "--env",
+        choices=["prod", "dev"],
+        default=None,
+        help="Pipeline environment: 'prod' (default, data/) or 'dev' (data-dev/). "
+        "Can also be set via PIPELINE_ENV env var.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -429,6 +437,10 @@ def main() -> int:
     full_parser.add_argument("--isin-map-file", action="append", type=str, default=[])
 
     args = parser.parse_args()
+
+    # Resolve storage configuration before any path access
+    from pipeline.storage import resolve_storage
+    resolve_storage(args.env)
 
     commands = {
         "keygen": cmd_keygen,

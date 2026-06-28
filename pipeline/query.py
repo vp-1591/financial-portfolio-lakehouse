@@ -8,9 +8,7 @@ import duckdb
 import polars as pl
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
-
-# Resolve project root from this module's location
-_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+from pipeline.storage import get_storage
 
 # Columns that contain Fernet-encrypted binary data in normalized tables.
 _ENCRYPTED_COLUMNS = frozenset({"value", "quantity", "amount"})
@@ -57,7 +55,7 @@ def query(
     if path.is_absolute():
         abs_path = path.resolve()
     else:
-        abs_path = (_PROJECT_ROOT / path).resolve()
+        abs_path = (get_storage().data_dir / path).resolve()
     conn = duckdb.connect()
     conn.execute(
         f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')"
@@ -97,7 +95,7 @@ def load_decrypted(
     if path.is_absolute():
         abs_path = path.resolve()
     else:
-        abs_path = (_PROJECT_ROOT / path).resolve()
+        abs_path = (get_storage().data_dir / path).resolve()
 
     conn = duckdb.connect()
     conn.execute(

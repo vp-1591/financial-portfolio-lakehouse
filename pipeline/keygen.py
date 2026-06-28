@@ -8,17 +8,18 @@ Usage::
 from __future__ import annotations
 
 from pipeline.crypto import generate_key
-from pipeline.paths import ENCRYPTION_KEY_FILE, SECRETS_DIR
+from pipeline.storage import get_storage
 
 
 def main() -> None:
-    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
-    if ENCRYPTION_KEY_FILE.exists():
-        print(f"Encryption key already exists at {ENCRYPTION_KEY_FILE}")
+    config = get_storage()
+    config.secrets_dir.mkdir(parents=True, exist_ok=True)
+    if config.encryption_key_file.exists():
+        print(f"Encryption key already exists at {config.encryption_key_file}")
         return
     key = generate_key()
-    ENCRYPTION_KEY_FILE.write_bytes(key)
-    print(f"Encryption key written to {ENCRYPTION_KEY_FILE}")
+    config.encryption_key_file.write_bytes(key)
+    print(f"Encryption key written to {config.encryption_key_file}")
 
 
 if __name__ == "__main__":
