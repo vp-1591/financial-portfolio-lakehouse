@@ -274,10 +274,10 @@ def consolidate_holdings(
 
     if table_path is None:
         from pipeline.storage import get_storage
-        table_path = str(get_storage().normalized_dir / "consolidated_holdings")
+        table_path = get_storage().normalized_path("consolidated_holdings")
 
-    from pathlib import Path
-    Path(table_path).parent.mkdir(parents=True, exist_ok=True)
+    from pipeline.storage import get_storage
+    get_storage().backend.ensure_parent(table_path)
 
     now = datetime.now(timezone.utc)
     normalized_isin_overrides = {

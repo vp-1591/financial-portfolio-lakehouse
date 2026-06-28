@@ -39,12 +39,12 @@ def tmp_data_dir(tmp_path: Path) -> Path:
         (data / subdir).mkdir(parents=True, exist_ok=True)
 
     config = StorageConfig(
-        data_dir=data,
-        raw_dir=data / "raw",
-        normalized_dir=data / "normalized",
-        analytics_dir=data / "analytics",
-        secrets_dir=tmp_path / ".secrets",
-        encryption_key_file=tmp_path / ".secrets" / "encryption.key",
+        data_dir=str(data),
+        raw_dir=str(data / "raw"),
+        normalized_dir=str(data / "normalized"),
+        analytics_dir=str(data / "analytics"),
+        secrets_dir=str(tmp_path / ".secrets"),
+        encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
         backend=LocalBackend(data),
     )
     use_storage(config)

@@ -11,9 +11,8 @@ Usage::
 
 Connector enable/disable and broker settings come from
 ``pipeline.yaml`` (local overrides) layered on
-``pipeline.defaults.yaml``.  Secrets (API keys, data paths) come
-from Bitwarden or environment variables — never from config files or
-CLI flags.
+``pipeline.defaults.yaml``.  Secrets come from environment variables
+(set by GitHub Actions via GitHub Secrets, or locally via ``.env``).
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from pipeline.config import get_connector_config, load_config
 from pipeline.connectors.registry import all, get
 from pipeline.crypto import generate_key, load_key
 from pipeline.secrets import inject_secrets
-from pipeline.storage import get_storage
+from pipeline.storage import S3Backend, get_storage
 
 
 def parse_fx_rate(value: str) -> tuple[str, float]:
@@ -62,12 +61,19 @@ def parse_isin_override(value: str) -> tuple[str, str]:
 def cmd_keygen(args: argparse.Namespace) -> int:
     """Generate a Fernet encryption key."""
     config = get_storage()
-    config.secrets_dir.mkdir(parents=True, exist_ok=True)
-    if config.encryption_key_file.exists():
+    if isinstance(config.backend, S3Backend):
+        print("In S3 mode, set the PORTFOLIO_ENCRYPTION_KEY environment variable.")
+        print(
+            "Example: export PORTFOLIO_ENCRYPTION_KEY=$(python -c "
+            "'from pipeline.crypto import generate_key; print(generate_key().decode())')"
+        )
+        return 0
+    Path(config.secrets_dir).mkdir(parents=True, exist_ok=True)
+    if Path(config.encryption_key_file).exists():
         print(f"Encryption key already exists at {config.encryption_key_file}")
         return 0
     key = generate_key()
-    config.encryption_key_file.write_bytes(key)
+    Path(config.encryption_key_file).write_bytes(key)
     print(f"Encryption key written to {config.encryption_key_file}")
     return 0
 
@@ -149,7 +155,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 try:
                     raw = connector.fetch_snapshot(**xtb_kwargs)
                     table_path = str(get_raw_path(connector.name, "snapshot"))
-                    Path(table_path).parent.mkdir(parents=True, exist_ok=True)
+                    get_storage().backend.ensure_parent(table_path)
                     count = ingest_raw(raw, table_path, fernet_key)
                     print(f"  {connector.display_name} snapshot: {count} rows written")
                 except Exception as exc:
@@ -162,7 +168,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         try:
             raw = connector.fetch_snapshot(**snapshot_kwargs)
             table_path = str(get_raw_path(connector.name, "snapshot"))
-            Path(table_path).parent.mkdir(parents=True, exist_ok=True)
+            get_storage().backend.ensure_parent(table_path)
             count = ingest_raw(raw, table_path, fernet_key)
             print(f"  {connector.display_name} snapshot: {count} rows written")
         except NotImplementedError:
@@ -177,7 +183,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         try:
             raw_cdc = connector.fetch_cdc(**cdc_kwargs)
             cdc_path = str(get_raw_path(connector.name, "cdc"))
-            Path(cdc_path).parent.mkdir(parents=True, exist_ok=True)
+            get_storage().backend.ensure_parent(cdc_path)
             count = ingest_raw(raw_cdc, cdc_path, fernet_key)
             print(f"  {connector.display_name} CDC: {count} rows written")
         except NotImplementedError:
@@ -221,7 +227,7 @@ def cmd_transform(args: argparse.Namespace) -> int:
 
                 config = get_storage()
                 norm_path = config.normalized_path(f"{connector.name}_{layer}")
-                Path(norm_path).parent.mkdir(parents=True, exist_ok=True)
+                config.backend.ensure_parent(norm_path)
                 from deltalake import write_deltalake
 
                 if normalized.num_rows == 0:
@@ -287,7 +293,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
     for connector in connectors_list:
         config = get_storage()
-        snapshot_path = Path(config.normalized_path(f"{connector.name}_snapshot"))
+        snapshot_path = config.normalized_path(f"{connector.name}_snapshot")
         try:
             DeltaTable(str(snapshot_path))
         except Exception:
@@ -396,7 +402,7 @@ def cmd_full(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    # Inject secrets from Bitwarden / env vars before anything else.
+    # Load .env and validate available secrets.
     inject_secrets()
 
     # Load YAML config (defaults + local overrides).
@@ -405,7 +411,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Investment portfolio data pipeline",
         epilog="Connector settings and enable/disable switches come from "
-        "pipeline.yaml.  Secrets come from Bitwarden or environment variables.",
+        "pipeline.yaml.  Secrets come from environment variables "
+        "(GitHub Secrets in CI, .env file locally).",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

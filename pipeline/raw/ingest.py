@@ -144,7 +144,7 @@ def ingest_raw(
     deduped = dedup_raw(encrypted, table_path)
     if deduped.num_rows == 0:
         return 0
-    from pathlib import Path
-    Path(table_path).parent.mkdir(parents=True, exist_ok=True)
+    from pipeline.storage import get_storage
+    get_storage().backend.ensure_parent(table_path)
     write_deltalake(table_path, deduped, mode="append")
     return deduped.num_rows

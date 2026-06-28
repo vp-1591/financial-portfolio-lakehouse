@@ -14,7 +14,7 @@ The user explicitly required: data paths must be secrets (stored in Bitwarden, n
 
 1. **Secrets come from Bitwarden (`bw`) or env vars only.** Created `pipeline/secrets.py` which resolves secrets at runtime:
    - Priority: already-set env vars (CI) → `bw get password` with `BW_SESSION` → missing (pipeline errors when needed)
-   - Secret name mapping: `IBKR_FLEX_TOKEN`, `T212_API_KEY`, `T212_API_SECRET`, `PIPELINE_DATA_DIR`, `PORTFOLIO_ENCRYPTION_KEY`
+   - Secret names match env var names exactly: `IBKR_FLEX_TOKEN`, `T212_API_KEY`, `T212_API_SECRET`, `PIPELINE_DATA_DIR`, `PORTFOLIO_ENCRYPTION_KEY`
    - No secrets in config files or CLI flags
 
 2. **Non-secret config in `pipeline.defaults.yaml` + `pipeline.yaml`.** Created `pipeline/config.py` with a deep-merge loader:

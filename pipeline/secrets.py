@@ -1,11 +1,12 @@
-"""Secret resolution from environment variables and Bitwarden Vault CLI.
+"""Secret resolution from environment variables and .env files.
 
-Secrets are never stored on disk.  They come from one of two sources:
+Secrets are never stored in the repository.  They come from one of two
+sources:
 
-1. **Already-set environment variables** — CI (GitHub Secrets) or manual
-   exports.  If the variable is present, the Bitwarden lookup is skipped.
-2. **Bitwarden Vault CLI (``bw``)** — if ``BW_SESSION`` is set (vault is
-   unlocked), each secret is fetched by its vault item name.
+1. **Environment variables** — set by CI (GitHub Secrets) or manual
+   exports.  Highest priority; always checked first.
+2. **``.env`` file** — loaded by ``python-dotenv`` for local development.
+   The file lives at the project root and is gitignored.
 
 If a secret is missing from both sources, the pipeline will error when
 the secret is actually needed — not at startup.  This allows commands
@@ -15,70 +16,71 @@ Usage::
 
     from pipeline.secrets import inject_secrets, get_secret
 
-    inject_secrets()           # call once at startup
+    inject_secrets()           # call once at startup (loads .env, validates)
     token = get_secret("IBKR_FLEX_TOKEN")  # returns str | None
 """
 
 from __future__ import annotations
 
+import logging
 import os
-import subprocess
+from pathlib import Path
 
-# Maps environment variable name → Bitwarden vault item name.
-# Only secrets that the pipeline actually needs are listed here.
-_BW_SECRET_MAP: dict[str, str] = {
-    "IBKR_FLEX_TOKEN": "IBKR Flex Token",
-    "T212_API_KEY": "Trading 212 API Key",
-    "T212_API_SECRET": "Trading 212 API Secret",
-    "PIPELINE_DATA_DIR": "Pipeline Data Dir",
-    "PORTFOLIO_ENCRYPTION_KEY": "Portfolio Encryption Key",
-}
+from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
 
-def resolve_secrets() -> dict[str, str]:
-    """Fetch secrets from the environment and Bitwarden.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-    Priority:
+# Secrets the pipeline usually needs.  Listed here for startup validation.
+# These are set via GitHub Secrets (CI) or .env / manual exports (local dev).
+REQUIRED_SECRET_NAMES: list[str] = [
+    "IBKR_FLEX_TOKEN",
+    "T212_API_KEY",
+    "T212_API_SECRET",
+    "PORTFOLIO_ENCRYPTION_KEY",
+]
 
-    1. Already-set environment variables (skip Bitwarden lookup).
-    2. ``bw get password <item> --session $BW_SESSION`` if
-       ``BW_SESSION`` is set.
-    3. Missing secrets are simply not returned — the pipeline will
-       error when a required secret is accessed.
-    """
-    secrets: dict[str, str] = {}
-    bw_session = os.environ.get("BW_SESSION")
-
-    for env_name, bw_name in _BW_SECRET_MAP.items():
-        # Already set in environment (CI or manual) — use it.
-        if env_name in os.environ:
-            secrets[env_name] = os.environ[env_name]
-            continue
-
-        # Try Bitwarden Vault CLI.
-        if bw_session:
-            try:
-                result = subprocess.run(
-                    ["bw", "get", "password", bw_name, "--session", bw_session],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                secrets[env_name] = result.stdout.strip()
-            except subprocess.CalledProcessError:
-                pass  # Secret not found in vault — skip.
-
-    return secrets
+# Optional env vars that control pipeline behaviour.
+OPTIONAL_SECRET_NAMES: list[str] = [
+    "PIPELINE_DATA_DIR",
+    "S3_BUCKET",
+    "S3_PREFIX",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION",
+]
 
 
 def inject_secrets() -> dict[str, str]:
-    """Resolve secrets and inject them into ``os.environ``.
+    """Load ``.env`` and validate available secrets.
 
-    Called once at pipeline startup.  Returns the secrets dict so
-    callers that need direct access can use it.
+    Called once at pipeline startup.  Loads environment variables from
+    the ``.env`` file (if present), then logs warnings for any required
+    secrets that are still missing.
+
+    Returns a dict of all available secrets for caller convenience.
     """
-    secrets = resolve_secrets()
-    os.environ.update(secrets)
+    # Load .env file if it exists (local dev).  Does NOT override
+    # variables already set in the environment (CI / manual exports).
+    env_file = PROJECT_ROOT / ".env"
+    if env_file.exists():
+        load_dotenv(env_file, override=False)
+        logger.info("Loaded environment variables from %s", env_file)
+
+    secrets: dict[str, str] = {}
+    for name in REQUIRED_SECRET_NAMES:
+        value = os.environ.get(name)
+        if value:
+            secrets[name] = value
+        else:
+            logger.warning("Required secret %s is not set", name)
+
+    for name in OPTIONAL_SECRET_NAMES:
+        value = os.environ.get(name)
+        if value:
+            secrets[name] = value
+
     return secrets
 
 
@@ -86,6 +88,7 @@ def get_secret(name: str) -> str | None:
     """Get a single secret by environment variable name.
 
     Returns ``None`` if the secret is not available.  Call
-    :func:`inject_secrets` before using this function.
+    :func:`inject_secrets` before using this function to ensure
+    the ``.env`` file has been loaded.
     """
     return os.environ.get(name)

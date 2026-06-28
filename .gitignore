@@ -21,6 +21,9 @@ data/
 # Local config overrides (contains user-specific settings, no secrets)
 pipeline.yaml
 
+# Local environment variables (contains secrets for local dev)
+.env
+
 # Build artifacts
 *.egg-info/
 

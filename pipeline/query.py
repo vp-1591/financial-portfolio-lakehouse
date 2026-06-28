@@ -1,17 +1,66 @@
-"""DuckDB query helpers with decryption support."""
+"""DuckDB query helpers with decryption support.
+
+Supports both local filesystem paths and S3 URIs.  For S3 queries,
+AWS credentials must be configured via environment variables
+(``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``).
+"""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import duckdb
 import polars as pl
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
-from pipeline.storage import get_storage
+from pipeline.storage import S3Backend, get_storage
 
 # Columns that contain Fernet-encrypted binary data in normalized tables.
 _ENCRYPTED_COLUMNS = frozenset({"value", "quantity", "amount"})
+
+
+def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
+    """Configure DuckDB S3 credentials from environment variables."""
+    conn.execute(
+        f"SET s3_access_key_id='{os.environ.get('AWS_ACCESS_KEY_ID', '')}'"
+    )
+    conn.execute(
+        f"SET s3_secret_access_key='{os.environ.get('AWS_SECRET_ACCESS_KEY', '')}'"
+    )
+    conn.execute(
+        f"SET s3_region='{os.environ.get('AWS_REGION', 'eu-west-1')}'"
+    )
+
+
+def _resolve_path(table_path: str | Path) -> str:
+    """Resolve a table path to an absolute path or S3 URI string."""
+    config = get_storage()
+    path_str = str(table_path)
+
+    # Already an S3 URI — use as-is.
+    if path_str.startswith("s3://"):
+        return path_str
+
+    # Already absolute — resolve.
+    path = Path(path_str)
+    if path.is_absolute():
+        return str(path.resolve())
+
+    # Relative — resolve against data_dir (which may be an S3 prefix).
+    if isinstance(config.backend, S3Backend):
+        return config.backend.table_path(
+            "normalized", path_str.replace("\\", "/")
+        )
+    return str((Path(config.data_dir) / path).resolve())
+
+
+def _create_connection(table_path: str) -> duckdb.DuckDBPyConnection:
+    """Create a DuckDB connection with S3 config if needed."""
+    conn = duckdb.connect()
+    if table_path.startswith("s3://"):
+        _configure_s3(conn)
+    return conn
 
 
 def query(
@@ -26,7 +75,8 @@ def query(
     Parameters
     ----------
     table_path:
-        Path to the Delta table directory.
+        Path to the Delta table directory.  Can be a local path or
+        an ``s3://`` URI.
     sql:
         SQL expression.  The table is available as ``delta_table``.
     decrypt:
@@ -50,13 +100,8 @@ def query(
     ... )
     >>> result.pl()  # Polars DataFrame with decrypted values
     """
-    # Convert to absolute path for DuckDB
-    path = Path(table_path)
-    if path.is_absolute():
-        abs_path = path.resolve()
-    else:
-        abs_path = (get_storage().data_dir / path).resolve()
-    conn = duckdb.connect()
+    abs_path = _resolve_path(table_path)
+    conn = _create_connection(abs_path)
     conn.execute(
         f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')"
     )
@@ -73,7 +118,8 @@ def load_decrypted(
     Parameters
     ----------
     table_path:
-        Path to the Delta table directory.
+        Path to the Delta table directory.  Can be a local path or
+        an ``s3://`` URI.
     encrypted_cols:
         Column names that contain Fernet-encrypted binary values.
         Defaults to ``["value"]``.
@@ -90,14 +136,8 @@ def load_decrypted(
     if key is None:
         key = load_key()
 
-    # Convert to absolute path for DuckDB
-    path = Path(table_path)
-    if path.is_absolute():
-        abs_path = path.resolve()
-    else:
-        abs_path = (get_storage().data_dir / path).resolve()
-
-    conn = duckdb.connect()
+    abs_path = _resolve_path(table_path)
+    conn = _create_connection(abs_path)
     conn.execute(
         f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')"
     )
@@ -156,7 +196,8 @@ def decrypted_df(
     Parameters
     ----------
     table_path:
-        Path to the Delta table directory.
+        Path to the Delta table directory.  Can be a local path or
+        an ``s3://`` URI.
     sql:
         SQL expression.  The table is available as ``delta_table``.
         Defaults to ``SELECT * FROM delta_table``.

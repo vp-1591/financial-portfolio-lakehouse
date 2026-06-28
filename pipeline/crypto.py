@@ -34,7 +34,7 @@ def load_key(path: Path | None = None) -> bytes:
     if path is None:
         from pipeline.storage import get_storage
 
-        path = get_storage().encryption_key_file
+        path = Path(get_storage().encryption_key_file)
 
     if not path.exists():
         raise FileNotFoundError(

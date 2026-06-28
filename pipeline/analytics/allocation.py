@@ -39,17 +39,17 @@ def allocate_percentages(
     if table_path is None:
         from pipeline.storage import get_storage
 
-        table_path = str(get_storage().normalized_dir / "consolidated_holdings")
+        table_path = get_storage().normalized_path("consolidated_holdings")
 
     if fernet_key is None:
         fernet_key = load_key()
 
     if analytics_path is None:
         from pipeline.storage import get_storage
-        analytics_path = str(get_storage().analytics_dir / "portfolio_allocation")
+        analytics_path = get_storage().analytics_path("portfolio_allocation")
 
-    from pathlib import Path
-    Path(analytics_path).parent.mkdir(parents=True, exist_ok=True)
+    from pipeline.storage import get_storage
+    get_storage().backend.ensure_parent(analytics_path)
 
     from deltalake import DeltaTable
 

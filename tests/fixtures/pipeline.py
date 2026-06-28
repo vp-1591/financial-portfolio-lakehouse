@@ -53,29 +53,29 @@ def setup_pipeline_env(
     (secrets / "encryption.key").write_bytes(fernet_key)
 
     config = StorageConfig(
-        data_dir=data,
-        raw_dir=data / "raw",
-        normalized_dir=data / "normalized",
-        analytics_dir=data / "analytics",
-        secrets_dir=secrets,
-        encryption_key_file=secrets / "encryption.key",
+        data_dir=str(data),
+        raw_dir=str(data / "raw"),
+        normalized_dir=str(data / "normalized"),
+        analytics_dir=str(data / "analytics"),
+        secrets_dir=str(secrets),
+        encryption_key_file=str(secrets / "encryption.key"),
         backend=LocalBackend(data),
     )
     use_storage(config)
 
     if include_ibkr:
         table = ibkr_normalized_snapshot(fernet_key=fernet_key)
-        path = str(config.normalized_dir / "ibkr_snapshot")
+        path = config.normalized_path("ibkr_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
     if include_t212:
         table = t212_normalized_snapshot(fernet_key=fernet_key)
-        path = str(config.normalized_dir / "trading212_snapshot")
+        path = config.normalized_path("trading212_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
     if include_xtb:
         table = xtb_normalized_snapshot(fernet_key=fernet_key)
-        path = str(config.normalized_dir / "xtb_snapshot")
+        path = config.normalized_path("xtb_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
     return config, fernet_key

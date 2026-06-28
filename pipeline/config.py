@@ -9,8 +9,9 @@ Configuration precedence (highest wins):
 Copy ``pipeline.defaults.yaml`` to ``pipeline.yaml`` and customize
 your settings there — ``pipeline.yaml`` is gitignored.
 
-Secrets are **never** stored in these files — they come from Bitwarden
-or environment variables via :mod:`pipeline.secrets`.
+Secrets are **never** stored in these files — they come from environment
+variables (GitHub Secrets in CI, ``.env`` file locally) via
+:mod:`pipeline.secrets`.
 
 Usage::
 

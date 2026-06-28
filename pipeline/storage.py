@@ -1,9 +1,14 @@
 """Swappable storage configuration for data paths.
 
-Supports local filesystem paths and is designed for future extension
-to S3/GCS cloud storage backends.  The active configuration is a
-module-level singleton resolved from the ``PIPELINE_DATA_DIR``
-environment variable or the project default.
+Supports local filesystem paths and S3 cloud storage.  The active
+configuration is a module-level singleton resolved from environment
+variables:
+
+- ``S3_BUCKET``: if set, uses :class:`S3Backend` with ``s3://bucket/prefix/...``
+- ``PIPELINE_DATA_DIR``: local data directory (default: ``PROJECT_ROOT / "data"``)
+
+Local development can also use a ``.env`` file (loaded by
+:mod:`pipeline.secrets`) to set these variables.
 
 Usage::
 
@@ -11,7 +16,8 @@ Usage::
 
     config = get_storage()
     raw_path = config.raw_path("ibkr_snapshot")
-    # e.g. "/abs/path/to/data/raw/ibkr_snapshot"
+    # e.g. "/abs/path/to/data/raw/ibkr_snapshot"  (LocalBackend)
+    # or  "s3://my-bucket/pipeline/raw/ibkr_snapshot"  (S3Backend)
 """
 
 from __future__ import annotations
@@ -23,6 +29,9 @@ from typing import Protocol, runtime_checkable
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# Default S3 prefix within the bucket.
+S3_DEFAULT_PREFIX = "pipeline"
+
 
 # ---------------------------------------------------------------------------
 # Storage backend protocol
@@ -33,9 +42,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 class StorageBackend(Protocol):
     """Protocol for storage backends.
 
-    Initially only :class:`LocalBackend` exists.  Future implementations
-    (``S3Backend``, ``GCSBackend``) will implement this protocol so that
-    ``table_path()`` returns the appropriate URI scheme.
+    :class:`LocalBackend` returns local filesystem paths.
+    :class:`S3Backend` returns ``s3://`` URIs.
     """
 
     def table_path(self, layer: str, table_name: str) -> str: ...
@@ -59,6 +67,33 @@ class LocalBackend:
         Path(table_path).parent.mkdir(parents=True, exist_ok=True)
 
 
+class S3Backend:
+    """S3 storage backend using deltalake's native object_store support.
+
+    ``table_path()`` returns ``s3://bucket/prefix/layer/table`` URIs.
+    ``ensure_parent()`` is a no-op — S3 does not require parent
+    directories to exist before writing.
+
+    AWS credentials are read from standard environment variables:
+    ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``.
+    The ``deltalake`` library handles S3 connectivity via its Rust
+    ``object_store`` crate — no ``boto3`` dependency required.
+    """
+
+    def __init__(self, bucket: str, prefix: str = S3_DEFAULT_PREFIX) -> None:
+        self.bucket = bucket
+        self.prefix = prefix.rstrip("/")
+
+    def table_path(self, layer: str, table_name: str) -> str:
+        if self.prefix:
+            return f"s3://{self.bucket}/{self.prefix}/{layer}/{table_name}"
+        return f"s3://{self.bucket}/{layer}/{table_name}"
+
+    def ensure_parent(self, table_path: str) -> None:
+        # S3 does not require parent directories to exist.
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Storage configuration
 # ---------------------------------------------------------------------------
@@ -68,22 +103,26 @@ class LocalBackend:
 class StorageConfig:
     """Resolved storage configuration.
 
-    Created by :func:`resolve_storage` based on the ``PIPELINE_DATA_DIR``
-    environment variable, or injected explicitly by tests via
-    :func:`use_storage`.
+    Created by :func:`resolve_storage` based on environment variables,
+    or injected explicitly by tests via :func:`use_storage`.
+
+    All path fields are ``str`` (not ``Path``) so that S3 URIs like
+    ``s3://bucket/prefix`` are represented correctly.  Use the backend
+    convenience methods (:meth:`raw_path`, :meth:`normalized_path`,
+    :meth:`analytics_path`) instead of constructing paths manually.
     """
 
-    data_dir: Path
-    raw_dir: Path
-    normalized_dir: Path
-    analytics_dir: Path
-    secrets_dir: Path
-    encryption_key_file: Path
+    data_dir: str          # local path or s3:// URI prefix
+    raw_dir: str           # local path or s3:// URI
+    normalized_dir: str
+    analytics_dir: str
+    secrets_dir: str       # always local (only used by LocalBackend)
+    encryption_key_file: str  # always local (or env-var sourced)
     backend: StorageBackend = field(default=None)  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.backend is None:
-            self.backend = LocalBackend(self.data_dir)
+            self.backend = LocalBackend(Path(self.data_dir))
 
     # Convenience methods that delegate to the backend -----------------------
 
@@ -110,12 +149,12 @@ _config: StorageConfig | None = None
 def resolve_storage() -> StorageConfig:
     """Resolve and activate a :class:`StorageConfig`.
 
-    Data directory priority:
+    Backend selection priority:
 
-    1. ``PIPELINE_DATA_DIR`` environment variable (set by Bitwarden or
-       manually).
-    2. ``PROJECT_ROOT / "data"`` (default, for local dev without
-       secrets).
+    1. If ``S3_BUCKET`` env var is set, use :class:`S3Backend` with
+       optional ``S3_PREFIX`` (default ``"pipeline"``).
+    2. Otherwise, use :class:`LocalBackend` with ``PIPELINE_DATA_DIR``
+       or the project default ``PROJECT_ROOT / "data"``.
 
     Tests must call :func:`use_storage` with a ``tmp_path``-based
     config to prevent accidental writes to the project's ``data/``
@@ -123,20 +162,38 @@ def resolve_storage() -> StorageConfig:
     """
     global _config
 
-    data_dir_str = os.environ.get("PIPELINE_DATA_DIR")
-    if data_dir_str:
-        data_dir = Path(data_dir_str)
-    else:
-        data_dir = PROJECT_ROOT / "data"
+    s3_bucket = os.environ.get("S3_BUCKET")
 
-    config = StorageConfig(
-        data_dir=data_dir,
-        raw_dir=data_dir / "raw",
-        normalized_dir=data_dir / "normalized",
-        analytics_dir=data_dir / "analytics",
-        secrets_dir=PROJECT_ROOT / ".secrets",
-        encryption_key_file=PROJECT_ROOT / ".secrets" / "encryption.key",
-    )
+    if s3_bucket:
+        prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
+        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
+        base = f"s3://{s3_bucket}/{prefix}"
+        config = StorageConfig(
+            data_dir=base,
+            raw_dir=f"{base}/raw",
+            normalized_dir=f"{base}/normalized",
+            analytics_dir=f"{base}/analytics",
+            secrets_dir=str(PROJECT_ROOT / ".secrets"),
+            encryption_key_file=str(PROJECT_ROOT / ".secrets" / "encryption.key"),
+            backend=backend,
+        )
+    else:
+        data_dir_str = os.environ.get("PIPELINE_DATA_DIR")
+        if data_dir_str:
+            data_dir = Path(data_dir_str)
+        else:
+            data_dir = PROJECT_ROOT / "data"
+
+        config = StorageConfig(
+            data_dir=str(data_dir),
+            raw_dir=str(data_dir / "raw"),
+            normalized_dir=str(data_dir / "normalized"),
+            analytics_dir=str(data_dir / "analytics"),
+            secrets_dir=str(PROJECT_ROOT / ".secrets"),
+            encryption_key_file=str(PROJECT_ROOT / ".secrets" / "encryption.key"),
+            backend=LocalBackend(data_dir),
+        )
+
     _config = config
     return config
 

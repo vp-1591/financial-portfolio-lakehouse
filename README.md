@@ -217,9 +217,9 @@ flowchart TD
     T212 -->|"encrypt payloads"| RT["trading212<br/>snapshot · cdc"]:::raw
     XTB -->|"parse & encrypt"| RX["xtb<br/>snapshot · cdc"]:::raw
 
-    RS -->|"decrypt · normalize"| NS["ibkr_snapshot"]:::norm
-    RT -->|"decrypt · normalize"| NT["trading212_snapshot"]:::norm
-    RX -->|"decrypt · normalize"| NX["xtb_snapshot"]:::norm
+    RS -->|"parse · normalize · re-encrypt values"| NS["ibkr_snapshot"]:::norm
+    RT -->|"parse · normalize · re-encrypt values"| NT["trading212_snapshot"]:::norm
+    RX -->|"parse · normalize · re-encrypt values"| NX["xtb_snapshot"]:::norm
 
     NS -->|"convert currency · normalize tickers · ISIN overrides"| CH["consolidated_holdings"]:::norm
     NT --> CH
@@ -238,8 +238,8 @@ Each layer stores data in Delta tables under `data/`:
 | 🔵 Sources | Blue | — | Broker APIs and files |
 | 🟠 Raw | Orange | `raw/{broker}_snapshot` | Encrypted API payloads with fetch metadata |
 | 🟠 Raw | Orange | `raw/{broker}_cdc` | Encrypted change-data-capture payloads |
-| 🟢 Normalized | Green | `normalized/{broker}_snapshot` | Decrypted positions & cash rows with encrypted values |
-| 🟢 Normalized | Green | `normalized/consolidated_holdings` | Cross-broker holdings converted to target currency |
+| 🟢 Normalized | Green | `normalized/{broker}_snapshot` | Structured positions & cash rows; financial values remain Fernet-encrypted |
+| 🟢 Normalized | Green | `normalized/consolidated_holdings` | Cross-broker holdings converted to target currency; financial values remain Fernet-encrypted |
 | 🟣 FX Rates | Purple | — | Frankfurter API (primary) / Yahoo Finance (fallback) |
 | 🔵 Analytics | Light blue | `analytics/portfolio_allocation` | Ticker percentages by broker |
 
@@ -261,38 +261,50 @@ Generate an encryption key (only needed once):
 
 ### Secrets Management
 
-**Secrets (API keys, data paths, encryption keys) are never stored in config files.** They come from one of two sources:
+**Secrets (API keys, encryption keys) are never stored in config files or S3.**
+They come from environment variables, set by one of two sources:
 
-1. **Environment variables** — set manually or by CI (GitHub Secrets).
-2. **Bitwarden Vault CLI (`bw`)** — if `BW_SESSION` is set, the pipeline fetches secrets from your vault at startup.
+1. **`.env` file (local dev)** — create a `.env` file in the project root
+   (gitignored) with your secrets. The pipeline loads it automatically at
+   startup via `python-dotenv`:
 
-To use Bitwarden:
+   ```bash
+   # .env (never committed)
+   IBKR_FLEX_TOKEN=your_token_here
+   T212_API_KEY=your_key_here
+   T212_API_SECRET=your_secret_here
+   PORTFOLIO_ENCRYPTION_KEY=your_fernet_key_here
+   ```
 
-```bash
-# One-time: store secrets in your Bitwarden vault
-# Create items named: "IBKR Flex Token", "Trading 212 API Key", etc.
+2. **GitHub Secrets (CI)** — set in your repository settings. The pipeline
+   workflow injects them as environment variables at runtime.
 
-# Before each pipeline run:
-bw unlock
-export BW_SESSION=$(bw unlock --raw)
+Environment variables always take priority over `.env` file values.
 
-# The pipeline automatically fetches secrets from bw
-python -m pipeline.run fetch
-```
+| Variable | Purpose |
+|----------|---------|
+| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token |
+| `T212_API_KEY` | Trading 212 API key |
+| `T212_API_SECRET` | Trading 212 API secret |
+| `PORTFOLIO_ENCRYPTION_KEY` | Fernet key for encrypting financial values |
+| `S3_BUCKET` | S3 bucket for cloud storage (enables S3Backend) |
+| `S3_PREFIX` | S3 key prefix (default: `pipeline`) |
+| `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
+| `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
+| `AWS_REGION` | AWS region (default: `eu-west-1`) |
+| `PIPELINE_DATA_DIR` | Local data directory (default: `data/`) |
 
-The secret name mapping is defined in `pipeline/secrets.py`:
+### Cloud Storage (S3)
 
-| Environment Variable | Bitwarden Item Name |
-|---------------------|---------------------|
-| `IBKR_FLEX_TOKEN` | IBKR Flex Token |
-| `T212_API_KEY` | Trading 212 API Key |
-| `T212_API_SECRET` | Trading 212 API Secret |
-| `PIPELINE_DATA_DIR` | Pipeline Data Dir |
-| `PORTFOLIO_ENCRYPTION_KEY` | Portfolio Encryption Key |
+When `S3_BUCKET` is set, the pipeline uses `S3Backend` to store Delta tables
+in S3. AWS credentials come from `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`. No additional dependencies
+are needed — `deltalake` handles S3 natively via its Rust `object_store`
+crate.
 
-Priority: already-set env vars → Bitwarden lookup → missing (pipeline errors when needed).
-
-A Claude Code hook blocks the agent from calling `bw`, so coding agents can never access your vault.
+The `keygen` command only works in local mode. For S3, set
+`PORTFOLIO_ENCRYPTION_KEY` as an environment variable — **the encryption
+key is never stored in S3.**
 
 ### Configuration
 
@@ -318,31 +330,55 @@ connectors:
     enabled: true
 ```
 
-**No secrets or data paths go in these files.** Secrets come from Bitwarden/env vars only.
+**No secrets or data paths go in these files.** Secrets come from env vars only.
 
 ### Run the pipeline
 
-Full pipeline (fetch → transform → consolidate → allocate):
+**Local (default — uses `data/` directory):**
 
 ```powershell
 .venv\Scripts\python -m pipeline.run full
 ```
 
-Or run individual steps:
+**Local with custom data directory:**
 
 ```powershell
-.venv\Scripts\python -m pipeline.run fetch
-.venv\Scripts\python -m pipeline.run transform
-.venv\Scripts\python -m pipeline.run consolidate --target-currency EUR
-.venv\Scripts\python -m pipeline.run allocate --target-currency EUR
-```
-
-The data directory defaults to `data/` under the project root. Override it with the `PIPELINE_DATA_DIR` environment variable:
-
-```powershell
-$env:PIPELINE_DATA_DIR = "C:\path\to\production-data"
+$env:PIPELINE_DATA_DIR = "C:\path\to\data"
 .venv\Scripts\python -m pipeline.run full
 ```
+
+**Cloud (S3) — set environment variables:**
+
+```powershell
+$env:S3_BUCKET = "your-bucket"
+$env:AWS_ACCESS_KEY_ID = "..."
+$env:AWS_SECRET_ACCESS_KEY = "..."
+$env:PORTFOLIO_ENCRYPTION_KEY = "..."
+.venv\Scripts\python -m pipeline.run full
+```
+
+**GitHub Actions (manual dispatch):**
+
+Go to Actions → Pipeline → Run workflow. Secrets are injected automatically
+from GitHub Secrets. See `.github/workflows/pipeline.yml`.
+
+### Infrastructure
+
+The `infra/` directory contains Terraform configuration for the S3 bucket
+and IAM user:
+
+```bash
+cd infra
+terraform init
+terraform plan
+terraform apply
+```
+
+After applying, store the outputs in GitHub:
+
+- `s3_bucket` → GitHub Secret `S3_BUCKET`
+- `access_key_id` → GitHub Secret `AWS_ACCESS_KEY_ID`
+- `access_key_secret` → GitHub Secret `AWS_SECRET_ACCESS_KEY`
 
 ### Tests
 

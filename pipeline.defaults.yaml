@@ -1,9 +1,17 @@
 # pipeline.defaults.yaml — version-controlled defaults and sample config.
 # DO NOT put secrets or data paths here.
-# Secrets come from Bitwarden / env vars; local overrides go in pipeline.yaml.
+# Secrets come from environment variables (GitHub Secrets in CI, .env locally).
+# Data paths come from PIPELINE_DATA_DIR (local) or S3_BUCKET (cloud).
 #
 # To customize, copy this file to pipeline.yaml and edit your values.
 # pipeline.yaml is gitignored — your personal settings are never committed.
+#
+# S3 configuration (set via environment variables, not this file):
+#   S3_BUCKET              — S3 bucket name (enables S3Backend when set)
+#   S3_PREFIX              — Key prefix within the bucket (default: "pipeline")
+#   AWS_ACCESS_KEY_ID      — AWS credential
+#   AWS_SECRET_ACCESS_KEY  — AWS credential
+#   AWS_REGION              — AWS region (default: "eu-west-1")
 
 target_currency: EUR  # target currency for consolidation and allocation
 

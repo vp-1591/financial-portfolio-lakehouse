@@ -1,103 +1,84 @@
-"""Tests for pipeline.secrets module."""
+"""Tests for pipeline.secrets module — env-var validation and .env loading."""
 
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from pipeline.secrets import _BW_SECRET_MAP, get_secret, inject_secrets, resolve_secrets
-
-
-class TestResolveSecrets:
-    """Test resolve_secrets() with env vars and mocked Bitwarden."""
-
-    def test_env_vars_take_priority(self, monkeypatch):
-        """Already-set env vars are used directly; bw is only called for missing ones."""
-        monkeypatch.setenv("IBKR_FLEX_TOKEN", "from-env")
-        monkeypatch.setenv("BW_SESSION", "fake-session")
-
-        mock_result = MagicMock()
-        mock_result.stdout = "bw-value\n"
-        with patch("pipeline.secrets.subprocess.run", return_value=mock_result) as mock_run:
-            secrets = resolve_secrets()
-            # IBKR_FLEX_TOKEN comes from env var, not bw
-            assert secrets["IBKR_FLEX_TOKEN"] == "from-env"
-            # bw IS called for other secrets that don't have env vars set
-            assert mock_run.call_count > 0
-
-    def test_bw_lookup_when_env_not_set(self, monkeypatch):
-        """If env var is not set but BW_SESSION is, bw is called."""
-        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
-        monkeypatch.setenv("BW_SESSION", "test-session")
-
-        mock_result = MagicMock()
-        mock_result.stdout = "token-from-bw\n"
-        with patch("pipeline.secrets.subprocess.run", return_value=mock_result):
-            secrets = resolve_secrets()
-            assert secrets["IBKR_FLEX_TOKEN"] == "token-from-bw"
-
-    def test_bw_failure_is_skipped(self, monkeypatch):
-        """If bw fails for a secret, it's skipped gracefully."""
-        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
-        monkeypatch.setenv("BW_SESSION", "test-session")
-
-        import subprocess
-        with patch("pipeline.secrets.subprocess.run", side_effect=subprocess.CalledProcessError(1, "bw")):
-            secrets = resolve_secrets()
-            assert "IBKR_FLEX_TOKEN" not in secrets
-
-    def test_no_bw_session_no_lookup(self, monkeypatch):
-        """If BW_SESSION is not set, no bw lookup is attempted."""
-        monkeypatch.delenv("BW_SESSION", raising=False)
-        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
-
-        with patch("pipeline.secrets.subprocess.run") as mock_run:
-            secrets = resolve_secrets()
-            mock_run.assert_not_called()
-            assert "IBKR_FLEX_TOKEN" not in secrets
-
-    def test_all_env_vars_skip_bw(self, monkeypatch):
-        """When all secrets are set via env vars, bw is never called."""
-        for env_name in _BW_SECRET_MAP:
-            monkeypatch.setenv(env_name, f"{env_name}-value")
-        monkeypatch.setenv("BW_SESSION", "test-session")
-
-        with patch("pipeline.secrets.subprocess.run") as mock_run:
-            secrets = resolve_secrets()
-            mock_run.assert_not_called()
-            for env_name in _BW_SECRET_MAP:
-                assert secrets[env_name] == f"{env_name}-value"
+from pipeline.secrets import (
+    REQUIRED_SECRET_NAMES,
+    OPTIONAL_SECRET_NAMES,
+    get_secret,
+    inject_secrets,
+)
 
 
 class TestInjectSecrets:
-    """Test inject_secrets() sets env vars."""
+    """Test inject_secrets() with .env file and environment variables."""
 
-    def test_inject_sets_env_vars(self, monkeypatch):
-        """Resolved secrets are injected into os.environ."""
-        monkeypatch.setenv("IBKR_FLEX_TOKEN", "injected-token")
-        monkeypatch.delenv("BW_SESSION", raising=False)
+    def setup_method(self):
+        """Reset module-level state before each test."""
+        import pipeline.storage
+        pipeline.storage._config = None
 
+    def teardown_method(self):
+        """Clean up env vars after each test."""
+        import pipeline.storage
+        pipeline.storage._config = None
+
+    def test_inject_returns_available_secrets(self, monkeypatch):
+        """Already-set env vars are returned by inject_secrets."""
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "test-token")
+        monkeypatch.setenv("PORTFOLIO_ENCRYPTION_KEY", "test-key")
         secrets = inject_secrets()
-        assert os.environ.get("IBKR_FLEX_TOKEN") == "injected-token"
-        assert secrets["IBKR_FLEX_TOKEN"] == "injected-token"
+        assert secrets["IBKR_FLEX_TOKEN"] == "test-token"
+        assert secrets["PORTFOLIO_ENCRYPTION_KEY"] == "test-key"
 
-    def test_inject_from_bw(self, monkeypatch):
-        """Secrets fetched from bw are injected into os.environ."""
-        monkeypatch.delenv("T212_API_KEY", raising=False)
-        monkeypatch.setenv("BW_SESSION", "test-session")
+    def test_inject_warns_on_missing_required(self, monkeypatch, caplog):
+        """Missing required secrets are logged as warnings."""
+        for name in REQUIRED_SECRET_NAMES:
+            monkeypatch.delenv(name, raising=False)
+        secrets = inject_secrets()
+        for name in REQUIRED_SECRET_NAMES:
+            assert name not in secrets
+        assert any(name in msg for msg in caplog.messages for name in REQUIRED_SECRET_NAMES)
 
-        mock_result = MagicMock()
-        mock_result.stdout = "bw-api-key\n"
-        with patch("pipeline.secrets.subprocess.run", return_value=mock_result):
-            secrets = inject_secrets()
+    def test_inject_loads_dotenv(self, tmp_path, monkeypatch):
+        """inject_secrets loads variables from .env file."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("IBKR_FLEX_TOKEN=from-dotenv\n")
+        # Patch PROJECT_ROOT to point at tmp_path so .env is found
+        monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
+        # Make sure env var is NOT already set
+        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+        secrets = inject_secrets()
+        assert secrets.get("IBKR_FLEX_TOKEN") == "from-dotenv"
 
-        assert os.environ.get("T212_API_KEY") == "bw-api-key"
-        assert secrets["T212_API_KEY"] == "bw-api-key"
+    def test_env_overrides_dotenv(self, tmp_path, monkeypatch):
+        """Environment variables take priority over .env file."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("IBKR_FLEX_TOKEN=from-dotenv\n")
+        monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "from-env")
+        secrets = inject_secrets()
+        assert secrets["IBKR_FLEX_TOKEN"] == "from-env"
 
-        # Clean up
-        monkeypatch.delenv("T212_API_KEY", raising=False)
+    def test_optional_secrets_not_required(self, monkeypatch):
+        """Optional secrets are not required to be present."""
+        for name in OPTIONAL_SECRET_NAMES:
+            monkeypatch.delenv(name, raising=False)
+        for name in REQUIRED_SECRET_NAMES:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "x")
+        monkeypatch.setenv("T212_API_KEY", "x")
+        monkeypatch.setenv("T212_API_SECRET", "x")
+        monkeypatch.setenv("PORTFOLIO_ENCRYPTION_KEY", "x")
+        secrets = inject_secrets()
+        # No S3 or AWS vars — should not error
+        assert "S3_BUCKET" not in secrets
 
 
 class TestGetSecret:
