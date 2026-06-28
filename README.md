@@ -259,28 +259,101 @@ Generate an encryption key (only needed once):
 .venv\Scripts\python -m pipeline.run keygen
 ```
 
+### Secrets Management
+
+**Secrets (API keys, data paths, encryption keys) are never stored in config files.** They come from one of two sources:
+
+1. **Environment variables** — set manually or by CI (GitHub Secrets).
+2. **Bitwarden Vault CLI (`bw`)** — if `BW_SESSION` is set, the pipeline fetches secrets from your vault at startup.
+
+To use Bitwarden:
+
+```bash
+# One-time: store secrets in your Bitwarden vault
+# Create items named: "IBKR Flex Token", "Trading 212 API Key", etc.
+
+# Before each pipeline run:
+bw unlock
+export BW_SESSION=$(bw unlock --raw)
+
+# The pipeline automatically fetches secrets from bw
+python -m pipeline.run fetch
+```
+
+The secret name mapping is defined in `pipeline/secrets.py`:
+
+| Environment Variable | Bitwarden Item Name |
+|---------------------|---------------------|
+| `IBKR_FLEX_TOKEN` | IBKR Flex Token |
+| `T212_API_KEY` | Trading 212 API Key |
+| `T212_API_SECRET` | Trading 212 API Secret |
+| `PIPELINE_DATA_DIR` | Pipeline Data Dir |
+| `PORTFOLIO_ENCRYPTION_KEY` | Portfolio Encryption Key |
+
+Priority: already-set env vars → Bitwarden lookup → missing (pipeline errors when needed).
+
+A Claude Code hook blocks the agent from calling `bw`, so coding agents can never access your vault.
+
+### Configuration
+
+Non-secret settings live in two YAML files:
+
+- **`pipeline.defaults.yaml`** — version-controlled defaults (safe for agents to read)
+- **`pipeline.yaml`** — gitignored local overrides
+
+```yaml
+# pipeline.defaults.yaml
+target_currency: EUR
+
+connectors:
+  ibkr:
+    enabled: false
+    base_url: https://localhost:5000/v1/api
+    flex_query_id: "1554188"
+    flex_base_url: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
+  trading212:
+    enabled: false
+    demo: false
+  xtb:
+    enabled: false
+```
+
+To enable a connector locally, create `pipeline.yaml`:
+
+```yaml
+# pipeline.yaml (gitignored — your local overrides)
+connectors:
+  ibkr:
+    enabled: true
+  trading212:
+    enabled: true
+```
+
+**No secrets or data paths go in these files.** Secrets come from Bitwarden/env vars only.
+
 ### Run the pipeline
 
 Full pipeline (fetch → transform → consolidate → allocate):
 
 ```powershell
-.venv\Scripts\python -m pipeline.run full --ibkr --t212-api-key "YOUR_API_KEY" --xtb-file "C:\path\to\report.xlsx"
+.venv\Scripts\python -m pipeline.run full
 ```
 
 Or run individual steps:
 
 ```powershell
-.venv\Scripts\python -m pipeline.run fetch --ibkr --t212-api-key "KEY" --xtb-file "report.xlsx"
+.venv\Scripts\python -m pipeline.run fetch
 .venv\Scripts\python -m pipeline.run transform
 .venv\Scripts\python -m pipeline.run consolidate --target-currency EUR
 .venv\Scripts\python -m pipeline.run allocate --target-currency EUR
 ```
 
-Broker flags:
+The data directory defaults to `data/` under the project root. Override it with the `PIPELINE_DATA_DIR` environment variable:
 
-- `--ibkr` — enable IBKR connector (connects to `https://localhost:5000/v1/api` by default)
-- `--t212-api-key KEY` — enable Trading 212 connector (uses HTTP Basic auth with API key and secret)
-- `--xtb-file FILE` — enable XTB connector (can be specified multiple times)
+```powershell
+$env:PIPELINE_DATA_DIR = "C:\path\to\production-data"
+.venv\Scripts\python -m pipeline.run full
+```
 
 ### Tests
 

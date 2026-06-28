@@ -15,8 +15,11 @@ roadmap*.md
 
 # Pipeline data and secrets
 data/
-data-dev/
 .secrets/
+*.key
+
+# Local config overrides (contains user-specific settings, no secrets)
+pipeline.yaml
 
 # Build artifacts
 *.egg-info/

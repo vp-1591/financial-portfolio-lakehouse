@@ -2,8 +2,8 @@
 
 Supports local filesystem paths and is designed for future extension
 to S3/GCS cloud storage backends.  The active configuration is a
-module-level singleton resolved from the ``--env`` CLI flag or the
-``PIPELINE_ENV`` environment variable.
+module-level singleton resolved from the ``PIPELINE_DATA_DIR``
+environment variable or the project default.
 
 Usage::
 
@@ -11,8 +11,7 @@ Usage::
 
     config = get_storage()
     raw_path = config.raw_path("ibkr_snapshot")
-    # For prod: "/abs/path/to/data/raw/ibkr_snapshot"
-    # For dev:  "/abs/path/to/data-dev/raw/ibkr_snapshot"
+    # e.g. "/abs/path/to/data/raw/ibkr_snapshot"
 """
 
 from __future__ import annotations
@@ -23,8 +22,6 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-_VALID_ENVS = frozenset({"prod", "dev"})
 
 
 # ---------------------------------------------------------------------------
@@ -71,11 +68,11 @@ class LocalBackend:
 class StorageConfig:
     """Resolved storage configuration.
 
-    Created by :func:`resolve_storage` based on the active environment,
-    or injected explicitly by tests via :func:`use_storage`.
+    Created by :func:`resolve_storage` based on the ``PIPELINE_DATA_DIR``
+    environment variable, or injected explicitly by tests via
+    :func:`use_storage`.
     """
 
-    env: str
     data_dir: Path
     raw_dir: Path
     normalized_dir: Path
@@ -110,40 +107,29 @@ class StorageConfig:
 _config: StorageConfig | None = None
 
 
-def resolve_storage(env: str | None = None) -> StorageConfig:
-    """Resolve and activate a :class:`StorageConfig` for *env*.
+def resolve_storage() -> StorageConfig:
+    """Resolve and activate a :class:`StorageConfig`.
 
-    Priority::
+    Data directory priority:
 
-      1. Explicit *env* parameter (from CLI ``--env``)
-      2. ``PIPELINE_ENV`` environment variable
-      3. Default ``"prod"``
+    1. ``PIPELINE_DATA_DIR`` environment variable (set by Bitwarden or
+       manually).
+    2. ``PROJECT_ROOT / "data"`` (default, for local dev without
+       secrets).
 
-    Only ``"prod"`` and ``"dev"`` are accepted.  ``"test"`` must be
-    configured explicitly via :func:`use_storage` to prevent accidental
-    writes to the project's ``data/`` directory during tests.
+    Tests must call :func:`use_storage` with a ``tmp_path``-based
+    config to prevent accidental writes to the project's ``data/``
+    directory.
     """
     global _config
 
-    if env is None:
-        env = os.environ.get("PIPELINE_ENV", "prod")
-
-    env = env.lower()
-
-    if env not in _VALID_ENVS:
-        raise ValueError(
-            f"Unknown environment {env!r}. "
-            f"Accepted values: {', '.join(sorted(_VALID_ENVS))}. "
-            "Tests must use use_storage() to inject a tmp_path config."
-        )
-
-    if env == "dev":
-        data_dir = PROJECT_ROOT / "data-dev"
+    data_dir_str = os.environ.get("PIPELINE_DATA_DIR")
+    if data_dir_str:
+        data_dir = Path(data_dir_str)
     else:
         data_dir = PROJECT_ROOT / "data"
 
     config = StorageConfig(
-        env=env,
         data_dir=data_dir,
         raw_dir=data_dir / "raw",
         normalized_dir=data_dir / "normalized",
@@ -159,7 +145,7 @@ def use_storage(config: StorageConfig) -> StorageConfig:
     """Set the global storage configuration explicitly.
 
     Used by tests to inject a ``tmp_path``-based config, and by the
-    CLI to set the env before any path references are resolved.
+    CLI to set the storage before any path references are resolved.
     """
     global _config
     _config = config
@@ -169,9 +155,9 @@ def use_storage(config: StorageConfig) -> StorageConfig:
 def get_storage() -> StorageConfig:
     """Return the current storage configuration.
 
-    Lazily initialises with ``"prod"`` defaults if not yet configured.
+    Lazily initialises with defaults if not yet configured.
     """
     global _config
     if _config is None:
-        _config = resolve_storage("prod")
+        _config = resolve_storage()
     return _config

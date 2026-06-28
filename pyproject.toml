@@ -10,6 +10,7 @@ pipeline = [
     "cryptography==49.0.0",
     "pyarrow==24.0.0",
     "polars==1.42.0",
+    "pyyaml==6.0.2",
 ]
 dev = [
     "pytest==9.1.1",

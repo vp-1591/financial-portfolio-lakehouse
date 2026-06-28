@@ -53,7 +53,6 @@ def setup_pipeline_env(
     (secrets / "encryption.key").write_bytes(fernet_key)
 
     config = StorageConfig(
-        env="test",
         data_dir=data,
         raw_dir=data / "raw",
         normalized_dir=data / "normalized",

@@ -39,7 +39,6 @@ def tmp_data_dir(tmp_path: Path) -> Path:
         (data / subdir).mkdir(parents=True, exist_ok=True)
 
     config = StorageConfig(
-        env="test",
         data_dir=data,
         raw_dir=data / "raw",
         normalized_dir=data / "normalized",

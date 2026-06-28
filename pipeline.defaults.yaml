@@ -1,0 +1,27 @@
+# pipeline.defaults.yaml — version-controlled defaults.
+# DO NOT put secrets or data paths here.
+# Secrets come from Bitwarden / env vars; local overrides go in pipeline.yaml.
+
+target_currency: EUR
+
+connectors:
+  ibkr:
+    enabled: false
+    base_url: https://localhost:5000/v1/api
+    account: null
+    base_currency: null
+    flex_query_id: "1554188"
+    flex_base_url: https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
+    verify_tls: false
+    skip_auth_check: false
+    require_brokerage_session: false
+  trading212:
+    enabled: false
+    base_url: null
+    demo: false
+    skip_metadata: false
+    user_agent: null
+    account_id: null
+  xtb:
+    enabled: false
+    account_id: null
