@@ -18,6 +18,9 @@ dev = [
     "investment-portfolio-dashboard[pipeline]",
 ]
 
+[tool.setuptools.packages.find]
+include = ["pipeline*"]
+
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
