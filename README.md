@@ -313,7 +313,7 @@ copy pipeline.defaults.yaml pipeline.yaml
 connectors:
   ibkr:
     enabled: true
-    flex_query_id: "1554188"  # your actual Flex Query ID
+    flex_query_id: "0000000"  # your actual Flex Query ID
   trading212:
     enabled: true
 ```
