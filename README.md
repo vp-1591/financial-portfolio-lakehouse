@@ -217,9 +217,9 @@ flowchart TD
     T212 -->|"encrypt payloads"| RT["trading212<br/>snapshot · cdc"]:::raw
     XTB -->|"parse & encrypt"| RX["xtb<br/>snapshot · cdc"]:::raw
 
-    RS -->|"decrypt · normalize"| NS["ibkr_snapshot"]:::norm
-    RT -->|"decrypt · normalize"| NT["trading212_snapshot"]:::norm
-    RX -->|"decrypt · normalize"| NX["xtb_snapshot"]:::norm
+    RS -->|"parse · normalize · re-encrypt values"| NS["ibkr_snapshot"]:::norm
+    RT -->|"parse · normalize · re-encrypt values"| NT["trading212_snapshot"]:::norm
+    RX -->|"parse · normalize · re-encrypt values"| NX["xtb_snapshot"]:::norm
 
     NS -->|"convert currency · normalize tickers · ISIN overrides"| CH["consolidated_holdings"]:::norm
     NT --> CH
@@ -238,8 +238,8 @@ Each layer stores data in Delta tables under `data/`:
 | 🔵 Sources | Blue | — | Broker APIs and files |
 | 🟠 Raw | Orange | `raw/{broker}_snapshot` | Encrypted API payloads with fetch metadata |
 | 🟠 Raw | Orange | `raw/{broker}_cdc` | Encrypted change-data-capture payloads |
-| 🟢 Normalized | Green | `normalized/{broker}_snapshot` | Decrypted positions & cash rows with encrypted values |
-| 🟢 Normalized | Green | `normalized/consolidated_holdings` | Cross-broker holdings converted to target currency |
+| 🟢 Normalized | Green | `normalized/{broker}_snapshot` | Structured positions & cash rows; financial values remain Fernet-encrypted |
+| 🟢 Normalized | Green | `normalized/consolidated_holdings` | Cross-broker holdings converted to target currency; financial values remain Fernet-encrypted |
 | 🟣 FX Rates | Purple | — | Frankfurter API (primary) / Yahoo Finance (fallback) |
 | 🔵 Analytics | Light blue | `analytics/portfolio_allocation` | Ticker percentages by broker |
 
@@ -259,28 +259,149 @@ Generate an encryption key (only needed once):
 .venv\Scripts\python -m pipeline.run keygen
 ```
 
+### Secrets Management
+
+**Secrets (API keys, encryption keys) are never stored in config files or S3.**
+They come from environment variables, set by one of two sources:
+
+1. **`.env` file (local dev)** — create a `.env` file in the project root
+   (gitignored) with your secrets. The pipeline loads it automatically at
+   startup via `python-dotenv`:
+
+   ```bash
+   # .env (never committed)
+   IBKR_FLEX_TOKEN=your_token_here
+   T212_API_KEY=your_key_here
+   T212_API_SECRET=your_secret_here
+   PORTFOLIO_ENCRYPTION_KEY=your_fernet_key_here
+   ```
+
+2. **GitHub Secrets (CI)** — set in your repository settings. The pipeline
+   workflow injects them as environment variables at runtime.
+
+Environment variables always take priority over `.env` file values.
+
+| Variable | Purpose |
+|----------|---------|
+| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token *(required)* |
+| `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID |
+| `T212_API_KEY` | Trading 212 API key *(required)* |
+| `T212_API_SECRET` | Trading 212 API secret *(required)* |
+| `PORTFOLIO_ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
+| `S3_BUCKET` | S3 bucket for cloud storage (enables S3Backend) |
+| `S3_PREFIX` | S3 key prefix (default: `pipeline`) |
+| `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
+| `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
+| `AWS_REGION` | AWS region (default: `eu-west-1`) |
+| `PIPELINE_DATA_DIR` | Local data directory (default: `data/`) |
+
+**Connector toggles** — all connectors are **enabled by default**. Set to `0`,
+`false`, or `no` to disable:
+
+| Variable | Purpose |
+|----------|---------|
+| `IBKR_ENABLED` | Enable/disable IBKR connector (default: enabled) |
+| `T212_ENABLED` | Enable/disable Trading 212 connector (default: enabled) |
+| `XTB_ENABLED` | Enable/disable XTB connector (default: enabled) |
+
+**IBKR connector settings:**
+
+| Variable | Default |
+|----------|---------|
+| `IBKR_BASE_URL` | `https://localhost:5000/v1/api` |
+| `IBKR_FLEX_BASE_URL` | `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService` |
+| `IBKR_ACCOUNT` | *(empty)* |
+| `IBKR_BASE_CURRENCY` | *(empty)* |
+| `IBKR_VERIFY_TLS` | `false` |
+| `IBKR_SKIP_AUTH_CHECK` | `false` |
+| `IBKR_REQUIRE_BROKERAGE_SESSION` | `false` |
+
+**Trading 212 connector settings:**
+
+| Variable | Default |
+|----------|---------|
+| `T212_BASE_URL` | Auto-derived from `T212_DEMO` |
+| `T212_DEMO` | `false` |
+| `T212_SKIP_METADATA` | `false` |
+| `T212_USER_AGENT` | `Mozilla/5.0` |
+| `T212_ACCOUNT_ID` | *(empty)* |
+
+**XTB connector settings:**
+
+| Variable | Default |
+|----------|---------|
+| `XTB_ACCOUNT_ID` | *(empty)* |
+
+### Cloud Storage (S3)
+
+When `S3_BUCKET` is set, the pipeline uses `S3Backend` to store Delta tables
+in S3. AWS credentials come from `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`. No additional dependencies
+are needed — `deltalake` handles S3 natively via its Rust `object_store`
+crate.
+
+The `keygen` command only works in local mode. For S3, set
+`PORTFOLIO_ENCRYPTION_KEY` as an environment variable — **the encryption
+key is never stored in S3.**
+
+### Configuration
+
+All configuration is through environment variables. No config files needed —
+set env vars in your shell, `.env` file, or GitHub Actions workflow.
+
+Connectors are **enabled by default**. Set `IBKR_ENABLED=0`, `T212_ENABLED=0`,
+or `XTB_ENABLED=0` to disable a connector.
+
+See the [Secrets Management](#secrets-management) section for the full list of
+environment variables.
+
 ### Run the pipeline
 
-Full pipeline (fetch → transform → consolidate → allocate):
+**Local (default — uses `data/` directory):**
 
 ```powershell
-.venv\Scripts\python -m pipeline.run full --ibkr --t212-api-key "YOUR_API_KEY" --xtb-file "C:\path\to\report.xlsx"
+.venv\Scripts\python -m pipeline.run full
 ```
 
-Or run individual steps:
+**Local with custom data directory:**
 
 ```powershell
-.venv\Scripts\python -m pipeline.run fetch --ibkr --t212-api-key "KEY" --xtb-file "report.xlsx"
-.venv\Scripts\python -m pipeline.run transform
-.venv\Scripts\python -m pipeline.run consolidate --target-currency EUR
-.venv\Scripts\python -m pipeline.run allocate --target-currency EUR
+$env:PIPELINE_DATA_DIR = "C:\path\to\data"
+.venv\Scripts\python -m pipeline.run full
 ```
 
-Broker flags:
+**Cloud (S3) — set environment variables:**
 
-- `--ibkr` — enable IBKR connector (connects to `https://localhost:5000/v1/api` by default)
-- `--t212-api-key KEY` — enable Trading 212 connector (uses HTTP Basic auth with API key and secret)
-- `--xtb-file FILE` — enable XTB connector (can be specified multiple times)
+```powershell
+$env:S3_BUCKET = "your-bucket"
+$env:AWS_ACCESS_KEY_ID = "..."
+$env:AWS_SECRET_ACCESS_KEY = "..."
+$env:PORTFOLIO_ENCRYPTION_KEY = "..."
+.venv\Scripts\python -m pipeline.run full
+```
+
+**GitHub Actions (manual dispatch):**
+
+Go to Actions → Pipeline → Run workflow. Secrets are injected automatically
+from GitHub Secrets. See `.github/workflows/pipeline.yml`.
+
+### Infrastructure
+
+The `infra/` directory contains Terraform configuration for the S3 bucket
+and IAM user:
+
+```bash
+cd infra
+terraform init
+terraform plan
+terraform apply
+```
+
+After applying, store the outputs in GitHub:
+
+- `s3_bucket` → GitHub Secret `S3_BUCKET`
+- `access_key_id` → GitHub Secret `AWS_ACCESS_KEY_ID`
+- `access_key_secret` → GitHub Secret `AWS_SECRET_ACCESS_KEY`
 
 ### Tests
 

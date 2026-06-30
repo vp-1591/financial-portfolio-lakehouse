@@ -38,14 +38,14 @@ def _write_consolidated_holdings(
         ("xtb", xtb_normalized_snapshot),
     ]:
         table = factory(fernet_key=fernet_key)
-        path = str(config.normalized_dir / f"{broker}_snapshot")
+        path = config.normalized_path(f"{broker}_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
     # Extract and consolidate holdings
     from pipeline.normalized.extract import extract_holdings
     all_holdings: list[Holding] = []
     for broker_name in ("ibkr", "trading212", "xtb"):
-        snapshot_path = str(config.normalized_dir / f"{broker_name}_snapshot")
+        snapshot_path = config.normalized_path(f"{broker_name}_snapshot")
         holdings = extract_holdings(broker_name, snapshot_path, fernet_key)
         all_holdings.extend(holdings)
 
@@ -57,9 +57,9 @@ def _write_consolidated_holdings(
         all_holdings,
         fernet_key,
         converter,
-        table_path=str(config.normalized_dir / "consolidated_holdings"),
+        table_path=config.normalized_path("consolidated_holdings"),
     )
-    return str(config.normalized_dir / "consolidated_holdings")
+    return config.normalized_path("consolidated_holdings")
 
 
 @pytest.fixture(autouse=True)
@@ -79,13 +79,12 @@ def _setup_storage(tmp_path: Path) -> None:
         (data / subdir).mkdir(parents=True, exist_ok=True)
 
     config = StorageConfig(
-        env="test",
-        data_dir=data,
-        raw_dir=data / "raw",
-        normalized_dir=data / "normalized",
-        analytics_dir=data / "analytics",
-        secrets_dir=tmp_path / ".secrets",
-        encryption_key_file=tmp_path / ".secrets" / "encryption.key",
+        data_dir=str(data),
+        raw_dir=str(data / "raw"),
+        normalized_dir=str(data / "normalized"),
+        analytics_dir=str(data / "analytics"),
+        secrets_dir=str(tmp_path / ".secrets"),
+        encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
         backend=LocalBackend(data),
     )
     use_storage(config)
@@ -103,7 +102,7 @@ class TestAllocatePipeline:
         result = allocate_percentages(
             table_path=table_path,
             fernet_key=fernet_key,
-            analytics_path=str(config.analytics_dir / "portfolio_allocation"),
+            analytics_path=config.analytics_path("portfolio_allocation"),
         )
 
         from pipeline.analytics.models import portfolio_allocation_schema
@@ -119,7 +118,7 @@ class TestAllocatePipeline:
         result = allocate_percentages(
             table_path=table_path,
             fernet_key=fernet_key,
-            analytics_path=str(config.analytics_dir / "portfolio_allocation"),
+            analytics_path=config.analytics_path("portfolio_allocation"),
         )
 
         percentages = result.column("percentage").to_pylist()
@@ -135,7 +134,7 @@ class TestAllocatePipeline:
         result = allocate_percentages(
             table_path=table_path,
             fernet_key=fernet_key,
-            analytics_path=str(config.analytics_dir / "portfolio_allocation"),
+            analytics_path=config.analytics_path("portfolio_allocation"),
         )
 
         tickers = result.column("ticker").to_pylist()
@@ -150,7 +149,7 @@ class TestAllocatePipeline:
         fernet_key = generate_key()
         table_path = _write_consolidated_holdings(tmp_path, fernet_key)
         config = get_storage()
-        analytics_path = str(config.analytics_dir / "portfolio_allocation")
+        analytics_path = config.analytics_path("portfolio_allocation")
 
         allocate_percentages(
             table_path=table_path,

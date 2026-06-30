@@ -15,8 +15,12 @@ roadmap*.md
 
 # Pipeline data and secrets
 data/
-data-dev/
 .secrets/
+*.key
+
+
+# Local environment variables (contains secrets for local dev)
+.env
 
 # Build artifacts
 *.egg-info/

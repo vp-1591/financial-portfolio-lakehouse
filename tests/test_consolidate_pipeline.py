@@ -41,13 +41,12 @@ def _setup_storage(tmp_path: Path) -> None:
         (data / subdir).mkdir(parents=True, exist_ok=True)
 
     config = StorageConfig(
-        env="test",
-        data_dir=data,
-        raw_dir=data / "raw",
-        normalized_dir=data / "normalized",
-        analytics_dir=data / "analytics",
-        secrets_dir=tmp_path / ".secrets",
-        encryption_key_file=tmp_path / ".secrets" / "encryption.key",
+        data_dir=str(data),
+        raw_dir=str(data / "raw"),
+        normalized_dir=str(data / "normalized"),
+        analytics_dir=str(data / "analytics"),
+        secrets_dir=str(tmp_path / ".secrets"),
+        encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
         backend=LocalBackend(data),
     )
     use_storage(config)
@@ -101,13 +100,13 @@ class TestConsolidateMultiBroker:
             ("xtb", xtb_normalized_snapshot),
         ]:
             table = factory(fernet_key=fernet_key)
-            path = str(config.normalized_dir / f"{broker}_snapshot")
+            path = config.normalized_path(f"{broker}_snapshot")
             write_deltalake(path, table, mode="overwrite")
 
         # Extract holdings from each broker
         all_holdings: list[Holding] = []
         for broker_name in ("ibkr", "trading212", "xtb"):
-            snapshot_path = str(config.normalized_dir / f"{broker_name}_snapshot")
+            snapshot_path = config.normalized_path(f"{broker_name}_snapshot")
             holdings = extract_holdings(broker_name, snapshot_path, fernet_key)
             all_holdings.extend(holdings)
 
@@ -122,7 +121,7 @@ class TestConsolidateMultiBroker:
             all_holdings,
             fernet_key,
             converter,
-            table_path=str(config.normalized_dir / "consolidated_holdings"),
+            table_path=config.normalized_path("consolidated_holdings"),
         )
 
         assert result.num_rows >= 6
@@ -137,7 +136,7 @@ class TestConsolidateMultiBroker:
 
         # Write a single broker's normalized data
         table = ibkr_normalized_snapshot(fernet_key=fernet_key)
-        path = str(config.normalized_dir / "ibkr_snapshot")
+        path = config.normalized_path("ibkr_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
         holdings = extract_holdings("ibkr", path, fernet_key)
@@ -147,7 +146,7 @@ class TestConsolidateMultiBroker:
             holdings,
             fernet_key,
             converter,
-            table_path=str(config.normalized_dir / "consolidated_holdings"),
+            table_path=config.normalized_path("consolidated_holdings"),
         )
 
         # Values should be binary (encrypted)

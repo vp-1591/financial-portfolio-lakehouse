@@ -10,11 +10,15 @@ pipeline = [
     "cryptography==49.0.0",
     "pyarrow==24.0.0",
     "polars==1.42.0",
+    "python-dotenv>=1.0.0",
 ]
 dev = [
     "pytest==9.1.1",
     "investment-portfolio-dashboard[pipeline]",
 ]
+
+[tool.setuptools.packages.find]
+include = ["pipeline*"]
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"

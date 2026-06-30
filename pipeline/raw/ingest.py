@@ -101,8 +101,10 @@ def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
 
     try:
         from deltalake import DeltaTable
+        from pipeline.storage import get_storage
 
-        existing_dt = DeltaTable(existing_path)
+        storage_opts = get_storage().storage_options
+        existing_dt = DeltaTable(existing_path, storage_options=storage_opts)
     except Exception:
         return table
 
@@ -144,7 +146,8 @@ def ingest_raw(
     deduped = dedup_raw(encrypted, table_path)
     if deduped.num_rows == 0:
         return 0
-    from pathlib import Path
-    Path(table_path).parent.mkdir(parents=True, exist_ok=True)
-    write_deltalake(table_path, deduped, mode="append")
+    from pipeline.storage import get_storage
+    storage_opts = get_storage().storage_options
+    get_storage().backend.ensure_parent(table_path)
+    write_deltalake(table_path, deduped, mode="append", storage_options=storage_opts)
     return deduped.num_rows

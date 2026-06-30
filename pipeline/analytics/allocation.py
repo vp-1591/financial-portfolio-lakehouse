@@ -39,22 +39,24 @@ def allocate_percentages(
     if table_path is None:
         from pipeline.storage import get_storage
 
-        table_path = str(get_storage().normalized_dir / "consolidated_holdings")
+        table_path = get_storage().normalized_path("consolidated_holdings")
 
     if fernet_key is None:
         fernet_key = load_key()
 
     if analytics_path is None:
         from pipeline.storage import get_storage
-        analytics_path = str(get_storage().analytics_dir / "portfolio_allocation")
+        analytics_path = get_storage().analytics_path("portfolio_allocation")
 
-    from pathlib import Path
-    Path(analytics_path).parent.mkdir(parents=True, exist_ok=True)
+    from pipeline.storage import get_storage
+
+    storage_opts = get_storage().storage_options
+    get_storage().backend.ensure_parent(analytics_path)
 
     from deltalake import DeltaTable
 
     try:
-        dt = DeltaTable(table_path)
+        dt = DeltaTable(table_path, storage_options=storage_opts)
     except Exception as exc:
         raise FileNotFoundError(
             f"Consolidated holdings table not found at {table_path}. "
@@ -107,5 +109,5 @@ def allocate_percentages(
         schema=portfolio_allocation_schema,
     )
 
-    write_deltalake(analytics_path, result, mode="overwrite")
+    write_deltalake(analytics_path, result, mode="overwrite", storage_options=storage_opts)
     return result

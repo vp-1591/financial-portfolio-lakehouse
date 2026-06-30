@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_BUCKET: ${{ vars.S3_BUCKET }}
       S3_PREFIX: ${{ vars.S3_PREFIX || 'pipeline' }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -69,4 +69,9 @@ jobs:
 
       - name: Run pipeline
         run: |
-          python -m pipeline.run ${{ inputs.command }} --target-currency ${{ inputs.target-currency }}
+          CMD="${{ inputs.command }}"
+          if [[ "$CMD" == "consolidate" || "$CMD" == "allocate" || "$CMD" == "full" ]]; then
+            python -m pipeline.run "$CMD" --target-currency "${{ inputs.target-currency }}"
+          else
+            python -m pipeline.run "$CMD"
+          fi
