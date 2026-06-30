@@ -10,7 +10,6 @@ pipeline = [
     "cryptography==49.0.0",
     "pyarrow==24.0.0",
     "polars==1.42.0",
-    "pyyaml==6.0.2",
     "python-dotenv>=1.0.0",
 ]
 dev = [

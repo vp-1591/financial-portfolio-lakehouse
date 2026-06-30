@@ -9,10 +9,14 @@ Usage::
     python -m pipeline.run full
     python -m pipeline.run keygen
 
-Connector enable/disable and broker settings come from
-``pipeline.yaml`` (local overrides) layered on
-``pipeline.defaults.yaml``.  Secrets come from environment variables
-(set by GitHub Actions via GitHub Secrets, or locally via ``.env``).
+Connector enable/disable is controlled by environment variables:
+
+- ``IBKR_ENABLED`` — set to ``0``, ``false``, or ``no`` to disable IBKR
+- ``T212_ENABLED`` — set to ``0``, ``false``, or ``no`` to disable Trading 212
+- ``XTB_ENABLED`` — set to ``0``, ``false``, or ``no`` to disable XTB
+
+All connectors are **enabled by default**.  Secrets come from environment
+variables (set by GitHub Actions via GitHub Secrets, or locally via ``.env``).
 """
 
 from __future__ import annotations
@@ -22,10 +26,9 @@ import os
 import sys
 from pathlib import Path
 
-from pipeline.config import get_connector_config, load_config
 from pipeline.connectors.registry import all, get
 from pipeline.crypto import generate_key, load_key
-from pipeline.secrets import inject_secrets
+from pipeline.secrets import get_config, inject_secrets, is_enabled
 from pipeline.storage import S3Backend, get_storage
 
 
@@ -82,14 +85,18 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     """Fetch data from brokers and write to raw Delta tables."""
     from pipeline.raw.ingest import ingest_raw
 
-    config = load_config()
     fernet_key = load_key()
     connectors = all()
 
     for connector in connectors:
-        conn_cfg = get_connector_config(config, connector.name)
-        if not conn_cfg.get("enabled", False):
-            print(f"Skipping {connector.display_name}: not enabled in config")
+        if connector.name == "ibkr" and not is_enabled("IBKR_ENABLED"):
+            print(f"Skipping {connector.display_name}: IBKR_ENABLED is false")
+            continue
+        if connector.name == "trading212" and not is_enabled("T212_ENABLED"):
+            print(f"Skipping {connector.display_name}: T212_ENABLED is false")
+            continue
+        if connector.name == "xtb" and not is_enabled("XTB_ENABLED"):
+            print(f"Skipping {connector.display_name}: XTB_ENABLED is false")
             continue
 
         snapshot_kwargs: dict = {}
@@ -100,24 +107,24 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             if ibkr_flex_token:
                 snapshot_kwargs = {
                     "flex_token": ibkr_flex_token,
-                    "flex_query_id": conn_cfg.get("flex_query_id", "1554188"),
-                    "flex_base_url": conn_cfg.get(
-                        "flex_base_url",
+                    "flex_query_id": get_config("IBKR_FLEX_QUERY_ID", "1554188"),
+                    "flex_base_url": get_config(
+                        "IBKR_FLEX_BASE_URL",
                         "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
                     ),
                 }
                 cdc_kwargs = {}
             else:
                 snapshot_kwargs = cdc_kwargs = {
-                    "base_url": conn_cfg.get(
-                        "base_url", "https://localhost:5000/v1/api"
+                    "base_url": get_config(
+                        "IBKR_BASE_URL", "https://localhost:5000/v1/api"
                     ),
-                    "account": conn_cfg.get("account"),
-                    "verify_tls": conn_cfg.get("verify_tls", False),
-                    "skip_auth_check": conn_cfg.get("skip_auth_check", False),
-                    "require_brokerage_session": conn_cfg.get(
-                        "require_brokerage_session", False
-                    ),
+                    "account": get_config("IBKR_ACCOUNT"),
+                    "verify_tls": get_config("IBKR_VERIFY_TLS", "false").lower() == "true",
+                    "skip_auth_check": get_config("IBKR_SKIP_AUTH_CHECK", "false").lower() == "true",
+                    "require_brokerage_session": get_config(
+                        "IBKR_REQUIRE_BROKERAGE_SESSION", "false"
+                    ).lower() == "true",
                 }
 
         elif connector.name == "trading212":
@@ -126,21 +133,21 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 print(f"Skipping {connector.display_name}: T212_API_KEY not set")
                 continue
             t212_api_secret = os.environ.get("T212_API_SECRET", "")
-            demo = conn_cfg.get("demo", False)
+            demo = get_config("T212_DEMO", "false").lower() == "true"
             default_base = (
                 "https://demo.trading212.com/api/v0"
                 if demo
                 else "https://live.trading212.com/api/v0"
             )
-            base_url = conn_cfg.get("base_url") or default_base
+            base_url = get_config("T212_BASE_URL") or default_base
             common = {
                 "api_key": t212_api_key,
                 "api_secret": t212_api_secret,
-                "account_id": conn_cfg.get("account_id") or "",
+                "account_id": get_config("T212_ACCOUNT_ID") or "",
                 "base_url": base_url,
-                "user_agent": conn_cfg.get("user_agent") or "Mozilla/5.0",
+                "user_agent": get_config("T212_USER_AGENT") or "Mozilla/5.0",
             }
-            snapshot_kwargs = {**common, "include_metadata": not conn_cfg.get("skip_metadata", False)}
+            snapshot_kwargs = {**common, "include_metadata": get_config("T212_SKIP_METADATA", "false").lower() != "true"}
             cdc_kwargs = common
 
         elif connector.name == "xtb":
@@ -150,7 +157,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             for xtb_file in args.xtb_file:
                 xtb_kwargs = {
                     "file_path": xtb_file,
-                    "account_id": conn_cfg.get("account_id"),
+                    "account_id": get_config("XTB_ACCOUNT_ID"),
                 }
                 try:
                     raw = connector.fetch_snapshot(**xtb_kwargs)
@@ -405,13 +412,11 @@ def main() -> int:
     # Load .env and validate available secrets.
     inject_secrets()
 
-    # Load YAML config (defaults + local overrides).
-    config = load_config()
-
     parser = argparse.ArgumentParser(
         description="Investment portfolio data pipeline",
-        epilog="Connector settings and enable/disable switches come from "
-        "pipeline.yaml.  Secrets come from environment variables "
+        epilog="Connectors are enabled by default. Set IBKR_ENABLED=0, "
+        "T212_ENABLED=0, or XTB_ENABLED=0 to disable. "
+        "Secrets come from environment variables "
         "(GitHub Secrets in CI, .env file locally).",
     )
 
@@ -442,8 +447,8 @@ def main() -> int:
     )
     consolidate_parser.add_argument(
         "--target-currency",
-        default=config.get("target_currency", "EUR"),
-        help="Target currency for consolidation (default: EUR or from pipeline.yaml)",
+        default="EUR",
+        help="Target currency for consolidation (default: EUR)",
     )
     consolidate_parser.add_argument(
         "--fx-rate",
@@ -473,8 +478,8 @@ def main() -> int:
     )
     allocate_parser.add_argument(
         "--target-currency",
-        default=config.get("target_currency", "EUR"),
-        help="Target currency for allocation (default: EUR or from pipeline.yaml)",
+        default="EUR",
+        help="Target currency for allocation (default: EUR)",
     )
     allocate_parser.add_argument(
         "--fx-rate",
@@ -509,8 +514,8 @@ def main() -> int:
     )
     full_parser.add_argument(
         "--target-currency",
-        default=config.get("target_currency", "EUR"),
-        help="Target currency (default: EUR or from pipeline.yaml)",
+        default="EUR",
+        help="Target currency (default: EUR)",
     )
     full_parser.add_argument(
         "--fx-rate",

@@ -19,6 +19,21 @@ on:
         required: false
         default: "EUR"
         type: string
+      ibkr-enabled:
+        description: "Enable IBKR connector"
+        required: false
+        default: true
+        type: boolean
+      t212-enabled:
+        description: "Enable Trading 212 connector"
+        required: false
+        default: true
+        type: boolean
+      xtb-enabled:
+        description: "Enable XTB connector"
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   run:
@@ -31,9 +46,13 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
       IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
+      IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
       T212_API_KEY: ${{ secrets.T212_API_KEY }}
       T212_API_SECRET: ${{ secrets.T212_API_SECRET }}
       PORTFOLIO_ENCRYPTION_KEY: ${{ secrets.PORTFOLIO_ENCRYPTION_KEY }}
+      IBKR_ENABLED: ${{ inputs.ibkr-enabled }}
+      T212_ENABLED: ${{ inputs.t212-enabled }}
+      XTB_ENABLED: ${{ inputs.xtb-enabled }}
 
     steps:
       - uses: actions/checkout@v4

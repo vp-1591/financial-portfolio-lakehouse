@@ -283,16 +283,54 @@ Environment variables always take priority over `.env` file values.
 
 | Variable | Purpose |
 |----------|---------|
-| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token |
-| `T212_API_KEY` | Trading 212 API key |
-| `T212_API_SECRET` | Trading 212 API secret |
-| `PORTFOLIO_ENCRYPTION_KEY` | Fernet key for encrypting financial values |
+| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token *(required)* |
+| `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID |
+| `T212_API_KEY` | Trading 212 API key *(required)* |
+| `T212_API_SECRET` | Trading 212 API secret *(required)* |
+| `PORTFOLIO_ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
 | `S3_BUCKET` | S3 bucket for cloud storage (enables S3Backend) |
 | `S3_PREFIX` | S3 key prefix (default: `pipeline`) |
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
 | `AWS_REGION` | AWS region (default: `eu-west-1`) |
 | `PIPELINE_DATA_DIR` | Local data directory (default: `data/`) |
+
+**Connector toggles** — all connectors are **enabled by default**. Set to `0`,
+`false`, or `no` to disable:
+
+| Variable | Purpose |
+|----------|---------|
+| `IBKR_ENABLED` | Enable/disable IBKR connector (default: enabled) |
+| `T212_ENABLED` | Enable/disable Trading 212 connector (default: enabled) |
+| `XTB_ENABLED` | Enable/disable XTB connector (default: enabled) |
+
+**IBKR connector settings:**
+
+| Variable | Default |
+|----------|---------|
+| `IBKR_BASE_URL` | `https://localhost:5000/v1/api` |
+| `IBKR_FLEX_BASE_URL` | `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService` |
+| `IBKR_ACCOUNT` | *(empty)* |
+| `IBKR_BASE_CURRENCY` | *(empty)* |
+| `IBKR_VERIFY_TLS` | `false` |
+| `IBKR_SKIP_AUTH_CHECK` | `false` |
+| `IBKR_REQUIRE_BROKERAGE_SESSION` | `false` |
+
+**Trading 212 connector settings:**
+
+| Variable | Default |
+|----------|---------|
+| `T212_BASE_URL` | Auto-derived from `T212_DEMO` |
+| `T212_DEMO` | `false` |
+| `T212_SKIP_METADATA` | `false` |
+| `T212_USER_AGENT` | `Mozilla/5.0` |
+| `T212_ACCOUNT_ID` | *(empty)* |
+
+**XTB connector settings:**
+
+| Variable | Default |
+|----------|---------|
+| `XTB_ACCOUNT_ID` | *(empty)* |
 
 ### Cloud Storage (S3)
 
@@ -308,29 +346,14 @@ key is never stored in S3.**
 
 ### Configuration
 
-Non-secret settings use two YAML files:
+All configuration is through environment variables. No config files needed —
+set env vars in your shell, `.env` file, or GitHub Actions workflow.
 
-- **`pipeline.defaults.yaml`** — committed defaults and sample config with comments
-- **`pipeline.yaml`** — gitignored local overrides (never committed)
+Connectors are **enabled by default**. Set `IBKR_ENABLED=0`, `T212_ENABLED=0`,
+or `XTB_ENABLED=0` to disable a connector.
 
-To get started, copy the defaults file and customize it:
-
-```powershell
-copy pipeline.defaults.yaml pipeline.yaml
-# Then edit pipeline.yaml with your settings (enable connectors, set flex_query_id, etc.)
-```
-
-```yaml
-# pipeline.yaml (gitignored — your local overrides)
-connectors:
-  ibkr:
-    enabled: true
-    flex_query_id: "0000000"  # your actual Flex Query ID
-  trading212:
-    enabled: true
-```
-
-**No secrets or data paths go in these files.** Secrets come from env vars only.
+See the [Secrets Management](#secrets-management) section for the full list of
+environment variables.
 
 ### Run the pipeline
 
