@@ -21,8 +21,8 @@ variables (set by GitHub Actions via GitHub Secrets, or locally via ``.env``).
 
 from __future__ import annotations
 
-
 import argparse
+import logging
 import os
 import sys
 
@@ -31,6 +31,8 @@ from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import get_config, inject_secrets, is_enabled, parse_bool
 from pipeline.storage import get_storage
+
+logger = logging.getLogger(__name__)
 
 
 def parse_fx_rate(value: str) -> tuple[str, float]:
@@ -77,13 +79,13 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     for connector in connectors:
         if connector.name == "ibkr" and not is_enabled("IBKR_ENABLED"):
-            print(f"Skipping {connector.display_name}: IBKR_ENABLED is false")
+            logger.debug("Skipping %s: IBKR_ENABLED is false", connector.display_name)
             continue
         if connector.name == "trading212" and not is_enabled("T212_ENABLED"):
-            print(f"Skipping {connector.display_name}: T212_ENABLED is false")
+            logger.debug("Skipping %s: T212_ENABLED is false", connector.display_name)
             continue
         if connector.name == "xtb" and not is_enabled("XTB_ENABLED"):
-            print(f"Skipping {connector.display_name}: XTB_ENABLED is false")
+            logger.debug("Skipping %s: XTB_ENABLED is false", connector.display_name)
             continue
 
         snapshot_kwargs: dict = {}
@@ -117,7 +119,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         elif connector.name == "trading212":
             t212_api_key = os.environ.get("T212_API_KEY")
             if not t212_api_key:
-                print(f"Skipping {connector.display_name}: T212_API_KEY not set")
+                logger.debug(
+                    "Skipping %s: T212_API_KEY not set", connector.display_name
+                )
                 continue
             t212_api_secret = os.environ.get("T212_API_SECRET", "")
             demo = parse_bool("T212_DEMO")
@@ -142,7 +146,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
         elif connector.name == "xtb":
             if not args.xtb_file:
-                print(f"Skipping {connector.display_name}: no --xtb-file provided")
+                logger.debug(
+                    "Skipping %s: no --xtb-file provided", connector.display_name
+                )
                 continue
             for xtb_file in args.xtb_file:
                 xtb_kwargs = {
@@ -154,7 +160,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                     table_path = get_raw_path(connector.name, "snapshot")
                     get_storage().backend.ensure_parent(table_path)
                     count = ingest_raw(raw, table_path, fernet_key)
-                    print(f"  {connector.display_name} snapshot: {count} rows written")
+                    logger.debug(
+                        "%s snapshot: %d rows written", connector.display_name, count
+                    )
                 except Exception as exc:
                     print(
                         f"  Error fetching {connector.display_name} snapshot: {exc}",
@@ -167,9 +175,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             table_path = get_raw_path(connector.name, "snapshot")
             get_storage().backend.ensure_parent(table_path)
             count = ingest_raw(raw, table_path, fernet_key)
-            print(f"  {connector.display_name} snapshot: {count} rows written")
+            logger.debug("%s snapshot: %d rows written", connector.display_name, count)
         except NotImplementedError:
-            print(f"  {connector.display_name} snapshot: not implemented")
+            logger.debug("%s snapshot: not implemented", connector.display_name)
         except Exception as exc:
             print(
                 f"  Error fetching {connector.display_name} snapshot: {exc}",
@@ -182,9 +190,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             cdc_path = get_raw_path(connector.name, "cdc")
             get_storage().backend.ensure_parent(cdc_path)
             count = ingest_raw(raw_cdc, cdc_path, fernet_key)
-            print(f"  {connector.display_name} CDC: {count} rows written")
+            logger.debug("%s CDC: %d rows written", connector.display_name, count)
         except NotImplementedError:
-            print(f"  {connector.display_name} CDC: not implemented")
+            logger.debug("%s CDC: not implemented", connector.display_name)
         except Exception as exc:
             print(
                 f"  Error fetching {connector.display_name} CDC: {exc}",
@@ -228,7 +236,9 @@ def cmd_transform(args: argparse.Namespace) -> int:
                 from deltalake import write_deltalake
 
                 if normalized.num_rows == 0:
-                    print(f"  {connector.display_name} {layer}: no data to transform")
+                    logger.debug(
+                        "%s %s: no data to transform", connector.display_name, layer
+                    )
                     continue
                 write_deltalake(
                     norm_path,
@@ -236,11 +246,16 @@ def cmd_transform(args: argparse.Namespace) -> int:
                     mode="overwrite",
                     storage_options=storage_opts,
                 )
-                print(
-                    f"  {connector.display_name} {layer}: {normalized.num_rows} rows transformed"
+                logger.debug(
+                    "%s %s: %d rows transformed",
+                    connector.display_name,
+                    layer,
+                    normalized.num_rows,
                 )
             except NotImplementedError:
-                print(f"  {connector.display_name} {layer} transform: not implemented")
+                logger.debug(
+                    "%s %s transform: not implemented", connector.display_name, layer
+                )
 
     return 0
 
@@ -300,11 +315,13 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         try:
             DeltaTable(str(snapshot_path), storage_options=storage_opts)
         except Exception:
-            print(f"  Skipping {connector.display_name}: no normalized snapshot data")
+            logger.debug(
+                "Skipping %s: no normalized snapshot data", connector.display_name
+            )
             continue
 
         holdings = extract_holdings(connector.name, str(snapshot_path), fernet_key)
-        print(f"  {connector.display_name}: {len(holdings)} holdings extracted")
+        logger.debug("%s: %d holdings extracted", connector.display_name, len(holdings))
         all_holdings.extend(holdings)
 
     if not all_holdings:
@@ -317,7 +334,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         converter=converter,
         isin_overrides=isin_overrides,
     )
-    print(f"  Consolidated: {table.num_rows} rows written")
+    logger.debug("Consolidated: %d rows written", table.num_rows)
     return 0
 
 
