@@ -21,12 +21,21 @@ _ENCRYPTED_COLUMNS = frozenset({"value", "quantity", "amount"})
 
 
 def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
-    """Configure DuckDB S3 credentials from environment variables."""
-    conn.execute(f"SET s3_access_key_id='{os.environ.get('AWS_ACCESS_KEY_ID', '')}'")
+    """Configure DuckDB S3 credentials from environment variables.
+
+    Uses DuckDB's SECRET mechanism (v0.10+) which propagates credentials
+    to all extensions including ``delta_scan()``.  The legacy ``SET s3_*``
+    variables only affect DuckDB's built-in httpfs extension and are
+    invisible to the Delta Kernel's object store, causing S3 reads to
+    fall back to EC2 instance metadata and fail on non-EC2 machines.
+    """
+    key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    region = os.environ.get("AWS_REGION", "eu-west-1")
+
     conn.execute(
-        f"SET s3_secret_access_key='{os.environ.get('AWS_SECRET_ACCESS_KEY', '')}'"
+        f"CREATE SECRET (TYPE S3, KEY_ID '{key_id}', SECRET '{secret}', REGION '{region}')"
     )
-    conn.execute(f"SET s3_region='{os.environ.get('AWS_REGION', 'eu-west-1')}'")
 
 
 def _resolve_path(table_path: str | Path) -> str:
