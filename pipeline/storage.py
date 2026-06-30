@@ -96,6 +96,8 @@ class S3Backend:
             bucket = bucket[5:]
         elif bucket.startswith("s3a://"):
             bucket = bucket[6:]
+        # Strip leading slashes — a bare bucket name should not start with /.
+        bucket = bucket.lstrip("/")
         self.bucket = bucket
         self.prefix = prefix.rstrip("/")
 
