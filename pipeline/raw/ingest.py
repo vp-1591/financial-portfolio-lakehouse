@@ -148,6 +148,11 @@ def ingest_raw(
         return 0
     from pipeline.storage import get_storage
     storage_opts = get_storage().storage_options
+    # DEBUG: verify storage_options is passed correctly for S3
+    backend_type = type(get_storage().backend).__name__
+    opts_type = type(storage_opts).__name__
+    opts_keys = list(storage_opts.keys()) if storage_opts else "None"
+    print(f"  DEBUG ingest_raw: backend={backend_type}, storage_opts={opts_type}({opts_keys}), path={table_path[:30]}...")
     get_storage().backend.ensure_parent(table_path)
     write_deltalake(table_path, deduped, mode="append", storage_options=storage_opts)
     return deduped.num_rows
