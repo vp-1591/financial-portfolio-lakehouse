@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 
 import duckdb
 import polars as pl
@@ -45,60 +44,44 @@ KNOWN_TABLES: dict[str, list[str]] = {
 }
 
 
-def list_tables(*, existing_only: bool = True) -> list[dict[str, Any]]:
-    """Return known Delta tables with their full paths and existence status.
+def list_tables() -> list[str]:
+    """Return names of Delta tables that exist on disk/S3.
 
-    By default, only tables that actually exist on disk/S3 are returned.
-    Pass ``existing_only=False`` to include all known tables regardless of
-    whether they exist yet.
-
-    Parameters
-    ----------
-    existing_only:
-        If True (default), only return tables that actually exist on
-        disk/S3.  Set to False to list all known tables.
+    Each name can be passed directly to :func:`decrypted_df` or
+    :func:`query`.
 
     Returns
     -------
-    list[dict[str, Any]]
-        Each dict has keys: ``layer``, ``name``, ``path``, ``exists``.
-        When *existing_only* is True, only dicts with ``exists=True`` are
-        included.
+    list[str]
+        Table names (e.g. ``"consolidated_holdings"``,
+        ``"ibkr_snapshot"``) that exist in the configured storage backend.
 
     Example
     -------
-    >>> for t in list_tables():
-    ...     print(t["layer"], t["name"], t["exists"])
-    raw ibkr_snapshot False
-    ...
-    >>> list_tables(existing_only=True)
-    [...]
+    >>> list_tables()
+    ['consolidated_holdings', 'portfolio_allocation']
+    >>> for name in list_tables():
+    ...     df = decrypted_df(name)
     """
     from deltalake import DeltaTable
 
     config = get_storage()
-    results: list[dict[str, Any]] = []
+    existing: list[str] = []
 
     for layer, names in KNOWN_TABLES.items():
         for name in names:
             path = config.backend.table_path(layer, name)
-            exists = False
             try:
                 storage_opts = config.storage_options
-                kwargs: dict[str, Any] = {}
+                kwargs: dict = {}
                 if storage_opts:
                     kwargs["storage_options"] = storage_opts
                 DeltaTable(path, **kwargs)
-                exists = True
+                existing.append(name)
             except Exception:
                 pass
 
-            if not existing_only or exists:
-                results.append(
-                    {"layer": layer, "name": name, "path": path, "exists": exists}
-                )
-
-    return results
+    return existing
 
 
 def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:

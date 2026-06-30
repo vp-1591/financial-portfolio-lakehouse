@@ -27,37 +27,23 @@ class TestKnownTables:
 
 
 class TestListTables:
-    """Verify list_tables returns correct structure."""
+    """Verify list_tables returns existing table names."""
 
-    def test_returns_all_tables_when_all_requested(self):
-        """list_tables(existing_only=False) returns all 14 known tables."""
-        tables = list_tables(existing_only=False)
-        assert len(tables) == 14
-
-    def test_returns_existing_by_default(self):
-        """list_tables() defaults to existing_only=True."""
+    def test_returns_list_of_strings(self):
+        """list_tables() returns a list of strings."""
         tables = list_tables()
-        # In test env with no S3 and no local data, no tables exist.
-        for t in tables:
-            assert t["exists"] is True
+        assert isinstance(tables, list)
+        for name in tables:
+            assert isinstance(name, str)
 
-    def test_each_entry_has_required_keys(self):
-        """Every entry has layer, name, path, exists."""
-        tables = list_tables(existing_only=False)
-        for t in tables:
-            assert "layer" in t
-            assert "name" in t
-            assert "path" in t
-            assert "exists" in t
+    def test_names_are_valid_table_aliases(self):
+        """Every returned name appears in KNOWN_TABLES."""
+        all_known = {n for names in KNOWN_TABLES.values() for n in names}
+        for name in list_tables():
+            assert name in all_known, f"{name!r} not in KNOWN_TABLES"
 
-    def test_existing_only_filters_missing(self):
-        """existing_only=True returns only tables that exist."""
-        tables = list_tables(existing_only=True)
-        for t in tables:
-            assert t["exists"] is True
-
-    def test_paths_use_s3_backend_when_configured(self):
-        """With an S3Backend, paths are s3:// URIs."""
+    def test_s3_backend_returns_empty_for_missing_bucket(self):
+        """With S3Backend pointing to nonexistent bucket, result is empty."""
         backend = S3Backend(bucket="test-bucket", prefix="pipeline")
         use_storage(
             StorageConfig(
@@ -72,12 +58,8 @@ class TestListTables:
         )
         try:
             tables = list_tables()
-            for t in tables:
-                assert t["path"].startswith("s3://"), (
-                    f"Expected S3 path, got: {t['path']}"
-                )
+            assert tables == []
         finally:
-            # Reset so other tests don't see the S3Backend
             import pipeline.storage as _storage_mod
 
             _storage_mod._config = None
