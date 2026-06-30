@@ -20,7 +20,6 @@ from typing import Iterable
 import pyarrow as pa
 from deltalake import write_deltalake
 
-from pipeline.crypto import decrypt_float, decrypt_string, load_key
 from pipeline.normalized.models import consolidated_holdings_schema
 
 
@@ -230,7 +229,9 @@ def aggregate_percentages(
 
     net_worth = sum(totals.values())
     if net_worth == 0:
-        raise PortfolioConnectorError("Net worth is zero; cannot calculate percentages.")
+        raise PortfolioConnectorError(
+            "Net worth is zero; cannot calculate percentages."
+        )
 
     rows = [
         PortfolioRow(
@@ -274,6 +275,7 @@ def consolidate_holdings(
 
     if table_path is None:
         from pipeline.storage import get_storage
+
         table_path = get_storage().normalized_path("consolidated_holdings")
 
     from pipeline.storage import get_storage
@@ -301,7 +303,11 @@ def consolidate_holdings(
         override_isin = normalized_isin_overrides.get(
             normalize_isin_lookup_key(holding.ticker), ""
         )
-        identifier = holding.identifier or format_identifier("ISIN", override_isin) if override_isin else holding.identifier
+        identifier = (
+            holding.identifier or format_identifier("ISIN", override_isin)
+            if override_isin
+            else holding.identifier
+        )
 
         fetched_ats.append(now)
         brokers.append(holding.broker)

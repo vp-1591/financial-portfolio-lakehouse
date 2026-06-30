@@ -26,6 +26,7 @@ class XtbError(RuntimeError):
 @dataclass(frozen=True)
 class XtbPosition:
     """A single XTB position (or cash balance) parsed from the report."""
+
     account_id: str
     label: str
     name: str
@@ -38,6 +39,7 @@ class XtbPosition:
 @dataclass(frozen=True)
 class XtbCashOperation:
     """A single XTB cash operation parsed from the CASH OPERATION sheet."""
+
     account_id: str
     operation_id: str
     operation_type: str
@@ -161,10 +163,14 @@ def value_below_label(rows: list[dict[str, Any]], label: str) -> Any:
 
 
 def header_map(row: dict[str, Any]) -> dict[str, str]:
-    return {normalize_header(value): column for column, value in row.items() if value != ""}
+    return {
+        normalize_header(value): column for column, value in row.items() if value != ""
+    }
 
 
-def find_open_positions_header(rows: list[dict[str, Any]]) -> tuple[int, dict[str, str]]:
+def find_open_positions_header(
+    rows: list[dict[str, Any]],
+) -> tuple[int, dict[str, str]]:
     for index, row in enumerate(rows):
         headers = header_map(row)
         if {"position", "symbol", "type", "volume"}.issubset(headers):
@@ -225,7 +231,9 @@ def load_open_position_assets(
     ]
 
 
-def find_cash_operations_header(rows: list[dict[str, Any]]) -> tuple[int, dict[str, str]] | None:
+def find_cash_operations_header(
+    rows: list[dict[str, Any]],
+) -> tuple[int, dict[str, str]] | None:
     """Find the header row of the CASH OPERATION sheet.
 
     Returns (row_index, header_map) or None if not found.
@@ -328,7 +336,9 @@ def load_positions(
     assets = load_open_position_assets(open_rows, account_id_value, currency)
 
     balance = value_below_label(open_rows, "Balance")
-    cash_balance = as_float(balance) if balance is not None else cash_operations_total(cash_rows)
+    cash_balance = (
+        as_float(balance) if balance is not None else cash_operations_total(cash_rows)
+    )
     if cash_balance:
         assets.append(
             XtbPosition(

@@ -8,7 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import ibkr_net_worth as ibkr
+import ibkr_net_worth as ibkr  # noqa: E402
 
 
 FLEX_RESPONSE_XML = """\
@@ -45,7 +45,9 @@ class FakeFlexClient:
         self.request_report_calls += 1
         return "12345678"
 
-    def fetch_report(self, reference_code: str, retries: int = 6, delay: float = 3.0) -> ET.Element:
+    def fetch_report(
+        self, reference_code: str, retries: int = 6, delay: float = 3.0
+    ) -> ET.Element:
         self.fetch_report_calls += 1
         assert reference_code == "12345678"
         return ET.fromstring(FLEX_RESPONSE_XML)
@@ -402,7 +404,9 @@ def test_load_assets_cash_report_overrides_derived_cash() -> None:
     assert cash_eur.security_currency == "EUR"
 
     # No derived CASH entry (only the two from Cash Report)
-    assert not any(c.label == "CASH USD" and c.security_currency == "" for c in cash_entries)
+    assert not any(
+        c.label == "CASH USD" and c.security_currency == "" for c in cash_entries
+    )
 
 
 def test_load_assets_cash_report_no_fx_rate_defaults_to_one() -> None:
@@ -600,7 +604,6 @@ def test_load_assets_cash_report_warns_on_missing_fx_rate(capsys) -> None:
 
 def test_ibkr_flex_client_request_report_parses_reference_code() -> None:
     """Verify request_report parses the SendRequest XML response."""
-    import unittest.mock
 
     response_xml = """\
 <FlexStatementResponse>

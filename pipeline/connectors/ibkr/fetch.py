@@ -81,7 +81,9 @@ def fetch_snapshot(
     Each API response is captured as a separate row with the endpoint
     path stored in the ``source`` column.
     """
-    client = IbkrClient(base_url, verify_tls=verify_tls, timeout=timeout, capture_raw=True)
+    client = IbkrClient(
+        base_url, verify_tls=verify_tls, timeout=timeout, capture_raw=True
+    )
 
     if not skip_auth_check:
         if require_brokerage_session:

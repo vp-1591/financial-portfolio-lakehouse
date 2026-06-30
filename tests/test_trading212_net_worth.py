@@ -8,9 +8,9 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import base64
+import base64  # noqa: E402
 
-import trading212_net_worth as trading212
+import trading212_net_worth as trading212  # noqa: E402
 
 
 class FakeClient:
@@ -295,7 +295,7 @@ def test_unauthorized_error_is_not_padded_with_guesses() -> None:
     )
 
     assert str(error) == (
-        'GET https://live.trading212.com/api/v0/equity/account/summary '
+        "GET https://live.trading212.com/api/v0/equity/account/summary "
         'failed: HTTP 401 {"error": "API key is invalid"}'
     )
 
@@ -324,5 +324,5 @@ def test_auth_method_is_basic_with_key_and_secret() -> None:
     header = trading212.basic_auth_header("mykey", "mysecret")
     # Must start with "Basic " — never "Bearer " or a raw key
     assert header.startswith("Basic "), f"Expected Basic auth, got: {header}"
-    decoded = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+    decoded = base64.b64decode(header[len("Basic ") :]).decode("utf-8")
     assert decoded == "mykey:mysecret", f"Expected key:secret, got: {decoded}"

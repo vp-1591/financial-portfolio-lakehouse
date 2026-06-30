@@ -31,7 +31,9 @@ from typing import Any
 _IS_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 
-DEFAULT_FLEX_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+DEFAULT_FLEX_BASE_URL = (
+    "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+)
 DEFAULT_QUERY_ID = "1554188"
 
 
@@ -395,17 +397,19 @@ def load_assets(
         label = position_label(pos)
         asset_class = str(pos.get("assetClass", "") or "STK").upper()
 
-        assets.append(Asset(
-            account_id=acct_id,
-            label=label,
-            asset_class=asset_class,
-            currency=base_currency,
-            value=base_value,
-            isin=position_isin(pos),
-            conid=position_conid(pos),
-            description=position_description(pos),
-            security_currency=currency,
-        ))
+        assets.append(
+            Asset(
+                account_id=acct_id,
+                label=label,
+                asset_class=asset_class,
+                currency=base_currency,
+                value=base_value,
+                isin=position_isin(pos),
+                conid=position_conid(pos),
+                description=position_description(pos),
+                security_currency=currency,
+            )
+        )
 
     # --- Cash processing (3 sources in priority order) ---
     #
@@ -459,14 +463,16 @@ def load_assets(
                 base_value = ending_cash
 
             if base_value != 0:
-                assets.append(Asset(
-                    account_id=acct_id,
-                    label=f"CASH {currency}",
-                    asset_class="CASH",
-                    currency=base_currency,
-                    value=base_value,
-                    security_currency=currency,
-                ))
+                assets.append(
+                    Asset(
+                        account_id=acct_id,
+                        label=f"CASH {currency}",
+                        asset_class="CASH",
+                        currency=base_currency,
+                        value=base_value,
+                        security_currency=currency,
+                    )
+                )
                 cash_from_report = True
 
     # Source 2: AccountInformation.cashBalance
@@ -479,22 +485,30 @@ def load_assets(
                 currency = str(info.get("currency", "") or "").upper()
                 if currency:
                     key = (acct_id, currency)
-                    cash_by_account_currency[key] = cash_by_account_currency.get(key, 0.0) + cash_balance
+                    cash_by_account_currency[key] = (
+                        cash_by_account_currency.get(key, 0.0) + cash_balance
+                    )
 
         for (acct_id, cash_currency), cash_balance in cash_by_account_currency.items():
             base_currency = base_currency_by_account.get(acct_id, cash_currency)
             fx_rate = fx_rate_lookup.get((acct_id, cash_currency), 1.0)
 
-            base_value = cash_balance * fx_rate if cash_currency != base_currency else cash_balance
+            base_value = (
+                cash_balance * fx_rate
+                if cash_currency != base_currency
+                else cash_balance
+            )
             if base_value != 0:
-                assets.append(Asset(
-                    account_id=acct_id,
-                    label=f"CASH {cash_currency}",
-                    asset_class="CASH",
-                    currency=base_currency,
-                    value=base_value,
-                    security_currency=cash_currency,
-                ))
+                assets.append(
+                    Asset(
+                        account_id=acct_id,
+                        label=f"CASH {cash_currency}",
+                        asset_class="CASH",
+                        currency=base_currency,
+                        value=base_value,
+                        security_currency=cash_currency,
+                    )
+                )
 
     # Calculate net worth by summing all asset values
     net_worth = sum(asset.value for asset in assets)
@@ -509,7 +523,9 @@ def print_assets(assets: list[Asset], net_worth: float) -> None:
     rows = sorted(assets, key=lambda asset: abs(asset.value), reverse=True)
     print(f"Net worth: {net_worth:,.2f}")
     print()
-    print(f"{'Account':<14} {'Asset':<24} {'Class':<8} {'Currency':<8} {'Value':>16} {'Net Worth %':>12}")
+    print(
+        f"{'Account':<14} {'Asset':<24} {'Class':<8} {'Currency':<8} {'Value':>16} {'Net Worth %':>12}"
+    )
     print("-" * 90)
     for asset in rows:
         percentage = asset.value / net_worth * 100
@@ -541,7 +557,11 @@ def dump_xml_structure(root: ET.Element, max_depth: int = 5) -> None:
         children = list(elem)
         child_tags = [c.tag for c in children]
         indent = "  " * depth
-        child_info = f"  [{len(children)} children: {', '.join(child_tags[:5])}]" if children else ""
+        child_info = (
+            f"  [{len(children)} children: {', '.join(child_tags[:5])}]"
+            if children
+            else ""
+        )
         print(f"{indent}<{elem.tag}{attr_str}>{child_info}")
         for child in children:
             _walk(child, depth + 1)
@@ -607,12 +627,16 @@ def main() -> int:
     try:
         started = time.monotonic()
         ref_code = client.request_report()
-        root = client.fetch_report(ref_code, retries=args.retries, delay=args.retry_delay)
+        root = client.fetch_report(
+            ref_code, retries=args.retries, delay=args.retry_delay
+        )
 
         if args.debug_xml:
             dump_xml_structure(root)
 
-        assets, net_worth = load_assets(client, retries=args.retries, delay=args.retry_delay, root=root)
+        assets, net_worth = load_assets(
+            client, retries=args.retries, delay=args.retry_delay, root=root
+        )
         print_assets(assets, net_worth)
         print(f"\nFetched in {time.monotonic() - started:.1f}s")
         return 0

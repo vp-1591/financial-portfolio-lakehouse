@@ -3,29 +3,22 @@
 from __future__ import annotations
 
 import json
-import sys
-import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pyarrow as pa
 import pytest
 
 from pipeline.connectors.trading212.client import (
-    Trading212Client,
-    Trading212Error,
     Trading212HttpError,
     account_currency,
     as_float,
     basic_auth_header,
     cash_value,
     concise_details,
-    first_value,
     instrument_currency_by_ticker,
     instrument_isin_by_ticker,
     instrument_name_by_ticker,
     is_access_denied_html,
-    nested_dict,
     net_worth_value,
     position_currency,
     position_isin,
@@ -35,7 +28,7 @@ from pipeline.connectors.trading212.client import (
     position_value,
 )
 from pipeline.connectors.trading212.transform import transform_snapshot
-from pipeline.crypto import decrypt, decrypt_float, encrypt, generate_key
+from pipeline.crypto import decrypt_float, encrypt, generate_key
 
 
 class TestClientParsing:
@@ -75,7 +68,7 @@ class TestClientParsing:
         header = basic_auth_header("mykey", "mysecret")
         # Must start with "Basic " — never "Bearer " or a raw key
         assert header.startswith("Basic "), f"Expected Basic auth, got: {header}"
-        decoded = b64.b64decode(header[len("Basic "):]).decode("utf-8")
+        decoded = b64.b64decode(header[len("Basic ") :]).decode("utf-8")
         assert decoded == "mykey:mysecret", f"Expected key:secret, got: {decoded}"
 
     def test_account_currency(self) -> None:
@@ -123,10 +116,7 @@ class TestClientParsing:
 
     def test_position_isin_uses_instrument_metadata_lookup(self) -> None:
         position = {"ticker": "VWCE_DE_EQ"}
-        assert (
-            position_isin(position, {"VWCE_DE_EQ": "IE00BK5BQT80"})
-            == "IE00BK5BQT80"
-        )
+        assert position_isin(position, {"VWCE_DE_EQ": "IE00BK5BQT80"}) == "IE00BK5BQT80"
 
     def test_position_value_prefers_wallet_impact(self) -> None:
         position = {
@@ -151,7 +141,9 @@ class TestClientParsing:
         assert position_security_currency(position, {}, "PLN") == "EUR"
 
     def test_instrument_currencies(self) -> None:
-        instruments = [{"ticker": "VUAA", "currencyCode": "USD", "name": "Vanguard ETF"}]
+        instruments = [
+            {"ticker": "VUAA", "currencyCode": "USD", "name": "Vanguard ETF"}
+        ]
         assert instrument_currency_by_ticker(instruments) == {"VUAA": "USD"}
 
     def test_instrument_names(self) -> None:
@@ -180,7 +172,7 @@ class TestClientParsing:
             '{"error":"API key is invalid"}',
         )
         assert str(error) == (
-            'GET https://live.trading212.com/api/v0/equity/account/summary '
+            "GET https://live.trading212.com/api/v0/equity/account/summary "
             'failed: HTTP 401 {"error": "API key is invalid"}'
         )
 
@@ -232,15 +224,17 @@ class TestTransformSnapshot:
                 "account_id": [account_id] * len(sources),
                 "source_file": [""] * len(sources),
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
     def test_transform_produces_equity_and_cash_rows(self, fernet_key: bytes) -> None:
@@ -249,7 +243,9 @@ class TestTransformSnapshot:
             {"ticker": "VUAA", "quantity": 2, "currentPrice": 100.0},
             {"ticker": "ZERO", "quantity": 0, "currentPrice": 100.0},
         ]
-        instruments = [{"ticker": "VUAA", "currencyCode": "USD", "name": "Vanguard ETF"}]
+        instruments = [
+            {"ticker": "VUAA", "currencyCode": "USD", "name": "Vanguard ETF"}
+        ]
 
         raw = self._build_raw_table(summary, positions, instruments)
         result = transform_snapshot(raw, fernet_key)

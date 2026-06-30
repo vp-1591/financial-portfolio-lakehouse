@@ -44,7 +44,9 @@ def parse_isin_override(value: str) -> tuple[str, str]:
 
 def load_isin_map(path: Path) -> dict[str, str]:
     if not path.exists():
-        raise connectors.PortfolioConnectorError(f"ISIN map file does not exist: {path}")
+        raise connectors.PortfolioConnectorError(
+            f"ISIN map file does not exist: {path}"
+        )
 
     with path.open(newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.DictReader(handle))
@@ -223,7 +225,9 @@ def main() -> int:
                 include_metadata=not args.t212_skip_metadata,
             )
         )
-        holdings.extend(connectors.load_xtb_holdings(path.resolve() for path in args.xtb_file))
+        holdings.extend(
+            connectors.load_xtb_holdings(path.resolve() for path in args.xtb_file)
+        )
         holdings.extend(
             connectors.load_ibkr_holdings(
                 flex_token=args.ibkr_flex_token,

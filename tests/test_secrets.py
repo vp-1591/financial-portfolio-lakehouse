@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from pipeline.secrets import (
     REQUIRED_SECRETS,
@@ -24,11 +19,13 @@ class TestInjectSecrets:
     def setup_method(self):
         """Reset module-level state before each test."""
         import pipeline.storage
+
         pipeline.storage._config = None
 
     def teardown_method(self):
         """Clean up env vars after each test."""
         import pipeline.storage
+
         pipeline.storage._config = None
 
     def test_inject_returns_available_secrets(self, monkeypatch):
@@ -103,7 +100,10 @@ class TestGetConfig:
 
     def test_get_config_with_default(self, monkeypatch):
         monkeypatch.delenv("IBKR_BASE_URL", raising=False)
-        assert get_config("IBKR_BASE_URL", "https://localhost:5000") == "https://localhost:5000"
+        assert (
+            get_config("IBKR_BASE_URL", "https://localhost:5000")
+            == "https://localhost:5000"
+        )
 
     def test_get_config_no_default(self, monkeypatch):
         monkeypatch.delenv("NONEXISTENT_CONFIG_XYZ", raising=False)

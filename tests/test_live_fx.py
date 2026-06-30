@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import portfolio_connectors as connectors
+import portfolio_connectors as connectors  # noqa: E402
 
 
 pytestmark = pytest.mark.skipif(

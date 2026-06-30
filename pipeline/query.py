@@ -22,15 +22,11 @@ _ENCRYPTED_COLUMNS = frozenset({"value", "quantity", "amount"})
 
 def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     """Configure DuckDB S3 credentials from environment variables."""
-    conn.execute(
-        f"SET s3_access_key_id='{os.environ.get('AWS_ACCESS_KEY_ID', '')}'"
-    )
+    conn.execute(f"SET s3_access_key_id='{os.environ.get('AWS_ACCESS_KEY_ID', '')}'")
     conn.execute(
         f"SET s3_secret_access_key='{os.environ.get('AWS_SECRET_ACCESS_KEY', '')}'"
     )
-    conn.execute(
-        f"SET s3_region='{os.environ.get('AWS_REGION', 'eu-west-1')}'"
-    )
+    conn.execute(f"SET s3_region='{os.environ.get('AWS_REGION', 'eu-west-1')}'")
 
 
 def _resolve_path(table_path: str | Path) -> str:
@@ -49,9 +45,7 @@ def _resolve_path(table_path: str | Path) -> str:
 
     # Relative — resolve against data_dir (which may be an S3 prefix).
     if isinstance(config.backend, S3Backend):
-        return config.backend.table_path(
-            "normalized", path_str.replace("\\", "/")
-        )
+        return config.backend.table_path("normalized", path_str.replace("\\", "/"))
     return str((Path(config.data_dir) / path).resolve())
 
 
@@ -102,9 +96,7 @@ def query(
     """
     abs_path = _resolve_path(table_path)
     conn = _create_connection(abs_path)
-    conn.execute(
-        f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')"
-    )
+    conn.execute(f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')")
     return conn.sql(sql)
 
 
@@ -138,12 +130,14 @@ def load_decrypted(
 
     abs_path = _resolve_path(table_path)
     conn = _create_connection(abs_path)
-    conn.execute(
-        f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')"
-    )
+    conn.execute(f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')")
     result = conn.execute("SELECT * FROM delta_table").fetchall()
-    columns = [desc[0] for desc in conn.execute("SELECT * FROM delta_table").description]
-    encrypted_indices = {col: columns.index(col) for col in encrypted_cols if col in columns}
+    columns = [
+        desc[0] for desc in conn.execute("SELECT * FROM delta_table").description
+    ]
+    encrypted_indices = {
+        col: columns.index(col) for col in encrypted_cols if col in columns
+    }
 
     rows = []
     for row in result:

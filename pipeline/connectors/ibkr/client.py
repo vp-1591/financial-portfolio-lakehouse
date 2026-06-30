@@ -58,7 +58,9 @@ class IbkrClient:
         self.capture_raw = capture_raw
         self.captured_responses: list[tuple[str, bytes]] = []
 
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    def request(
+        self, method: str, path: str, body: dict[str, Any] | None = None
+    ) -> Any:
         """Make an HTTP request and return the parsed JSON response."""
         url = f"{self.base_url}{path}"
         data = None
@@ -91,7 +93,9 @@ class IbkrClient:
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise IbkrError(f"{method} {url} returned non-JSON response: {raw[:200]}") from exc
+            raise IbkrError(
+                f"{method} {url} returned non-JSON response: {raw[:200]}"
+            ) from exc
 
     def auth_status(self) -> dict[str, Any]:
         try:
@@ -287,14 +291,16 @@ def cash_assets(account_id_value: str, ledger: dict[str, Any]) -> list[dict[str,
         currency_code = str(entry.get("currency") or currency)
         if cash_balance == 0:
             continue
-        assets.append({
-            "account_id": account_id_value,
-            "label": f"CASH {currency_code}",
-            "asset_class": "CASH",
-            "currency": currency_code,
-            "value": to_base_currency(cash_balance, currency_code, rates),
-            "isin": "",
-            "conid": "",
-            "description": f"Cash {currency_code}",
-        })
+        assets.append(
+            {
+                "account_id": account_id_value,
+                "label": f"CASH {currency_code}",
+                "asset_class": "CASH",
+                "currency": currency_code,
+                "value": to_base_currency(cash_balance, currency_code, rates),
+                "isin": "",
+                "conid": "",
+                "description": f"Cash {currency_code}",
+            }
+        )
     return assets

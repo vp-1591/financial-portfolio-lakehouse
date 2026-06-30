@@ -20,11 +20,6 @@ from deltalake import DeltaTable
 
 from pipeline.crypto import decrypt_float, load_key
 from pipeline.normalized.consolidate import Holding
-from pipeline.normalized.models import (
-    ibkr_snapshot_normalized_schema,
-    trading212_snapshot_normalized_schema,
-    xtb_snapshot_normalized_schema,
-)
 
 
 def _label_column_for(broker: str) -> str:
@@ -86,44 +81,52 @@ def extract_holdings(
             conid = str(row.get("conid", "") or "").strip()
             if not identifier and conid:
                 identifier = f"CONID:{conid}"
-            holdings.append(Holding(
-                broker="IBKR",
-                ticker=str(row["label"]),
-                currency=str(row.get("value_currency", row.get("currency", ""))),
-                value=value,
-                identifier=identifier,
-                security_currency=str(row.get("security_currency", "")),
-                description=str(row.get("description", "")),
-            ))
+            holdings.append(
+                Holding(
+                    broker="IBKR",
+                    ticker=str(row["label"]),
+                    currency=str(row.get("value_currency", row.get("currency", ""))),
+                    value=value,
+                    identifier=identifier,
+                    security_currency=str(row.get("security_currency", "")),
+                    description=str(row.get("description", "")),
+                )
+            )
 
     elif broker == "trading212":
         for row in df.iter_rows(named=True):
             value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
-            holdings.append(Holding(
-                broker="Trading 212",
-                ticker=str(row["label"]),
-                currency=str(row.get("value_currency", row.get("currency", ""))),
-                value=value,
-                identifier=identifier,
-                security_currency=str(row.get("security_currency", "")),
-                description=str(row.get("name", "")),
-            ))
+            holdings.append(
+                Holding(
+                    broker="Trading 212",
+                    ticker=str(row["label"]),
+                    currency=str(row.get("value_currency", row.get("currency", ""))),
+                    value=value,
+                    identifier=identifier,
+                    security_currency=str(row.get("security_currency", "")),
+                    description=str(row.get("name", "")),
+                )
+            )
 
     elif broker == "xtb":
         for row in df.iter_rows(named=True):
             value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
-            holdings.append(Holding(
-                broker="XTB",
-                ticker=str(row["label"]),
-                currency=str(row.get("value_currency", row.get("currency", ""))),
-                value=value,
-                identifier=identifier,
-                security_currency=str(row.get("value_currency", row.get("currency", ""))),
-                description=str(row.get("name", "")),
-            ))
+            holdings.append(
+                Holding(
+                    broker="XTB",
+                    ticker=str(row["label"]),
+                    currency=str(row.get("value_currency", row.get("currency", ""))),
+                    value=value,
+                    identifier=identifier,
+                    security_currency=str(
+                        row.get("value_currency", row.get("currency", ""))
+                    ),
+                    description=str(row.get("name", "")),
+                )
+            )
 
     return holdings

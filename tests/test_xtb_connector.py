@@ -16,33 +16,22 @@ from pipeline.connectors.xtb.parser import (
     XtbError,
     XtbPosition,
     as_float,
-    cell_value,
     column_name,
-    find_cash_operations_header,
-    find_open_positions_header,
-    find_sheet_name,
-    header_map,
-    load_cash_operations,
     load_cash_operations_from_report,
     load_positions,
     normalize_header,
-    read_shared_strings,
-    row_isin,
-    sheet_paths_by_name,
-    value_below_label,
 )
 from pipeline.connectors.xtb.transform import transform_cdc, transform_snapshot
-from pipeline.crypto import decrypt, decrypt_float, encrypt, generate_key
+from pipeline.crypto import decrypt_float, encrypt, generate_key
 
 
 # --- XLS test helpers (preserved from tests/test_xtb_net_worth.py) ---
 
+
 def cell(ref: str, value: object) -> str:
     if isinstance(value, (int, float)):
         return f'<c r="{ref}"><v>{value}</v></c>'
-    return (
-        f'<c r="{ref}" t="inlineStr"><is><t>{value}</t></is></c>'
-    )
+    return f'<c r="{ref}" t="inlineStr"><is><t>{value}</t></is></c>'
 
 
 def row(index: int, values: dict[str, object]) -> str:
@@ -54,12 +43,14 @@ def sheet(rows: list[str]) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        f'<sheetData>{"".join(rows)}</sheetData>'
+        f"<sheetData>{''.join(rows)}</sheetData>"
         "</worksheet>"
     )
 
 
-def write_xtb_workbook(path: Path, include_isin: bool = False, include_cash_ops: bool = False) -> None:
+def write_xtb_workbook(
+    path: Path, include_isin: bool = False, include_cash_ops: bool = False
+) -> None:
     """Create a minimal XLSX workbook for testing."""
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -145,8 +136,28 @@ def write_xtb_workbook(path: Path, include_isin: bool = False, include_cash_ops:
         cash_header["F"] = "Time"
         cash_rows = [
             row(11, cash_header),
-            row(12, {"B": 1, "C": "Deposit", "D": "Initial deposit", "E": "PLN", "F": "2026-01-01", "G": 200}),
-            row(13, {"B": 2, "C": "Dividend", "D": "VWCE dividend", "E": "EUR", "F": "2026-03-15", "G": 5}),
+            row(
+                12,
+                {
+                    "B": 1,
+                    "C": "Deposit",
+                    "D": "Initial deposit",
+                    "E": "PLN",
+                    "F": "2026-01-01",
+                    "G": 200,
+                },
+            ),
+            row(
+                13,
+                {
+                    "B": 2,
+                    "C": "Dividend",
+                    "D": "VWCE dividend",
+                    "E": "EUR",
+                    "F": "2026-03-15",
+                    "G": 5,
+                },
+            ),
         ]
     else:
         cash_rows = [
@@ -261,7 +272,9 @@ class TestTransformSnapshot:
         self._fernet_key = key
         return key
 
-    def _build_raw_table(self, positions_data: dict, account_id: str = "123456") -> pa.Table:
+    def _build_raw_table(
+        self, positions_data: dict, account_id: str = "123456"
+    ) -> pa.Table:
         """Build a raw-layer table from parsed XTB data.
 
         Payloads are encrypted to match the real pipeline flow where
@@ -282,24 +295,38 @@ class TestTransformSnapshot:
                 "account_id": [account_id],
                 "source_file": ["test_report.xlsx"],
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
     def test_transform_produces_position_rows(self, fernet_key: bytes) -> None:
         data = {
             "positions": [
-                {"label": "VWCE.DE", "name": "VWCE.DE", "asset_class": "EQUITY",
-                 "currency": "PLN", "value": 195.0, "isin": "IE00BK5BQT80"},
-                {"label": "CASH PLN", "name": "Cash PLN", "asset_class": "CASH",
-                 "currency": "PLN", "value": 25.0, "isin": ""},
+                {
+                    "label": "VWCE.DE",
+                    "name": "VWCE.DE",
+                    "asset_class": "EQUITY",
+                    "currency": "PLN",
+                    "value": 195.0,
+                    "isin": "IE00BK5BQT80",
+                },
+                {
+                    "label": "CASH PLN",
+                    "name": "Cash PLN",
+                    "asset_class": "CASH",
+                    "currency": "PLN",
+                    "value": 25.0,
+                    "isin": "",
+                },
             ],
             "net_worth": 220.0,
         }
@@ -319,8 +346,14 @@ class TestTransformSnapshot:
     def test_transform_preserves_isin(self, fernet_key: bytes) -> None:
         data = {
             "positions": [
-                {"label": "VWCE.DE", "name": "VWCE.DE", "asset_class": "EQUITY",
-                 "currency": "PLN", "value": 195.0, "isin": "IE00BK5BQT80"},
+                {
+                    "label": "VWCE.DE",
+                    "name": "VWCE.DE",
+                    "asset_class": "EQUITY",
+                    "currency": "PLN",
+                    "value": 195.0,
+                    "isin": "IE00BK5BQT80",
+                },
             ],
             "net_worth": 195.0,
         }
@@ -341,10 +374,22 @@ class TestTransformCDC:
     def test_transform_cdc_produces_operation_rows(self, fernet_key: bytes) -> None:
         now = datetime.now(timezone.utc)
         ops_data = [
-            {"operation_id": "1", "operation_type": "Deposit", "amount": 200.0,
-             "currency": "PLN", "comment": "Initial deposit", "operation_date": "2026-01-01"},
-            {"operation_id": "2", "operation_type": "Dividend", "amount": 5.0,
-             "currency": "EUR", "comment": "VWCE dividend", "operation_date": "2026-03-15"},
+            {
+                "operation_id": "1",
+                "operation_type": "Deposit",
+                "amount": 200.0,
+                "currency": "PLN",
+                "comment": "Initial deposit",
+                "operation_date": "2026-01-01",
+            },
+            {
+                "operation_id": "2",
+                "operation_type": "Dividend",
+                "amount": 5.0,
+                "currency": "EUR",
+                "comment": "VWCE dividend",
+                "operation_date": "2026-03-15",
+            },
         ]
         raw_payload = json.dumps(ops_data).encode("utf-8")
         encrypted_payload = encrypt(raw_payload, fernet_key)
@@ -359,15 +404,17 @@ class TestTransformCDC:
                 "account_id": ["123456"],
                 "source_file": ["test_report.xlsx"],
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
         result = transform_cdc(raw, fernet_key)

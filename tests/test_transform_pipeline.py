@@ -24,12 +24,18 @@ def _setup_storage(tmp_path: Path) -> None:
     """Inject a tmp_path-based StorageConfig for all transform tests."""
     data = tmp_path / "data"
     for subdir in [
-        "raw/ibkr_snapshot", "raw/ibkr_cdc",
-        "raw/trading212_snapshot", "raw/trading212_cdc",
-        "raw/xtb_snapshot", "raw/xtb_cdc",
-        "normalized/ibkr_snapshot", "normalized/ibkr_cdc",
-        "normalized/trading212_snapshot", "normalized/trading212_cdc",
-        "normalized/xtb_snapshot", "normalized/xtb_cdc",
+        "raw/ibkr_snapshot",
+        "raw/ibkr_cdc",
+        "raw/trading212_snapshot",
+        "raw/trading212_cdc",
+        "raw/xtb_snapshot",
+        "raw/xtb_cdc",
+        "normalized/ibkr_snapshot",
+        "normalized/ibkr_cdc",
+        "normalized/trading212_snapshot",
+        "normalized/trading212_cdc",
+        "normalized/xtb_snapshot",
+        "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
         "analytics/portfolio_allocation",
     ]:
@@ -63,6 +69,7 @@ class TestIBKRTransform:
         connector = get("ibkr")
         result = connector.transform_snapshot(raw_table, fernet_key)
         from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+
         assert result.schema.equals(ibkr_snapshot_normalized_schema)
 
     def test_transform_snapshot_contains_equity_and_cash(self):
@@ -91,6 +98,7 @@ class TestT212Transform:
         connector = get("trading212")
         result = connector.transform_snapshot(raw_table, fernet_key)
         from pipeline.normalized.models import trading212_snapshot_normalized_schema
+
         assert result.schema.equals(trading212_snapshot_normalized_schema)
 
 
@@ -110,24 +118,31 @@ class TestXTBTransform:
         connector = get("xtb")
         result = connector.transform_snapshot(raw_table, fernet_key)
         from pipeline.normalized.models import xtb_snapshot_normalized_schema
+
         assert result.schema.equals(xtb_snapshot_normalized_schema)
 
 
 class TestNormalizedFixtureWrite:
     """Test that normalized fixture data can be written and read back."""
 
-    @pytest.mark.parametrize("broker,snapshot_factory", [
-        ("ibkr", ibkr_normalized_snapshot),
-        ("trading212", t212_normalized_snapshot),
-        ("xtb", xtb_normalized_snapshot),
-    ])
-    def test_write_and_read_normalized_snapshot(self, broker, snapshot_factory, tmp_path: Path):
+    @pytest.mark.parametrize(
+        "broker,snapshot_factory",
+        [
+            ("ibkr", ibkr_normalized_snapshot),
+            ("trading212", t212_normalized_snapshot),
+            ("xtb", xtb_normalized_snapshot),
+        ],
+    )
+    def test_write_and_read_normalized_snapshot(
+        self, broker, snapshot_factory, tmp_path: Path
+    ):
         fernet_key = generate_key()
         table = snapshot_factory(fernet_key=fernet_key)
         path = str((tmp_path / "data" / "normalized" / f"{broker}_snapshot"))
         write_deltalake(path, table, mode="overwrite")
 
         from deltalake import DeltaTable
+
         dt = DeltaTable(path)
         read_back = dt.to_pyarrow_table()
         assert read_back.num_rows == table.num_rows

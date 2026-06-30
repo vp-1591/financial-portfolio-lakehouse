@@ -44,7 +44,6 @@ def build_raw_table(
     pa.Table
         A table matching :data:`RAW_SCHEMA` with encrypted payloads.
     """
-    fernet_key = b""  # Encryption happens in ingest_raw, not here
     now = datetime.now(timezone.utc)
 
     fetched_ats: list[datetime] = []
@@ -147,6 +146,7 @@ def ingest_raw(
     if deduped.num_rows == 0:
         return 0
     from pipeline.storage import get_storage
+
     storage_opts = get_storage().storage_options
     get_storage().backend.ensure_parent(table_path)
     write_deltalake(table_path, deduped, mode="append", storage_options=storage_opts)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from pipeline.crypto import generate_key
 from pipeline.normalized.consolidate import (
     CurrencyConverter,
     Holding,

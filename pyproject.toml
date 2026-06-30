@@ -14,6 +14,7 @@ pipeline = [
 ]
 dev = [
     "pytest==9.1.1",
+    "ruff>=0.11.0",
     "investment-portfolio-dashboard[pipeline]",
 ]
 
@@ -23,3 +24,7 @@ include = ["pipeline*"]
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88

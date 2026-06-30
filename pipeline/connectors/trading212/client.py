@@ -176,6 +176,7 @@ class Trading212Client:
 
 # --- Parsing helpers (preserved from scripts/trading212_net_worth.py) ---
 
+
 def as_float(value: Any, default: float = 0.0) -> float:
     if value in (None, ""):
         return default

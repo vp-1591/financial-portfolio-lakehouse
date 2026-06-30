@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from pipeline.connectors.base import BrokerConnector
 from pipeline.connectors.registry import all, get, register
 
 

@@ -6,7 +6,6 @@ from typing import Any
 
 import pyarrow as pa
 
-from pipeline.connectors.base import BrokerConnector
 from pipeline.connectors.trading212 import fetch, transform
 from pipeline.connectors.registry import register
 

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pyarrow as pa
 
@@ -14,7 +12,6 @@ from pipeline.connectors.ibkr.client import (
     as_float,
     cash_assets,
     exchange_rates,
-    net_liquidation_value,
     position_conid,
     position_description,
     position_isin,
@@ -22,8 +19,12 @@ from pipeline.connectors.ibkr.client import (
     position_value,
     to_base_currency,
 )
-from pipeline.connectors.transform_utils import DecodedRow, decode_payload, iter_raw_payloads
-from pipeline.crypto import encrypt_float, encrypt_string
+from pipeline.connectors.transform_utils import (
+    DecodedRow,
+    decode_payload,
+    iter_raw_payloads,
+)
+from pipeline.crypto import encrypt_float
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 
 
@@ -53,7 +54,9 @@ def _real_currency(value: object, fallback: str) -> str:
     return currency
 
 
-def transform_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_override: str | None = None) -> pa.Table:
+def transform_snapshot(
+    raw: pa.Table, fernet_key: bytes, base_currency_override: str | None = None
+) -> pa.Table:
     """Transform raw IBKR snapshot data into the normalized IBKR snapshot schema.
 
     Parameters
@@ -117,9 +120,13 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_override:
             account_ids.append(str(acct_id))
             position_types.append("EQUITY")
             labels.append(position_label(position))
-            asset_classes.append(str(position.get("assetClass") or position.get("secType") or "UNKNOWN"))
+            asset_classes.append(
+                str(position.get("assetClass") or position.get("secType") or "UNKNOWN")
+            )
             currencies.append(base_currency)
-            values.append(encrypt_float(to_base_currency(value, real_currency, rates), fernet_key))
+            values.append(
+                encrypt_float(to_base_currency(value, real_currency, rates), fernet_key)
+            )
             value_currencies.append(real_currency)
             conids.append(conid)
             isins.append(position_isin(position))
@@ -164,7 +171,9 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     raise NotImplementedError("IBKR CDC transformation is not yet implemented")
 
 
-def _transform_flex_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_override: str | None = None) -> pa.Table:
+def _transform_flex_snapshot(
+    raw: pa.Table, fernet_key: bytes, base_currency_override: str | None = None
+) -> pa.Table:
     """Transform raw Flex Web Service snapshot data into the normalized schema.
 
     Flex payloads are stored as raw XML (not JSON) with ``source="flex"``.
@@ -196,7 +205,6 @@ def _transform_flex_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_ove
     sources = raw.column("source").to_pylist()
     fetched_ats_col = raw.column("fetched_at").to_pylist()
     payloads = raw.column("payload").to_pylist()
-    account_ids_col = raw.column("account_id").to_pylist()
 
     for i in range(len(sources)):
         if sources[i] != "flex":
@@ -286,7 +294,9 @@ def _transform_flex_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_ove
             asset_class = str(pos.get("assetClass", "") or "STK").upper()
             isin = str(pos.get("isin", "") or "").strip().upper()
             conid = str(pos.get("conid", "") or "")
-            description = str(pos.get("description", "") or pos.get("symbol", "") or label)
+            description = str(
+                pos.get("description", "") or pos.get("symbol", "") or label
+            )
 
             fetched_ats.append(fetched_at)
             account_ids.append(acct_id)
@@ -359,7 +369,11 @@ def _transform_flex_snapshot(raw: pa.Table, fernet_key: bytes, base_currency_ove
                     base_currency = base_currency_override.upper()
 
                 fx_rate = fx_rate_lookup.get((acct_id, currency), 1.0)
-                base_value = cash_balance * fx_rate if currency != base_currency else cash_balance
+                base_value = (
+                    cash_balance * fx_rate
+                    if currency != base_currency
+                    else cash_balance
+                )
 
                 if base_value != 0:
                     fetched_ats.append(fetched_at)

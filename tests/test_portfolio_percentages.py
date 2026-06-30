@@ -8,15 +8,20 @@ import urllib.error
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import portfolio_connectors as connectors
-import portfolio_percentages
+import portfolio_connectors as connectors  # noqa: E402
+import portfolio_percentages  # noqa: E402
 
 
 class FakeIbkrFlexClient:
     """Fake Flex client that returns a fixed XML response."""
 
-    def __init__(self, token: str = "test-token", query_id: str = "1554188",
-                 base_url: str = "https://example.test", timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        token: str = "test-token",
+        query_id: str = "1554188",
+        base_url: str = "https://example.test",
+        timeout: float = 30.0,
+    ) -> None:
         self.token = token
         self.query_id = query_id
         self.base_url = base_url
@@ -25,8 +30,11 @@ class FakeIbkrFlexClient:
     def request_report(self) -> str:
         return "12345678"
 
-    def fetch_report(self, reference_code: str, retries: int = 6, delay: float = 3.0) -> object:
+    def fetch_report(
+        self, reference_code: str, retries: int = 6, delay: float = 3.0
+    ) -> object:
         import xml.etree.ElementTree as ET
+
         return ET.fromstring(FLEX_XML_BASIC)
 
 
@@ -291,7 +299,9 @@ def test_ibkr_flex_uses_fx_rate_and_provides_isin(monkeypatch) -> None:
     import xml.etree.ElementTree as ET
 
     client = FakeIbkrFlexClient()
-    client.fetch_report = lambda ref, retries=6, delay=3.0: ET.fromstring(FLEX_XML_CONID)  # type: ignore[assignment]
+    client.fetch_report = lambda ref, retries=6, delay=3.0: ET.fromstring(
+        FLEX_XML_CONID
+    )  # type: ignore[assignment]
     monkeypatch.setattr(connectors.ibkr, "IbkrFlexClient", lambda **kwargs: client)
 
     holdings = connectors.load_ibkr_holdings(flex_token="test-token")
