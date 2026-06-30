@@ -49,12 +49,13 @@ def allocate_percentages(
         analytics_path = get_storage().analytics_path("portfolio_allocation")
 
     from pipeline.storage import get_storage
+
+    storage_opts = get_storage().storage_options
     get_storage().backend.ensure_parent(analytics_path)
 
     from deltalake import DeltaTable
 
     try:
-        storage_opts = get_storage().storage_options
         dt = DeltaTable(table_path, storage_options=storage_opts)
     except Exception as exc:
         raise FileNotFoundError(
@@ -108,5 +109,5 @@ def allocate_percentages(
         schema=portfolio_allocation_schema,
     )
 
-    write_deltalake(analytics_path, result, mode="overwrite", storage_options=get_storage().storage_options)
+    write_deltalake(analytics_path, result, mode="overwrite", storage_options=storage_opts)
     return result

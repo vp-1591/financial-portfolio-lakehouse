@@ -277,6 +277,8 @@ def consolidate_holdings(
         table_path = get_storage().normalized_path("consolidated_holdings")
 
     from pipeline.storage import get_storage
+
+    storage_opts = get_storage().storage_options
     get_storage().backend.ensure_parent(table_path)
 
     now = datetime.now(timezone.utc)
@@ -324,5 +326,5 @@ def consolidate_holdings(
         schema=consolidated_holdings_schema,
     )
 
-    write_deltalake(table_path, table, mode="overwrite", storage_options=get_storage().storage_options)
+    write_deltalake(table_path, table, mode="overwrite", storage_options=storage_opts)
     return table
