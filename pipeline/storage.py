@@ -199,15 +199,8 @@ def resolve_storage() -> StorageConfig:
 
     if s3_bucket:
         prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
-        # DEBUG: print raw values to diagnose path construction
-        print(f"[storage] S3_BUCKET={s3_bucket!r}")
-        print(f"[storage] S3_PREFIX={prefix!r}")
         backend = S3Backend(bucket=s3_bucket, prefix=prefix)
-        print(f"[storage] backend.bucket={backend.bucket!r}")
         base = f"s3://{backend.bucket}/{prefix}"
-        print(f"[storage] base={base!r}")
-        sample = backend.table_path("raw", "ibkr_snapshot")
-        print(f"[storage] sample path={sample!r}")
         config = StorageConfig(
             data_dir=base,
             raw_dir=f"{base}/raw",
