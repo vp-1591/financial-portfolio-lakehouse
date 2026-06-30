@@ -59,12 +59,13 @@ def extract_holdings(
     from pipeline.storage import get_storage
 
     storage_opts = get_storage().storage_options
-    path = Path(table_path)
-    if not storage_opts and not path.exists():
+    # Do not wrap table_path in Path() — S3 URIs like s3://bucket/...
+    # would be collapsed to s3:/bucket/... by pathlib.
+    if not storage_opts and not Path(table_path).exists():
         return []
 
     try:
-        dt = DeltaTable(str(path), storage_options=storage_opts)
+        dt = DeltaTable(str(table_path), storage_options=storage_opts)
     except Exception:
         return []
 

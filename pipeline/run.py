@@ -161,7 +161,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 }
                 try:
                     raw = connector.fetch_snapshot(**xtb_kwargs)
-                    table_path = str(get_raw_path(connector.name, "snapshot"))
+                    table_path = get_raw_path(connector.name, "snapshot")
                     get_storage().backend.ensure_parent(table_path)
                     count = ingest_raw(raw, table_path, fernet_key)
                     print(f"  {connector.display_name} snapshot: {count} rows written")
@@ -174,7 +174,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
         try:
             raw = connector.fetch_snapshot(**snapshot_kwargs)
-            table_path = str(get_raw_path(connector.name, "snapshot"))
+            table_path = get_raw_path(connector.name, "snapshot")
             get_storage().backend.ensure_parent(table_path)
             count = ingest_raw(raw, table_path, fernet_key)
             print(f"  {connector.display_name} snapshot: {count} rows written")
@@ -189,7 +189,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         # Try CDC
         try:
             raw_cdc = connector.fetch_cdc(**cdc_kwargs)
-            cdc_path = str(get_raw_path(connector.name, "cdc"))
+            cdc_path = get_raw_path(connector.name, "cdc")
             get_storage().backend.ensure_parent(cdc_path)
             count = ingest_raw(raw_cdc, cdc_path, fernet_key)
             print(f"  {connector.display_name} CDC: {count} rows written")
@@ -220,7 +220,7 @@ def cmd_transform(args: argparse.Namespace) -> int:
         for layer in ("snapshot", "cdc"):
             raw_path = get_raw_path(connector.name, layer)
             try:
-                dt = DeltaTable(str(raw_path), storage_options=storage_opts)
+                dt = DeltaTable(raw_path, storage_options=storage_opts)
             except Exception:
                 continue
 
@@ -391,10 +391,14 @@ def print_allocation(table: "pa.Table") -> None:
         )
 
 
-def get_raw_path(connector_name: str, layer: str) -> "Path":
-    """Get the raw data path for a connector and layer."""
+def get_raw_path(connector_name: str, layer: str) -> str:
+    """Get the raw data path for a connector and layer.
+
+    Returns a plain string — S3 URIs must not be wrapped in ``Path()``
+    because ``pathlib.Path`` collapses ``s3://`` to ``s3:/``.
+    """
     config = get_storage()
-    return Path(config.raw_path(f"{connector_name}_{layer}"))
+    return config.raw_path(f"{connector_name}_{layer}")
 
 
 def cmd_full(args: argparse.Namespace) -> int:
