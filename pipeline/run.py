@@ -21,7 +21,6 @@ variables (set by GitHub Actions via GitHub Secrets, or locally via ``.env``).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 
 import argparse
 import os
@@ -32,9 +31,6 @@ from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import get_config, inject_secrets, is_enabled, parse_bool
 from pipeline.storage import get_storage
-
-if TYPE_CHECKING:
-    import pyarrow as pa
 
 
 def parse_fx_rate(value: str) -> tuple[str, float]:
@@ -353,8 +349,7 @@ def cmd_allocate(args: argparse.Namespace) -> int:
                         isin_overrides[ticker] = isin
 
     try:
-        result = allocate_percentages(fernet_key=fernet_key)
-        print_allocation(result)
+        allocate_percentages(fernet_key=fernet_key)
         return 0
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -362,30 +357,6 @@ def cmd_allocate(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-
-
-def print_allocation(table: pa.Table) -> None:
-    """Print portfolio allocation table in the same format as the old CLI."""
-    print(
-        f"{'Ticker':<12} {'%':>8} {'Broker':<12} "
-        f"{'Identifier':<20} {'Ccy':<4} {'Description':<40}"
-    )
-    print("-" * 104)
-    for i in range(table.num_rows):
-        ticker = table.column("ticker")[i].as_py()
-        percentage = table.column("percentage")[i].as_py()
-        broker = table.column("broker")[i].as_py()
-        identifier = table.column("identifier")[i].as_py()
-        security_currency = table.column("security_currency")[i].as_py()
-        description = table.column("description")[i].as_py()
-        print(
-            f"{ticker[:12]:<12} "
-            f"{percentage:>7.2f}% "
-            f"{broker:<12} "
-            f"{identifier[:20]:<20} "
-            f"{security_currency[:4]:<4} "
-            f"{description[:40]:<40}"
-        )
 
 
 def get_raw_path(connector_name: str, layer: str) -> str:
