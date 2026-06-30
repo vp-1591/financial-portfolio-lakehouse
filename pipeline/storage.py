@@ -90,6 +90,12 @@ class S3Backend:
     """
 
     def __init__(self, bucket: str, prefix: str = S3_DEFAULT_PREFIX) -> None:
+        # Strip s3:// prefix if present — the bucket name should be just the
+        # bucket, not a full URI.
+        if bucket.startswith("s3://"):
+            bucket = bucket[5:]
+        elif bucket.startswith("s3a://"):
+            bucket = bucket[6:]
         self.bucket = bucket
         self.prefix = prefix.rstrip("/")
 
@@ -194,7 +200,7 @@ def resolve_storage() -> StorageConfig:
     if s3_bucket:
         prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
         backend = S3Backend(bucket=s3_bucket, prefix=prefix)
-        base = f"s3://{s3_bucket}/{prefix}"
+        base = f"s3://{backend.bucket}/{prefix}"
         config = StorageConfig(
             data_dir=base,
             raw_dir=f"{base}/raw",

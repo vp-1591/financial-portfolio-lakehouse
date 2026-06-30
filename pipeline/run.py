@@ -181,12 +181,10 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         except NotImplementedError:
             print(f"  {connector.display_name} snapshot: not implemented")
         except Exception as exc:
-            import traceback
             print(
                 f"  Error fetching {connector.display_name} snapshot: {exc}",
                 file=sys.stderr,
             )
-            traceback.print_exc()
 
         # Try CDC
         try:
@@ -203,7 +201,6 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 f"  Error fetching {connector.display_name} CDC: {exc}",
                 file=sys.stderr,
             )
-            traceback.print_exc()
 
     return 0
 
