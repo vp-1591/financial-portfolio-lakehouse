@@ -14,6 +14,7 @@ from pipeline.secrets import (
     get_secret,
     inject_secrets,
     is_enabled,
+    parse_bool,
 )
 
 
@@ -141,3 +142,27 @@ class TestIsEnabled:
         """Empty string (var set but empty) means enabled."""
         monkeypatch.setenv("IBKR_ENABLED", "")
         assert is_enabled("IBKR_ENABLED") is True
+
+
+class TestParseBool:
+    """Test parse_bool() reads boolean env vars with explicit default."""
+
+    def test_default_false_when_unset(self, monkeypatch):
+        """Returns False when env var is not set and default is False."""
+        monkeypatch.delenv("MY_FLAG", raising=False)
+        assert parse_bool("MY_FLAG") is False
+
+    def test_default_true_when_unset(self, monkeypatch):
+        """Returns True when env var is not set and default is True."""
+        monkeypatch.delenv("MY_FLAG", raising=False)
+        assert parse_bool("MY_FLAG", default=True) is True
+
+    def test_true_values(self, monkeypatch):
+        for val in ("true", "True", "TRUE", "1", "yes", "Yes"):
+            monkeypatch.setenv("MY_FLAG", val)
+            assert parse_bool("MY_FLAG") is True, f"Failed for {val!r}"
+
+    def test_false_values(self, monkeypatch):
+        for val in ("false", "False", "0", "no", "random"):
+            monkeypatch.setenv("MY_FLAG", val)
+            assert parse_bool("MY_FLAG") is False, f"Failed for {val!r}"

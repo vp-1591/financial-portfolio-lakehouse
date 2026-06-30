@@ -27,9 +27,10 @@ import sys
 from pathlib import Path
 
 from pipeline.connectors.registry import all, get
-from pipeline.crypto import generate_key, load_key
-from pipeline.secrets import get_config, inject_secrets, is_enabled
-from pipeline.storage import S3Backend, get_storage
+from pipeline.crypto import load_key
+from pipeline.keygen import main as keygen_main
+from pipeline.secrets import get_config, inject_secrets, is_enabled, parse_bool
+from pipeline.storage import get_storage
 
 
 def parse_fx_rate(value: str) -> tuple[str, float]:
@@ -63,21 +64,7 @@ def parse_isin_override(value: str) -> tuple[str, str]:
 
 def cmd_keygen(args: argparse.Namespace) -> int:
     """Generate a Fernet encryption key."""
-    config = get_storage()
-    if isinstance(config.backend, S3Backend):
-        print("In S3 mode, set the PORTFOLIO_ENCRYPTION_KEY environment variable.")
-        print(
-            "Example: export PORTFOLIO_ENCRYPTION_KEY=$(python -c "
-            "'from pipeline.crypto import generate_key; print(generate_key().decode())')"
-        )
-        return 0
-    Path(config.secrets_dir).mkdir(parents=True, exist_ok=True)
-    if Path(config.encryption_key_file).exists():
-        print(f"Encryption key already exists at {config.encryption_key_file}")
-        return 0
-    key = generate_key()
-    Path(config.encryption_key_file).write_bytes(key)
-    print(f"Encryption key written to {config.encryption_key_file}")
+    keygen_main()
     return 0
 
 
@@ -120,11 +107,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                         "IBKR_BASE_URL", "https://localhost:5000/v1/api"
                     ),
                     "account": get_config("IBKR_ACCOUNT"),
-                    "verify_tls": get_config("IBKR_VERIFY_TLS", "false").lower() == "true",
-                    "skip_auth_check": get_config("IBKR_SKIP_AUTH_CHECK", "false").lower() == "true",
-                    "require_brokerage_session": get_config(
-                        "IBKR_REQUIRE_BROKERAGE_SESSION", "false"
-                    ).lower() == "true",
+                    "verify_tls": parse_bool("IBKR_VERIFY_TLS"),
+                    "skip_auth_check": parse_bool("IBKR_SKIP_AUTH_CHECK"),
+                    "require_brokerage_session": parse_bool("IBKR_REQUIRE_BROKERAGE_SESSION"),
                 }
 
         elif connector.name == "trading212":
@@ -133,7 +118,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 print(f"Skipping {connector.display_name}: T212_API_KEY not set")
                 continue
             t212_api_secret = os.environ.get("T212_API_SECRET", "")
-            demo = get_config("T212_DEMO", "false").lower() == "true"
+            demo = parse_bool("T212_DEMO")
             default_base = (
                 "https://demo.trading212.com/api/v0"
                 if demo
@@ -147,7 +132,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 "base_url": base_url,
                 "user_agent": get_config("T212_USER_AGENT") or "Mozilla/5.0",
             }
-            snapshot_kwargs = {**common, "include_metadata": get_config("T212_SKIP_METADATA", "false").lower() != "true"}
+            snapshot_kwargs = {**common, "include_metadata": not parse_bool("T212_SKIP_METADATA")}
             cdc_kwargs = common
 
         elif connector.name == "xtb":
@@ -196,7 +181,6 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         except NotImplementedError:
             print(f"  {connector.display_name} CDC: not implemented")
         except Exception as exc:
-            import traceback
             print(
                 f"  Error fetching {connector.display_name} CDC: {exc}",
                 file=sys.stderr,

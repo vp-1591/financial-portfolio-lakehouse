@@ -69,4 +69,9 @@ jobs:
 
       - name: Run pipeline
         run: |
-          python -m pipeline.run ${{ inputs.command }} --target-currency ${{ inputs.target-currency }}
+          CMD="${{ inputs.command }}"
+          if [[ "$CMD" == "consolidate" || "$CMD" == "allocate" || "$CMD" == "full" ]]; then
+            python -m pipeline.run "$CMD" --target-currency "${{ inputs.target-currency }}"
+          else
+            python -m pipeline.run "$CMD"
+          fi

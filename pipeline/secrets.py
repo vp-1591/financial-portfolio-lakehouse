@@ -18,7 +18,7 @@ a connector.
 
 Usage::
 
-    from pipeline.secrets import inject_secrets, get_secret, get_config, is_enabled
+    from pipeline.secrets import inject_secrets, get_secret, get_config, is_enabled, parse_bool
 
     inject_secrets()           # call once at startup (loads .env, validates)
     token = get_secret("IBKR_FLEX_TOKEN")  # returns str | None
@@ -103,3 +103,16 @@ def is_enabled(name: str) -> bool:
     """
     value = os.environ.get(name, "").lower()
     return value not in ("0", "false", "no")
+
+
+def parse_bool(name: str, default: bool = False) -> bool:
+    """Parse a boolean env var with an explicit default.
+
+    Returns *default* if the env var is not set.  When set, interprets
+    ``true``, ``1``, and ``yes`` as ``True`` (case-insensitive) and
+    everything else as ``False``.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "yes")
