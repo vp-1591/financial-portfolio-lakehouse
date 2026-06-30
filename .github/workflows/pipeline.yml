@@ -67,6 +67,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[pipeline]"
 
+      - name: Diagnose S3 support
+        run: |
+          python -c "
+          from pipeline.storage import resolve_storage
+          cfg = resolve_storage()
+          print('Backend:', type(cfg.backend).__name__)
+          opts = cfg.storage_options or {}
+          print('storage_options keys:', list(opts.keys()) if opts else 'None')
+          import deltalake
+          print('deltalake version:', deltalake.__version__)
+          # Test if deltalake can handle S3 URLs with storage_options
+          from deltalake import DeltaTable
+          try:
+              DeltaTable('s3://${{ secrets.S3_BUCKET }}/pipeline/raw/ibkr_snapshot', storage_options=opts)
+              print('S3 URL: recognized (table not found is expected)')
+          except FileNotFoundError:
+              print('S3 URL: recognized (table does not exist yet, which is expected)')
+          except Exception as e:
+              print(f'S3 URL error: {type(e).__name__}: {e}')
+          "
+
       - name: Run pipeline
         run: |
           python -m pipeline.run ${{ inputs.command }} --target-currency ${{ inputs.target-currency }}
