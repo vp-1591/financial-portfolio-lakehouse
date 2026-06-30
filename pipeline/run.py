@@ -416,17 +416,20 @@ def main() -> int:
     # Load .env and validate available secrets.
     inject_secrets()
 
+    # Shared arguments available to all subcommands via parents.
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument(
+        "--target-currency",
+        default="EUR",
+        help="Target currency for consolidation/allocation (default: EUR)",
+    )
+
     parser = argparse.ArgumentParser(
         description="Investment portfolio data pipeline",
         epilog="Connectors are enabled by default. Set IBKR_ENABLED=0, "
         "T212_ENABLED=0, or XTB_ENABLED=0 to disable. "
         "Secrets come from environment variables "
         "(GitHub Secrets in CI, .env file locally).",
-    )
-    parser.add_argument(
-        "--target-currency",
-        default="EUR",
-        help="Target currency for consolidation/allocation (default: EUR)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -450,6 +453,7 @@ def main() -> int:
     # consolidate
     consolidate_parser = subparsers.add_parser(
         "consolidate",
+        parents=[common_parser],
         help="Consolidate normalized snapshots into holdings table",
     )
     consolidate_parser.add_argument(
@@ -476,7 +480,9 @@ def main() -> int:
 
     # allocate
     allocate_parser = subparsers.add_parser(
-        "allocate", help="Calculate portfolio allocation"
+        "allocate",
+        parents=[common_parser],
+        help="Calculate portfolio allocation",
     )
     allocate_parser.add_argument(
         "--fx-rate",
@@ -501,7 +507,11 @@ def main() -> int:
     )
 
     # full
-    full_parser = subparsers.add_parser("full", help="Run full pipeline")
+    full_parser = subparsers.add_parser(
+        "full",
+        parents=[common_parser],
+        help="Run full pipeline",
+    )
     full_parser.add_argument(
         "--xtb-file",
         action="append",
