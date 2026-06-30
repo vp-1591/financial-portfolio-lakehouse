@@ -112,12 +112,28 @@ class S3Backend:
 
     @property
     def storage_options(self) -> dict[str, str]:
-        """AWS credentials for deltalake S3 operations."""
-        return {
-            "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
-            "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-            "AWS_REGION": os.environ.get("AWS_REGION", "eu-west-1"),
-        }
+        """AWS credentials for deltalake S3 operations.
+
+        Keys use lowercase convention required by the ``object_store``
+        Rust crate (e.g. ``aws_access_key_id``).  Uppercase keys like
+        ``AWS_ACCESS_KEY_ID`` are silently ignored by ``object_store``,
+        causing S3 authentication to fall back to EC2 instance metadata
+        and fail on non-EC2 machines.
+
+        Empty credentials are omitted so that ``object_store`` can fall
+        back to its own credential chain (environment variables, IAM
+        role, etc.) rather than overriding with an empty string.
+        """
+        opts: dict[str, str] = {}
+        key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
+        secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        region = os.environ.get("AWS_REGION", "eu-west-1")
+        if key_id:
+            opts["aws_access_key_id"] = key_id
+        if secret:
+            opts["aws_secret_access_key"] = secret
+        opts["aws_region"] = region
+        return opts
 
 
 # ---------------------------------------------------------------------------
