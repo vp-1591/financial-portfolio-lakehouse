@@ -37,8 +37,11 @@ conn.execute(f"CREATE SECRET (TYPE S3, KEY_ID '{...}', SECRET '{...}', REGION '{
 - **Backward compatible**: The `CREATE SECRET` approach also propagates to the `s3_*` settings, so httpfs-based queries continue to work.
 - **Added tests**: `tests/test_query_s3.py` verifies secret creation, region handling, default region, and credential propagation.
 
+- **Added `list_tables()` and `KNOWN_TABLES`**: A registry of all 14 known Delta tables organized by medallion layer, and a `list_tables()` helper that returns each table's layer, name, path, and existence status. `list_tables(existing_only=True)` filters to only tables that actually exist on disk/S3, solving the discoverability problem.
+
 ## Validation
 
-- All 241 existing tests pass.
-- 4 new tests in `test_query_s3.py` verify `CREATE SECRET` behavior.
+- All 252 tests pass (241 existing + 11 new).
+- 4 tests in `test_query_s3.py` verify `CREATE SECRET` behavior.
+- 11 tests in `test_query_list_tables.py` verify `KNOWN_TABLES` and `list_tables()`.
 - `ruff check` and `ruff format` pass cleanly.
