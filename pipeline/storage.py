@@ -138,11 +138,11 @@ class StorageConfig:
     :meth:`analytics_path`) instead of constructing paths manually.
     """
 
-    data_dir: str          # local path or s3:// URI prefix
-    raw_dir: str           # local path or s3:// URI
+    data_dir: str  # local path or s3:// URI prefix
+    raw_dir: str  # local path or s3:// URI
     normalized_dir: str
     analytics_dir: str
-    secrets_dir: str       # always local (only used by LocalBackend)
+    secrets_dir: str  # always local (only used by LocalBackend)
     encryption_key_file: str  # always local (or env-var sourced)
     backend: StorageBackend = field(default=None)  # type: ignore[assignment]
 

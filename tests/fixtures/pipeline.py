@@ -37,12 +37,18 @@ def setup_pipeline_env(
     fernet_key = generate_key()
     data = tmp_path / "data"
     for subdir in [
-        "raw/ibkr_snapshot", "raw/ibkr_cdc",
-        "raw/trading212_snapshot", "raw/trading212_cdc",
-        "raw/xtb_snapshot", "raw/xtb_cdc",
-        "normalized/ibkr_snapshot", "normalized/ibkr_cdc",
-        "normalized/trading212_snapshot", "normalized/trading212_cdc",
-        "normalized/xtb_snapshot", "normalized/xtb_cdc",
+        "raw/ibkr_snapshot",
+        "raw/ibkr_cdc",
+        "raw/trading212_snapshot",
+        "raw/trading212_cdc",
+        "raw/xtb_snapshot",
+        "raw/xtb_cdc",
+        "normalized/ibkr_snapshot",
+        "normalized/ibkr_cdc",
+        "normalized/trading212_snapshot",
+        "normalized/trading212_cdc",
+        "normalized/xtb_snapshot",
+        "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
         "analytics/portfolio_allocation",
     ]:

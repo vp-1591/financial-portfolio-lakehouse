@@ -150,10 +150,14 @@ def value_below_label(rows: list[dict[str, Any]], label: str) -> Any:
 
 
 def header_map(row: dict[str, Any]) -> dict[str, str]:
-    return {normalize_header(value): column for column, value in row.items() if value != ""}
+    return {
+        normalize_header(value): column for column, value in row.items() if value != ""
+    }
 
 
-def find_open_positions_header(rows: list[dict[str, Any]]) -> tuple[int, dict[str, str]]:
+def find_open_positions_header(
+    rows: list[dict[str, Any]],
+) -> tuple[int, dict[str, str]]:
     for index, row in enumerate(rows):
         headers = header_map(row)
         if {"position", "symbol", "type", "volume"}.issubset(headers):
@@ -228,7 +232,9 @@ def cash_operations_total(rows: list[dict[str, Any]]) -> float:
     return 0.0
 
 
-def load_assets(report_path: Path, account_id_override: str | None = None) -> tuple[list[Asset], float]:
+def load_assets(
+    report_path: Path, account_id_override: str | None = None
+) -> tuple[list[Asset], float]:
     if not report_path.is_absolute():
         raise XtbError("--file must be an absolute path to the XTB Excel report.")
     if not report_path.exists():
@@ -255,7 +261,9 @@ def load_assets(report_path: Path, account_id_override: str | None = None) -> tu
     assets = load_open_position_assets(open_rows, account_id_value, currency)
 
     balance = value_below_label(open_rows, "Balance")
-    cash_balance = as_float(balance) if balance is not None else cash_operations_total(cash_rows)
+    cash_balance = (
+        as_float(balance) if balance is not None else cash_operations_total(cash_rows)
+    )
     if cash_balance:
         assets.append(
             Asset(

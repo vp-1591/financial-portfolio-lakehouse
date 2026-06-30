@@ -34,7 +34,6 @@ def allocate_percentages(
         Path to write the ``portfolio_allocation`` Delta table.
         Defaults to ``ANALYTICS_PORTFOLIO_ALLOCATION``.
     """
-    from pipeline.normalized.models import consolidated_holdings_schema
 
     if table_path is None:
         from pipeline.storage import get_storage
@@ -46,6 +45,7 @@ def allocate_percentages(
 
     if analytics_path is None:
         from pipeline.storage import get_storage
+
         analytics_path = get_storage().analytics_path("portfolio_allocation")
 
     from pipeline.storage import get_storage
@@ -69,10 +69,12 @@ def allocate_percentages(
 
     # Decrypt value column
     df = df.with_columns(
-        pl.col("value").map_elements(
+        pl.col("value")
+        .map_elements(
             lambda v: decrypt_float(v, fernet_key),
             return_dtype=pl.Float64,
-        ).alias("value_decrypted")
+        )
+        .alias("value_decrypted")
     )
 
     # Calculate percentages
@@ -85,12 +87,18 @@ def allocate_percentages(
     )
 
     # Aggregate by ticker + broker (sum duplicates)
-    agg = df.group_by(["ticker", "broker"]).agg([
-        pl.col("percentage").sum(),
-        pl.col("identifier").first(),
-        pl.col("security_currency").first(),
-        pl.col("description").first(),
-    ]).sort("percentage", descending=True)
+    agg = (
+        df.group_by(["ticker", "broker"])
+        .agg(
+            [
+                pl.col("percentage").sum(),
+                pl.col("identifier").first(),
+                pl.col("security_currency").first(),
+                pl.col("description").first(),
+            ]
+        )
+        .sort("percentage", descending=True)
+    )
 
     now = datetime.now(timezone.utc)
 
@@ -109,5 +117,7 @@ def allocate_percentages(
         schema=portfolio_allocation_schema,
     )
 
-    write_deltalake(analytics_path, result, mode="overwrite", storage_options=storage_opts)
+    write_deltalake(
+        analytics_path, result, mode="overwrite", storage_options=storage_opts
+    )
     return result

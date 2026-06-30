@@ -11,14 +11,13 @@ Covers bugs found during end-to-end runs:
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
 
-from pipeline.crypto import decrypt, encrypt, generate_key
+from pipeline.crypto import encrypt, generate_key
 from pipeline.raw.ingest import encrypt_raw_payloads
 from pipeline.raw.models import RAW_SCHEMA
 
@@ -189,7 +188,7 @@ class TestT212BasicAuth:
         header = basic_auth_header("mykey", "mysecret")
         # Must start with "Basic " — never "Bearer " or a raw key
         assert header.startswith("Basic "), f"Expected Basic auth, got: {header}"
-        decoded = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+        decoded = base64.b64decode(header[len("Basic ") :]).decode("utf-8")
         assert decoded == "mykey:mysecret", f"Expected key:secret, got: {decoded}"
 
     @patch("urllib.request.urlopen")
@@ -236,8 +235,14 @@ class TestTransformDecryptsPayloads:
 
         positions_data = {
             "positions": [
-                {"label": "TEST", "name": "Test Asset", "asset_class": "EQUITY",
-                 "currency": "USD", "value": 100.0, "isin": ""},
+                {
+                    "label": "TEST",
+                    "name": "Test Asset",
+                    "asset_class": "EQUITY",
+                    "currency": "USD",
+                    "value": 100.0,
+                    "isin": "",
+                },
             ],
             "net_worth": 100.0,
         }
@@ -253,19 +258,23 @@ class TestTransformDecryptsPayloads:
                 "account_id": ["XTB"],
                 "source_file": ["test.xlsx"],
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
         result = transform_snapshot(raw, key)
-        assert result.num_rows >= 1, "XTB transform should produce rows from encrypted payload"
+        assert result.num_rows >= 1, (
+            "XTB transform should produce rows from encrypted payload"
+        )
 
     def test_t212_transform_decrypts_encrypted_payload(self) -> None:
         """T212 transform_snapshot must decrypt payloads from raw Delta tables."""
@@ -291,19 +300,23 @@ class TestTransformDecryptsPayloads:
                 "account_id": ["T212"] * 2,
                 "source_file": ["", ""],
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
         result = transform_snapshot(raw, key)
-        assert result.num_rows >= 1, "T212 transform should produce rows from encrypted payload"
+        assert result.num_rows >= 1, (
+            "T212 transform should produce rows from encrypted payload"
+        )
 
 
 class TestDirectoryCreation:
@@ -315,7 +328,6 @@ class TestDirectoryCreation:
     """
 
     def test_ingest_raw_creates_parent_dirs(self, tmp_path: Path) -> None:
-        from deltalake import write_deltalake
 
         from pipeline.raw.ingest import ingest_raw
 
@@ -355,14 +367,11 @@ class TestDirectoryCreation:
             Holding("TestBroker", "AAPL", "USD", 100.0),
         ]
 
-        result = consolidate_holdings(
-            holdings, key, converter, table_path=table_path
-        )
+        result = consolidate_holdings(holdings, key, converter, table_path=table_path)
         assert result.num_rows == 1
         assert Path(table_path).exists()
 
     def test_allocate_creates_parent_dirs(self, tmp_path: Path) -> None:
-        from deltalake import write_deltalake
 
         from pipeline.analytics.allocation import allocate_percentages
 
@@ -398,13 +407,17 @@ class TestAllocateMissingTable:
     Previously this raised a low-level Delta error with no context.
     """
 
-    def test_allocate_raises_filenotfound_for_missing_table(self, tmp_path: Path) -> None:
+    def test_allocate_raises_filenotfound_for_missing_table(
+        self, tmp_path: Path
+    ) -> None:
         from pipeline.analytics.allocation import allocate_percentages
 
         key = generate_key()
         missing_path = str(tmp_path / "nonexistent" / "consolidated_holdings")
 
-        with pytest.raises(FileNotFoundError, match="Consolidated holdings table not found"):
+        with pytest.raises(
+            FileNotFoundError, match="Consolidated holdings table not found"
+        ):
             allocate_percentages(
                 table_path=missing_path,
                 fernet_key=key,

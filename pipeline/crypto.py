@@ -5,7 +5,6 @@ This is the only module that imports from ``cryptography``.
 
 from __future__ import annotations
 
-import base64
 import os
 from pathlib import Path
 

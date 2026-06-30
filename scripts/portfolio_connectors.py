@@ -201,7 +201,9 @@ def load_xtb_holdings(report_paths: Iterable[Path]) -> list[Holding]:
                 asset.currency,
                 asset.value,
                 identifier=format_identifier("ISIN", asset.isin),
-                security_currency=asset.currency if asset.label.startswith("CASH ") else "",
+                security_currency=asset.currency
+                if asset.label.startswith("CASH ")
+                else "",
                 description=asset.name,
             )
             for asset in assets
@@ -248,7 +250,6 @@ def format_identifier(kind: str, value: str) -> str:
     return f"{kind}:{value}" if value else ""
 
 
-
 def normalize_trading212_ticker(ticker: str) -> str:
     if ticker.startswith("CASH "):
         return ticker
@@ -273,7 +274,6 @@ def normalize_trading212_ticker(ticker: str) -> str:
 
 def normalize_isin_lookup_key(ticker: str) -> str:
     return ticker.strip().upper()
-
 
 
 def aggregate_percentages(
@@ -307,7 +307,9 @@ def aggregate_percentages(
 
     net_worth = sum(totals.values())
     if net_worth == 0:
-        raise PortfolioConnectorError("Net worth is zero; cannot calculate percentages.")
+        raise PortfolioConnectorError(
+            "Net worth is zero; cannot calculate percentages."
+        )
 
     rows = [
         PortfolioRow(

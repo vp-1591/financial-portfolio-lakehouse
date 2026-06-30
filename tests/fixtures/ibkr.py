@@ -53,7 +53,11 @@ def ibkr_raw_positions(
         ]
     if ledger is None:
         ledger = {
-            "BASE": {"currency": "EUR", "netliquidationvalue": 10000.0, "exchangerate": 1.0},
+            "BASE": {
+                "currency": "EUR",
+                "netliquidationvalue": 10000.0,
+                "exchangerate": 1.0,
+            },
             "EUR": {"currency": "EUR", "cashbalance": 2000.0, "exchangerate": 1.0},
             "USD": {"currency": "USD", "cashbalance": 500.0, "exchangerate": 0.9},
         }

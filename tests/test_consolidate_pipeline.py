@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from deltalake import DeltaTable, write_deltalake
+from deltalake import write_deltalake
 
 from pipeline.crypto import decrypt_float, generate_key
 from pipeline.normalized.consolidate import (
@@ -29,12 +29,18 @@ def _setup_storage(tmp_path: Path) -> None:
     """Inject a tmp_path-based StorageConfig for all consolidate tests."""
     data = tmp_path / "data"
     for subdir in [
-        "raw/ibkr_snapshot", "raw/ibkr_cdc",
-        "raw/trading212_snapshot", "raw/trading212_cdc",
-        "raw/xtb_snapshot", "raw/xtb_cdc",
-        "normalized/ibkr_snapshot", "normalized/ibkr_cdc",
-        "normalized/trading212_snapshot", "normalized/trading212_cdc",
-        "normalized/xtb_snapshot", "normalized/xtb_cdc",
+        "raw/ibkr_snapshot",
+        "raw/ibkr_cdc",
+        "raw/trading212_snapshot",
+        "raw/trading212_cdc",
+        "raw/xtb_snapshot",
+        "raw/xtb_cdc",
+        "normalized/ibkr_snapshot",
+        "normalized/ibkr_cdc",
+        "normalized/trading212_snapshot",
+        "normalized/trading212_cdc",
+        "normalized/xtb_snapshot",
+        "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
         "analytics/portfolio_allocation",
     ]:
@@ -127,6 +133,7 @@ class TestConsolidateMultiBroker:
         assert result.num_rows >= 6
         # Verify the output has the right schema
         from pipeline.normalized.models import consolidated_holdings_schema
+
         assert result.schema.equals(consolidated_holdings_schema)
 
     def test_consolidate_values_are_encrypted(self, tmp_path: Path):

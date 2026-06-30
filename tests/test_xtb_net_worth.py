@@ -9,15 +9,13 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import xtb_net_worth as xtb
+import xtb_net_worth as xtb  # noqa: E402
 
 
 def cell(ref: str, value: object) -> str:
     if isinstance(value, (int, float)):
         return f'<c r="{ref}"><v>{value}</v></c>'
-    return (
-        f'<c r="{ref}" t="inlineStr"><is><t>{value}</t></is></c>'
-    )
+    return f'<c r="{ref}" t="inlineStr"><is><t>{value}</t></is></c>'
 
 
 def row(index: int, values: dict[str, object]) -> str:
@@ -29,7 +27,7 @@ def sheet(rows: list[str]) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        f'<sheetData>{"".join(rows)}</sheetData>'
+        f"<sheetData>{''.join(rows)}</sheetData>"
         "</worksheet>"
     )
 

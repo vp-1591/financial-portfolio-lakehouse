@@ -4,28 +4,24 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pyarrow as pa
 import pytest
 
 from pipeline.connectors.ibkr.client import (
-    IbkrClient,
     IbkrError,
     account_id,
     as_float,
     cash_assets,
-    exchange_rates,
     net_liquidation_value,
     position_conid,
     position_description,
     position_isin,
     position_label,
-    position_value,
     to_base_currency,
 )
 from pipeline.connectors.ibkr import transform
-from pipeline.crypto import decrypt, decrypt_float, encrypt, generate_key
+from pipeline.crypto import decrypt_float, encrypt, generate_key
 
 
 class TestClientParsing:
@@ -36,8 +32,16 @@ class TestClientParsing:
 
     def test_net_liquidation_value_without_base_converts_each_currency(self) -> None:
         ledger = {
-            "USD": {"currency": "USD", "netliquidationvalue": 50.0, "exchangerate": 1.0},
-            "EUR": {"currency": "EUR", "netliquidationvalue": 100.0, "exchangerate": 1.2},
+            "USD": {
+                "currency": "USD",
+                "netliquidationvalue": 50.0,
+                "exchangerate": 1.0,
+            },
+            "EUR": {
+                "currency": "EUR",
+                "netliquidationvalue": 100.0,
+                "exchangerate": 1.2,
+            },
         }
         assert net_liquidation_value(ledger) == 170.0
 
@@ -121,7 +125,9 @@ class TestTransformSnapshot:
         import hashlib
 
         # Hash the original (unencrypted) payloads for dedup
-        positions_hash = hashlib.sha256(json.dumps(positions).encode("utf-8")).hexdigest()
+        positions_hash = hashlib.sha256(
+            json.dumps(positions).encode("utf-8")
+        ).hexdigest()
         ledger_hash = hashlib.sha256(json.dumps(ledger).encode("utf-8")).hexdigest()
 
         return pa.table(
@@ -137,15 +143,17 @@ class TestTransformSnapshot:
                 "account_id": [account_id, account_id],
                 "source_file": ["", ""],
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
     def test_transform_produces_equity_and_cash_rows(self, fernet_key: bytes) -> None:
@@ -160,7 +168,11 @@ class TestTransformSnapshot:
             }
         ]
         ledger = {
-            "BASE": {"currency": "USD", "netliquidationvalue": 240.0, "exchangerate": 1.0},
+            "BASE": {
+                "currency": "USD",
+                "netliquidationvalue": 240.0,
+                "exchangerate": 1.0,
+            },
             "EUR": {"currency": "EUR", "cashbalance": 100.0, "exchangerate": 1.2},
         }
 
@@ -177,7 +189,9 @@ class TestTransformSnapshot:
         values = result.column("value").to_pylist()
         decrypted_values = [decrypt_float(v, fernet_key) for v in values]
         assert any(v == pytest.approx(120.0) for v in decrypted_values)  # EUR ETF * 1.2
-        assert any(v == pytest.approx(120.0) for v in decrypted_values)  # CASH EUR * 1.2
+        assert any(
+            v == pytest.approx(120.0) for v in decrypted_values
+        )  # CASH EUR * 1.2
 
     def test_transform_preserves_isin(self, fernet_key: bytes) -> None:
         positions = [
@@ -190,7 +204,11 @@ class TestTransformSnapshot:
             }
         ]
         ledger = {
-            "BASE": {"currency": "USD", "netliquidationvalue": 50.0, "exchangerate": 1.0},
+            "BASE": {
+                "currency": "USD",
+                "netliquidationvalue": 50.0,
+                "exchangerate": 1.0,
+            },
             "USD": {"currency": "USD", "cashbalance": 0.0, "exchangerate": 1.0},
         }
 
@@ -210,7 +228,11 @@ class TestTransformSnapshot:
             }
         ]
         ledger = {
-            "BASE": {"currency": "USD", "netliquidationvalue": 100.0, "exchangerate": 1.0},
+            "BASE": {
+                "currency": "USD",
+                "netliquidationvalue": 100.0,
+                "exchangerate": 1.0,
+            },
             "USD": {"currency": "USD", "cashbalance": 0.0, "exchangerate": 1.0},
         }
 
@@ -238,14 +260,14 @@ class TestFlexFetchSnapshot:
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U123" currency="USD"/>'
-            '<OpenPositions>'
+            "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000" '
             'assetClass="STK" conid="265598" isin="US0378331005" '
             'description="Apple Inc" fxRateToBase="1.0"/>'
-            '</OpenPositions>'
-            '</FlexStatement>'
-            '</FlexStatements>'
-            '</FlexQueryResponse>'
+            "</OpenPositions>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
         )
         root = ET.fromstring(xml_str)
 
@@ -267,7 +289,9 @@ class TestFlexFetchSnapshot:
                 timeout=30.0,
             )
             mock_instance.request_report.assert_called_once()
-            mock_instance.fetch_report.assert_called_once_with("12345", retries=6, delay=3.0)
+            mock_instance.fetch_report.assert_called_once_with(
+                "12345", retries=6, delay=3.0
+            )
 
     def test_fetch_snapshot_via_flex_passes_query_id_and_base_url(self) -> None:
         """Custom query_id and base_url should be forwarded to IbkrFlexClient."""
@@ -279,7 +303,7 @@ class TestFlexFetchSnapshot:
         xml_str = (
             '<FlexQueryResponse queryName="test" type="AF">'
             '<FlexStatements count="0"/>'
-            '</FlexQueryResponse>'
+            "</FlexQueryResponse>"
         )
         root = ET.fromstring(xml_str)
 
@@ -304,7 +328,9 @@ class TestFlexFetchSnapshot:
                 base_url="https://custom.example.com/api",
                 timeout=60.0,
             )
-            mock_instance.fetch_report.assert_called_once_with("99999", retries=3, delay=5.0)
+            mock_instance.fetch_report.assert_called_once_with(
+                "99999", retries=3, delay=5.0
+            )
 
 
 class TestFlexTransformSnapshot:
@@ -343,15 +369,17 @@ class TestFlexTransformSnapshot:
                 "account_id": [account_id],
                 "source_file": [""],
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
     def test_transform_flex_produces_equity_and_cash(self, fernet_key: bytes) -> None:
@@ -361,17 +389,17 @@ class TestFlexTransformSnapshot:
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U123" currency="USD" cashBalance="500.0"/>'
-            '<OpenPositions>'
+            "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000.0" '
             'assetClass="STK" conid="265598" isin="US0378331005" '
             'description="Apple Inc" fxRateToBase="1.0"/>'
-            '</OpenPositions>'
-            '<CashReport>'
+            "</OpenPositions>"
+            "<CashReport>"
             '<CashReportCurrency accountId="U123" currency="USD" endingCash="500.0"/>'
-            '</CashReport>'
-            '</FlexStatement>'
-            '</FlexStatements>'
-            '</FlexQueryResponse>'
+            "</CashReport>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
         )
 
         raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
@@ -389,14 +417,14 @@ class TestFlexTransformSnapshot:
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U456" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U456" currency="EUR"/>'
-            '<OpenPositions>'
+            "<OpenPositions>"
             '<OpenPosition symbol="SAP" currency="EUR" positionValue="5000.0" '
             'assetClass="STK" conid="12345" isin="DE0007164600" '
             'description="SAP SE" fxRateToBase="1.0"/>'
-            '</OpenPositions>'
-            '</FlexStatement>'
-            '</FlexStatements>'
-            '</FlexQueryResponse>'
+            "</OpenPositions>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
         )
 
         raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
@@ -412,13 +440,13 @@ class TestFlexTransformSnapshot:
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U789" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U789" currency="USD"/>'
-            '<OpenPositions>'
+            "<OpenPositions>"
             '<OpenPosition symbol="ZERO" currency="USD" positionValue="0.0" '
             'assetClass="STK" fxRateToBase="1.0"/>'
-            '</OpenPositions>'
-            '</FlexStatement>'
-            '</FlexStatements>'
-            '</FlexQueryResponse>'
+            "</OpenPositions>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
         )
 
         raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
@@ -434,17 +462,19 @@ class TestFlexTransformSnapshot:
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U999" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U999" currency="BASE"/>'
-            '<OpenPositions>'
+            "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="5000.0" '
             'assetClass="STK" fxRateToBase="0.9"/>'
-            '</OpenPositions>'
-            '</FlexStatement>'
-            '</FlexStatements>'
-            '</FlexQueryResponse>'
+            "</OpenPositions>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
         )
 
         raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
-        result = transform._transform_flex_snapshot(raw, fernet_key, base_currency_override="CHF")
+        result = transform._transform_flex_snapshot(
+            raw, fernet_key, base_currency_override="CHF"
+        )
 
         currencies = result.column("currency").to_pylist()
         assert all(c == "CHF" for c in currencies)
@@ -459,7 +489,9 @@ class TestConnectorFlexDispatch:
 
         from pipeline.connectors.registry import get
 
-        with patch("pipeline.connectors.ibkr.fetch.fetch_snapshot_via_flex") as mock_flex:
+        with patch(
+            "pipeline.connectors.ibkr.fetch.fetch_snapshot_via_flex"
+        ) as mock_flex:
             mock_flex.return_value = MagicMock()
             connector = get("ibkr")
 
@@ -498,7 +530,9 @@ class TestConnectorFlexDispatch:
                 account="U123",
             )
 
-    def test_transform_snapshot_dispatches_to_flex_for_flex_source(self, fernet_key: bytes) -> None:
+    def test_transform_snapshot_dispatches_to_flex_for_flex_source(
+        self, fernet_key: bytes
+    ) -> None:
         """IbkrConnector.transform_snapshot should use Flex transform for flex source data."""
         from pipeline.connectors.registry import get
 
@@ -508,13 +542,13 @@ class TestConnectorFlexDispatch:
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U123" currency="USD"/>'
-            '<OpenPositions>'
+            "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000" '
             'assetClass="STK" fxRateToBase="1.0"/>'
-            '</OpenPositions>'
-            '</FlexStatement>'
-            '</FlexStatements>'
-            '</FlexQueryResponse>'
+            "</OpenPositions>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
         )
         from pipeline.crypto import encrypt
         import hashlib
@@ -533,15 +567,17 @@ class TestConnectorFlexDispatch:
                 "account_id": [""],
                 "source_file": [""],
             },
-            schema=pa.schema([
-                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                pa.field("broker", pa.string()),
-                pa.field("source", pa.string()),
-                pa.field("payload", pa.binary()),
-                pa.field("payload_hash", pa.string()),
-                pa.field("account_id", pa.string()),
-                pa.field("source_file", pa.string()),
-            ]),
+            schema=pa.schema(
+                [
+                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                    pa.field("broker", pa.string()),
+                    pa.field("source", pa.string()),
+                    pa.field("payload", pa.binary()),
+                    pa.field("payload_hash", pa.string()),
+                    pa.field("account_id", pa.string()),
+                    pa.field("source_file", pa.string()),
+                ]
+            ),
         )
 
         connector = get("ibkr")
@@ -549,5 +585,3 @@ class TestConnectorFlexDispatch:
 
         assert result.num_rows >= 1
         assert "EQUITY" in result.column("position_type").to_pylist()
-
-

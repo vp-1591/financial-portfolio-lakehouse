@@ -12,9 +12,12 @@ import pytest
 from deltalake import write_deltalake
 
 from pipeline.analytics.allocation import allocate_percentages
-from pipeline.crypto import decrypt_float, generate_key
-from pipeline.normalized.consolidate import CurrencyConverter, Holding, consolidate_holdings
-from pipeline.normalized.models import consolidated_holdings_schema
+from pipeline.crypto import generate_key
+from pipeline.normalized.consolidate import (
+    CurrencyConverter,
+    Holding,
+    consolidate_holdings,
+)
 from pipeline.storage import LocalBackend, StorageConfig, get_storage, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
@@ -43,6 +46,7 @@ def _write_consolidated_holdings(
 
     # Extract and consolidate holdings
     from pipeline.normalized.extract import extract_holdings
+
     all_holdings: list[Holding] = []
     for broker_name in ("ibkr", "trading212", "xtb"):
         snapshot_path = config.normalized_path(f"{broker_name}_snapshot")
@@ -67,12 +71,18 @@ def _setup_storage(tmp_path: Path) -> None:
     """Inject a tmp_path-based StorageConfig for all allocate tests."""
     data = tmp_path / "data"
     for subdir in [
-        "raw/ibkr_snapshot", "raw/ibkr_cdc",
-        "raw/trading212_snapshot", "raw/trading212_cdc",
-        "raw/xtb_snapshot", "raw/xtb_cdc",
-        "normalized/ibkr_snapshot", "normalized/ibkr_cdc",
-        "normalized/trading212_snapshot", "normalized/trading212_cdc",
-        "normalized/xtb_snapshot", "normalized/xtb_cdc",
+        "raw/ibkr_snapshot",
+        "raw/ibkr_cdc",
+        "raw/trading212_snapshot",
+        "raw/trading212_cdc",
+        "raw/xtb_snapshot",
+        "raw/xtb_cdc",
+        "normalized/ibkr_snapshot",
+        "normalized/ibkr_cdc",
+        "normalized/trading212_snapshot",
+        "normalized/trading212_cdc",
+        "normalized/xtb_snapshot",
+        "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
         "analytics/portfolio_allocation",
     ]:
@@ -106,6 +116,7 @@ class TestAllocatePipeline:
         )
 
         from pipeline.analytics.models import portfolio_allocation_schema
+
         assert result.schema.equals(portfolio_allocation_schema)
         assert result.num_rows >= 3  # at least one row per broker
 
@@ -158,6 +169,7 @@ class TestAllocatePipeline:
         )
 
         from deltalake import DeltaTable
+
         dt = DeltaTable(analytics_path)
         read_back = dt.to_pyarrow_table()
         assert read_back.num_rows >= 3

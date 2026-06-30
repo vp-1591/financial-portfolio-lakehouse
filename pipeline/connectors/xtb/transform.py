@@ -8,7 +8,10 @@ import pyarrow as pa
 
 from pipeline.connectors.transform_utils import iter_raw_payloads
 from pipeline.crypto import encrypt_float
-from pipeline.normalized.models import xtb_cdc_normalized_schema, xtb_snapshot_normalized_schema
+from pipeline.normalized.models import (
+    xtb_cdc_normalized_schema,
+    xtb_snapshot_normalized_schema,
+)
 
 
 def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:

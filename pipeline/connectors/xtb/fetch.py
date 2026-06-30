@@ -10,8 +10,6 @@ from pathlib import Path
 import pyarrow as pa
 
 from pipeline.connectors.xtb.parser import (
-    XtbCashOperation,
-    XtbPosition,
     load_cash_operations_from_report,
     load_positions,
 )
@@ -40,20 +38,24 @@ def fetch_snapshot(
     # Serialize positions as JSON for the raw layer
     positions_data = []
     for pos in positions:
-        positions_data.append({
-            "account_id": pos.account_id,
-            "label": pos.label,
-            "name": pos.name,
-            "asset_class": pos.asset_class,
-            "currency": pos.currency,
-            "value": pos.value,
-            "isin": pos.isin,
-        })
+        positions_data.append(
+            {
+                "account_id": pos.account_id,
+                "label": pos.label,
+                "name": pos.name,
+                "asset_class": pos.asset_class,
+                "currency": pos.currency,
+                "value": pos.value,
+                "isin": pos.isin,
+            }
+        )
 
-    payload = json.dumps({
-        "positions": positions_data,
-        "net_worth": net_worth,
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "positions": positions_data,
+            "net_worth": net_worth,
+        }
+    ).encode("utf-8")
 
     return pa.table(
         {
@@ -62,7 +64,9 @@ def fetch_snapshot(
             "source": ["OPEN POSITION"],
             "payload": [payload],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "account_id": [positions[0].account_id if positions else (account_id or "XTB")],
+            "account_id": [
+                positions[0].account_id if positions else (account_id or "XTB")
+            ],
             "source_file": [filename],
         },
         schema=RAW_SCHEMA,
@@ -83,7 +87,9 @@ def fetch_cdc(
         Optional account ID override.
     """
     report_path = Path(file_path)
-    operations = load_cash_operations_from_report(report_path, account_id_override=account_id)
+    operations = load_cash_operations_from_report(
+        report_path, account_id_override=account_id
+    )
 
     now = datetime.now(timezone.utc)
     filename = report_path.name
@@ -91,14 +97,16 @@ def fetch_cdc(
     # Serialize operations as JSON for the raw layer
     ops_data = []
     for op in operations:
-        ops_data.append({
-            "operation_id": op.operation_id,
-            "operation_type": op.operation_type,
-            "amount": op.amount,
-            "currency": op.currency,
-            "comment": op.comment,
-            "operation_date": op.operation_date,
-        })
+        ops_data.append(
+            {
+                "operation_id": op.operation_id,
+                "operation_type": op.operation_type,
+                "amount": op.amount,
+                "currency": op.currency,
+                "comment": op.comment,
+                "operation_date": op.operation_date,
+            }
+        )
 
     payload = json.dumps(ops_data).encode("utf-8")
 

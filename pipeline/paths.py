@@ -37,7 +37,9 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         "NORMALIZED_TRADING212_CDC": config.normalized_path("trading212_cdc"),
         "NORMALIZED_XTB_SNAPSHOT": config.normalized_path("xtb_snapshot"),
         "NORMALIZED_XTB_CDC": config.normalized_path("xtb_cdc"),
-        "NORMALIZED_CONSOLIDATED_HOLDINGS": config.normalized_path("consolidated_holdings"),
+        "NORMALIZED_CONSOLIDATED_HOLDINGS": config.normalized_path(
+            "consolidated_holdings"
+        ),
         # Analytics table paths
         "ANALYTICS_PORTFOLIO_ALLOCATION": config.analytics_path("portfolio_allocation"),
     }

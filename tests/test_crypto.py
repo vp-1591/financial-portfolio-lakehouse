@@ -99,7 +99,9 @@ class TestLoadKey:
         with pytest.raises(FileNotFoundError):
             load_key(tmp_path / "nonexistent.key")
 
-    def test_env_var_takes_precedence_over_file(self, tmp_path: Path, fernet_key: bytes) -> None:
+    def test_env_var_takes_precedence_over_file(
+        self, tmp_path: Path, fernet_key: bytes
+    ) -> None:
         import os
 
         os.environ["PORTFOLIO_ENCRYPTION_KEY"] = fernet_key.decode("utf-8")

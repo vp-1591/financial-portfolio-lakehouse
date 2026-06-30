@@ -14,7 +14,7 @@ Review of PR #3 (feat/s3-storage-and-github-secrets) identified four issues:
 
 ## Decision
 
-1. **Fix workflow**: Only pass `--target-currency` to commands that accept it (full, consolidate, allocate). Use a shell conditional to branch based on the command.
+1. **Fix workflow argparse mismatch**: Move `--target-currency` from the `consolidate`, `allocate`, and `full` subparsers to the parent argument parser. This way all commands accept the flag (the ones that don't use it simply ignore it), and the workflow YAML doesn't need a shell conditional.
 
 2. **Remove dead import**: Delete the unused `import traceback`.
 
@@ -24,7 +24,8 @@ Review of PR #3 (feat/s3-storage-and-github-secrets) identified four issues:
 
 ## Consequences
 
-- Workflow dispatch now works for all 5 commands (full, fetch, transform, consolidate, allocate).
+- Workflow dispatch now works for all 5 commands without a shell conditional.
+- `--target-currency` is a global argument accepted by all subcommands.
 - `cmd_keygen` is a one-liner delegating to `keygen_main()`.
 - Boolean config parsing is consistent and tested.
 - All 237 tests pass.

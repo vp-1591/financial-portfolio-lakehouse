@@ -83,15 +83,21 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             labels.append(position_label(position))
             names.append(position_name(position, instrument_names))
             asset_classes.append("EQUITY")
-            currencies.append(position_currency(position, instrument_currencies, currency))
+            currencies.append(
+                position_currency(position, instrument_currencies, currency)
+            )
             values.append(encrypt_float(value, fernet_key))
-            value_currencies.append(position_currency(position, instrument_currencies, currency))
+            value_currencies.append(
+                position_currency(position, instrument_currencies, currency)
+            )
             isins.append(position_isin(position, instrument_isins))
             security_currencies.append(
                 position_security_currency(position, instrument_currencies, currency)
             )
 
-        cash_balance = cash_value(summary_data) if isinstance(summary_data, dict) else 0.0
+        cash_balance = (
+            cash_value(summary_data) if isinstance(summary_data, dict) else 0.0
+        )
         if cash_balance:
             fetched_ats.append(fetched_at)
             account_ids.append(str(acct_id))
@@ -167,7 +173,9 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             currencies.append(str(currency))
 
             # Encrypt value
-            value = as_float(event.get("price", event.get("amount", event.get("value", 0))))
+            value = as_float(
+                event.get("price", event.get("amount", event.get("value", 0)))
+            )
             values.append(encrypt_float(value, fernet_key))
 
             # Encrypt quantity

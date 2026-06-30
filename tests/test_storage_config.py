@@ -33,11 +33,13 @@ class TestResolveStorage:
     def setup_method(self):
         """Reset module-level singleton before each test."""
         import pipeline.storage
+
         pipeline.storage._config = None
 
     def teardown_method(self):
         """Reset module-level singleton after each test."""
         import pipeline.storage
+
         pipeline.storage._config = None
 
     def test_default_uses_project_data_dir(self, monkeypatch):
@@ -77,7 +79,10 @@ class TestResolveStorage:
         monkeypatch.setenv("S3_PREFIX", "custom-prefix")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
-        assert config.raw_path("ibkr_snapshot") == "s3://test-bucket/custom-prefix/raw/ibkr_snapshot"
+        assert (
+            config.raw_path("ibkr_snapshot")
+            == "s3://test-bucket/custom-prefix/raw/ibkr_snapshot"
+        )
 
     def test_s3_does_not_use_pipeline_data_dir(self, monkeypatch):
         """When S3_BUCKET is set, PIPELINE_DATA_DIR is ignored."""
@@ -95,10 +100,11 @@ class TestResolveStorage:
         config = resolve_storage()
         # secrets_dir should be at project root, not inside data dir
         assert config.secrets_dir == str(PROJECT_ROOT / ".secrets")
-        assert config.encryption_key_file == str(PROJECT_ROOT / ".secrets" / "encryption.key")
+        assert config.encryption_key_file == str(
+            PROJECT_ROOT / ".secrets" / "encryption.key"
+        )
 
     def test_s3_secrets_dir_at_project_root(self, monkeypatch):
-        from pipeline.storage import PROJECT_ROOT
 
         monkeypatch.setenv("S3_BUCKET", "test-bucket")
         config = resolve_storage()
@@ -167,23 +173,38 @@ class TestS3Backend:
 
     def test_table_path_with_prefix(self):
         backend = S3Backend(bucket="my-bucket", prefix="pipeline")
-        assert backend.table_path("raw", "ibkr_snapshot") == "s3://my-bucket/pipeline/raw/ibkr_snapshot"
+        assert (
+            backend.table_path("raw", "ibkr_snapshot")
+            == "s3://my-bucket/pipeline/raw/ibkr_snapshot"
+        )
 
     def test_table_path_default_prefix(self):
         backend = S3Backend(bucket="my-bucket")
-        assert backend.table_path("raw", "ibkr_snapshot") == f"s3://my-bucket/{S3_DEFAULT_PREFIX}/raw/ibkr_snapshot"
+        assert (
+            backend.table_path("raw", "ibkr_snapshot")
+            == f"s3://my-bucket/{S3_DEFAULT_PREFIX}/raw/ibkr_snapshot"
+        )
 
     def test_table_path_custom_prefix(self):
         backend = S3Backend(bucket="my-bucket", prefix="data")
-        assert backend.table_path("normalized", "consolidated_holdings") == "s3://my-bucket/data/normalized/consolidated_holdings"
+        assert (
+            backend.table_path("normalized", "consolidated_holdings")
+            == "s3://my-bucket/data/normalized/consolidated_holdings"
+        )
 
     def test_table_path_strips_trailing_slash(self):
         backend = S3Backend(bucket="my-bucket", prefix="pipeline/")
-        assert backend.table_path("raw", "ibkr_snapshot") == "s3://my-bucket/pipeline/raw/ibkr_snapshot"
+        assert (
+            backend.table_path("raw", "ibkr_snapshot")
+            == "s3://my-bucket/pipeline/raw/ibkr_snapshot"
+        )
 
     def test_table_path_no_prefix(self):
         backend = S3Backend(bucket="my-bucket", prefix="")
-        assert backend.table_path("raw", "ibkr_snapshot") == "s3://my-bucket/raw/ibkr_snapshot"
+        assert (
+            backend.table_path("raw", "ibkr_snapshot")
+            == "s3://my-bucket/raw/ibkr_snapshot"
+        )
 
     def test_ensure_parent_is_noop(self):
         backend = S3Backend(bucket="my-bucket")
@@ -196,10 +217,12 @@ class TestPathsModule:
 
     def setup_method(self):
         import pipeline.storage
+
         pipeline.storage._config = None
 
     def teardown_method(self):
         import pipeline.storage
+
         pipeline.storage._config = None
 
     def test_paths_module_delegates_to_storage(self, tmp_path: Path):
@@ -247,8 +270,12 @@ class TestPathsModule:
         use_storage(config)
 
         assert pipeline.paths.RAW_IBKR_SNAPSHOT == str(data / "raw" / "ibkr_snapshot")
-        assert pipeline.paths.NORMALIZED_CONSOLIDATED_HOLDINGS == str(data / "normalized" / "consolidated_holdings")
-        assert pipeline.paths.ANALYTICS_PORTFOLIO_ALLOCATION == str(data / "analytics" / "portfolio_allocation")
+        assert pipeline.paths.NORMALIZED_CONSOLIDATED_HOLDINGS == str(
+            data / "normalized" / "consolidated_holdings"
+        )
+        assert pipeline.paths.ANALYTICS_PORTFOLIO_ALLOCATION == str(
+            data / "analytics" / "portfolio_allocation"
+        )
 
     def test_paths_unknown_attribute_raises(self):
         import pipeline.paths
@@ -288,7 +315,9 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        assert config.normalized_path("ibkr_snapshot") == str(data / "normalized" / "ibkr_snapshot")
+        assert config.normalized_path("ibkr_snapshot") == str(
+            data / "normalized" / "ibkr_snapshot"
+        )
 
     def test_analytics_path(self, tmp_path: Path):
         data = tmp_path / "data"
@@ -303,4 +332,6 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        assert config.analytics_path("portfolio_allocation") == str(data / "analytics" / "portfolio_allocation")
+        assert config.analytics_path("portfolio_allocation") == str(
+            data / "analytics" / "portfolio_allocation"
+        )

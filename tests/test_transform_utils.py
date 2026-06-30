@@ -9,13 +9,12 @@ import pyarrow as pa
 import pytest
 
 from pipeline.connectors.transform_utils import (
-    DecodedRow,
     coerce_fetched_at,
     decode_payload,
     iter_raw_payloads,
     parse_json,
 )
-from pipeline.crypto import decrypt, encrypt, generate_key
+from pipeline.crypto import encrypt, generate_key
 
 
 class TestDecodePayload:
@@ -59,7 +58,7 @@ class TestParseJson:
         assert result == {"key": "value"}
 
     def test_parses_json_list(self) -> None:
-        data = b'[1, 2, 3]'
+        data = b"[1, 2, 3]"
         result = parse_json(data)
         assert result == [1, 2, 3]
 
@@ -136,7 +135,6 @@ class TestIterRawPayloads:
         )
 
     def test_iterates_valid_rows(self, fernet_key: bytes) -> None:
-        from pipeline.raw.models import RAW_SCHEMA
 
         payload = json.dumps({"ticker": "AAPL"}).encode()
         table = self._make_raw_table(
@@ -159,7 +157,6 @@ class TestIterRawPayloads:
         assert rows[0].payload_parsed == {"ticker": "AAPL"}
 
     def test_skips_rows_with_bad_decryption(self, fernet_key: bytes) -> None:
-        from pipeline.raw.models import RAW_SCHEMA
 
         payload = json.dumps({"ticker": "AAPL"}).encode()
         table = self._make_raw_table(

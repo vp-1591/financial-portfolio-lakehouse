@@ -8,11 +8,13 @@ pattern.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
-import polars as pl
+if TYPE_CHECKING:
+    import pyarrow as pa
+
 
 from pipeline.crypto import decrypt
 
@@ -63,7 +65,7 @@ def coerce_fetched_at(value: Any) -> datetime:
 
 
 def iter_raw_payloads(
-    raw: "pa.Table",
+    raw: pa.Table,
     fernet_key: bytes,
     *,
     require_json: bool = True,
@@ -87,7 +89,6 @@ def iter_raw_payloads(
         If True (default), skip rows whose payloads cannot be parsed as
         JSON.  Set to False for sources that produce XML or other formats.
     """
-    import pyarrow as pa  # noqa: F811 – avoid import at module level
 
     fetched_ats = raw.column("fetched_at").to_pylist()
     account_ids = raw.column("account_id").to_pylist()

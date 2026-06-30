@@ -4,7 +4,12 @@ To create a single dashboard that consolidates assests from different brokers.
 ## Test maintenance
 
 - When changing portfolio math, broker data normalization, or dashboard output, add or update focused tests that cover the changed behavior and any reported regression.
-- Run the relevant tests before finishing changes, using a command-level watchdog for any command that may hang.
+- Run the relevant tests before finishing changes.
+
+## Linting
+
+- Before committing, run `ruff check --fix .` and `ruff format .` to fix lint issues.
+- After running ruff, re-run tests to ensure the auto-fixes didn't break anything.
 
 ## Architecture Decision Records
 
@@ -31,6 +36,7 @@ Never use the system Python (`C:\Python314`). Always prefix commands with the ve
 ```
 
 ## Git workflow
+
 - Never commit directly to `main`. Always branch first: `git checkout -b feat/<short-description>`
 - After local tests pass, open a PR: `gh pr create --fill`
 - Wait for CI to go green before merging — don't merge with a red check.

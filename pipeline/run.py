@@ -21,16 +21,20 @@ variables (set by GitHub Actions via GitHub Secrets, or locally via ``.env``).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import argparse
 import os
 import sys
-from pathlib import Path
 
-from pipeline.connectors.registry import all, get
+from pipeline.connectors.registry import all
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import get_config, inject_secrets, is_enabled, parse_bool
 from pipeline.storage import get_storage
+
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 
 def parse_fx_rate(value: str) -> tuple[str, float]:
@@ -109,7 +113,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                     "account": get_config("IBKR_ACCOUNT"),
                     "verify_tls": parse_bool("IBKR_VERIFY_TLS"),
                     "skip_auth_check": parse_bool("IBKR_SKIP_AUTH_CHECK"),
-                    "require_brokerage_session": parse_bool("IBKR_REQUIRE_BROKERAGE_SESSION"),
+                    "require_brokerage_session": parse_bool(
+                        "IBKR_REQUIRE_BROKERAGE_SESSION"
+                    ),
                 }
 
         elif connector.name == "trading212":
@@ -132,7 +138,10 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 "base_url": base_url,
                 "user_agent": get_config("T212_USER_AGENT") or "Mozilla/5.0",
             }
-            snapshot_kwargs = {**common, "include_metadata": not parse_bool("T212_SKIP_METADATA")}
+            snapshot_kwargs = {
+                **common,
+                "include_metadata": not parse_bool("T212_SKIP_METADATA"),
+            }
             cdc_kwargs = common
 
         elif connector.name == "xtb":
@@ -194,7 +203,6 @@ def cmd_transform(args: argparse.Namespace) -> int:
     from deltalake import DeltaTable
 
     from pipeline.crypto import load_key
-    from pipeline.raw.ingest import encrypt_raw_payloads
 
     fernet_key = load_key()
     connectors_list = all()
@@ -226,7 +234,12 @@ def cmd_transform(args: argparse.Namespace) -> int:
                 if normalized.num_rows == 0:
                     print(f"  {connector.display_name} {layer}: no data to transform")
                     continue
-                write_deltalake(norm_path, normalized, mode="overwrite", storage_options=storage_opts)
+                write_deltalake(
+                    norm_path,
+                    normalized,
+                    mode="overwrite",
+                    storage_options=storage_opts,
+                )
                 print(
                     f"  {connector.display_name} {layer}: {normalized.num_rows} rows transformed"
                 )
@@ -351,7 +364,7 @@ def cmd_allocate(args: argparse.Namespace) -> int:
         return 1
 
 
-def print_allocation(table: "pa.Table") -> None:
+def print_allocation(table: pa.Table) -> None:
     """Print portfolio allocation table in the same format as the old CLI."""
     print(
         f"{'Ticker':<12} {'%':>8} {'Broker':<12} "
@@ -410,6 +423,11 @@ def main() -> int:
         "Secrets come from environment variables "
         "(GitHub Secrets in CI, .env file locally).",
     )
+    parser.add_argument(
+        "--target-currency",
+        default="EUR",
+        help="Target currency for consolidation/allocation (default: EUR)",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -427,19 +445,12 @@ def main() -> int:
     )
 
     # transform
-    subparsers.add_parser(
-        "transform", help="Transform raw data into normalized tables"
-    )
+    subparsers.add_parser("transform", help="Transform raw data into normalized tables")
 
     # consolidate
     consolidate_parser = subparsers.add_parser(
         "consolidate",
         help="Consolidate normalized snapshots into holdings table",
-    )
-    consolidate_parser.add_argument(
-        "--target-currency",
-        default="EUR",
-        help="Target currency for consolidation (default: EUR)",
     )
     consolidate_parser.add_argument(
         "--fx-rate",
@@ -466,11 +477,6 @@ def main() -> int:
     # allocate
     allocate_parser = subparsers.add_parser(
         "allocate", help="Calculate portfolio allocation"
-    )
-    allocate_parser.add_argument(
-        "--target-currency",
-        default="EUR",
-        help="Target currency for allocation (default: EUR)",
     )
     allocate_parser.add_argument(
         "--fx-rate",
@@ -502,11 +508,6 @@ def main() -> int:
         type=str,
         default=None,
         help="Path to XTB Excel report (can be specified multiple times)",
-    )
-    full_parser.add_argument(
-        "--target-currency",
-        default="EUR",
-        help="Target currency (default: EUR)",
     )
     full_parser.add_argument(
         "--fx-rate",
