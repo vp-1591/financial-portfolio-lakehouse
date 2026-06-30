@@ -54,12 +54,17 @@ def extract_holdings(
     if fernet_key is None:
         fernet_key = load_key()
 
+    # For S3 paths, skip the local Path.exists() check and go
+    # straight to DeltaTable which handles cloud storage.
+    from pipeline.storage import get_storage
+
+    storage_opts = get_storage().storage_options
     path = Path(table_path)
-    if not path.exists():
+    if not storage_opts and not path.exists():
         return []
 
     try:
-        dt = DeltaTable(str(path))
+        dt = DeltaTable(str(path), storage_options=storage_opts)
     except Exception:
         return []
 

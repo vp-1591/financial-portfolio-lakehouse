@@ -48,6 +48,8 @@ class StorageBackend(Protocol):
 
     def table_path(self, layer: str, table_name: str) -> str: ...
     def ensure_parent(self, table_path: str) -> None: ...
+    @property
+    def storage_options(self) -> dict[str, str] | None: ...
 
 
 class LocalBackend:
@@ -55,6 +57,7 @@ class LocalBackend:
 
     ``table_path()`` returns absolute filesystem paths.
     ``ensure_parent()`` creates parent directories as needed.
+    ``storage_options`` returns ``None`` — no cloud config needed.
     """
 
     def __init__(self, data_dir: Path) -> None:
@@ -66,6 +69,10 @@ class LocalBackend:
     def ensure_parent(self, table_path: str) -> None:
         Path(table_path).parent.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def storage_options(self) -> dict[str, str] | None:
+        return None
+
 
 class S3Backend:
     """S3 storage backend using deltalake's native object_store support.
@@ -73,6 +80,8 @@ class S3Backend:
     ``table_path()`` returns ``s3://bucket/prefix/layer/table`` URIs.
     ``ensure_parent()`` is a no-op — S3 does not require parent
     directories to exist before writing.
+    ``storage_options()`` returns a dict of AWS credentials for
+    ``deltalake`` operations.
 
     AWS credentials are read from standard environment variables:
     ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``.
@@ -92,6 +101,15 @@ class S3Backend:
     def ensure_parent(self, table_path: str) -> None:
         # S3 does not require parent directories to exist.
         pass
+
+    @property
+    def storage_options(self) -> dict[str, str]:
+        """AWS credentials for deltalake S3 operations."""
+        return {
+            "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+            "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+            "AWS_REGION": os.environ.get("AWS_REGION", "eu-west-1"),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +155,15 @@ class StorageConfig:
     def analytics_path(self, table_name: str) -> str:
         """Return the full path for an analytics-layer table."""
         return self.backend.table_path("analytics", table_name)
+
+    @property
+    def storage_options(self) -> dict[str, str] | None:
+        """Return storage options for ``deltalake`` operations.
+
+        Returns ``None`` for local storage (no cloud config needed).
+        Returns a dict of AWS credentials for S3 storage.
+        """
+        return self.backend.storage_options
 
 
 # ---------------------------------------------------------------------------

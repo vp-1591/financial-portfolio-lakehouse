@@ -54,7 +54,8 @@ def allocate_percentages(
     from deltalake import DeltaTable
 
     try:
-        dt = DeltaTable(table_path)
+        storage_opts = get_storage().storage_options
+        dt = DeltaTable(table_path, storage_options=storage_opts)
     except Exception as exc:
         raise FileNotFoundError(
             f"Consolidated holdings table not found at {table_path}. "
@@ -107,5 +108,5 @@ def allocate_percentages(
         schema=portfolio_allocation_schema,
     )
 
-    write_deltalake(analytics_path, result, mode="overwrite")
+    write_deltalake(analytics_path, result, mode="overwrite", storage_options=get_storage().storage_options)
     return result

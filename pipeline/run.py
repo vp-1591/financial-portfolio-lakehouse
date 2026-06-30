@@ -218,7 +218,7 @@ def cmd_transform(args: argparse.Namespace) -> int:
         for layer in ("snapshot", "cdc"):
             raw_path = get_raw_path(connector.name, layer)
             try:
-                dt = DeltaTable(str(raw_path))
+                dt = DeltaTable(str(raw_path), storage_options=get_storage().storage_options)
             except Exception:
                 continue
 
@@ -240,7 +240,7 @@ def cmd_transform(args: argparse.Namespace) -> int:
                 if normalized.num_rows == 0:
                     print(f"  {connector.display_name} {layer}: no data to transform")
                     continue
-                write_deltalake(norm_path, normalized, mode="overwrite")
+                write_deltalake(norm_path, normalized, mode="overwrite", storage_options=config.storage_options)
                 print(
                     f"  {connector.display_name} {layer}: {normalized.num_rows} rows transformed"
                 )
@@ -302,7 +302,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         config = get_storage()
         snapshot_path = config.normalized_path(f"{connector.name}_snapshot")
         try:
-            DeltaTable(str(snapshot_path))
+            DeltaTable(str(snapshot_path), storage_options=config.storage_options)
         except Exception:
             print(f"  Skipping {connector.display_name}: no normalized snapshot data")
             continue
