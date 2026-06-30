@@ -45,13 +45,18 @@ KNOWN_TABLES: dict[str, list[str]] = {
 }
 
 
-def list_tables(*, existing_only: bool = False) -> list[dict[str, Any]]:
-    """Return all known Delta tables with their full paths and existence status.
+def list_tables(*, existing_only: bool = True) -> list[dict[str, Any]]:
+    """Return known Delta tables with their full paths and existence status.
+
+    By default, only tables that actually exist on disk/S3 are returned.
+    Pass ``existing_only=False`` to include all known tables regardless of
+    whether they exist yet.
 
     Parameters
     ----------
     existing_only:
-        If True, only return tables that actually exist on disk/S3.
+        If True (default), only return tables that actually exist on
+        disk/S3.  Set to False to list all known tables.
 
     Returns
     -------

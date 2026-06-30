@@ -29,14 +29,21 @@ class TestKnownTables:
 class TestListTables:
     """Verify list_tables returns correct structure."""
 
-    def test_returns_all_tables_by_default(self):
-        """list_tables() returns all 14 known tables."""
-        tables = list_tables()
+    def test_returns_all_tables_when_all_requested(self):
+        """list_tables(existing_only=False) returns all 14 known tables."""
+        tables = list_tables(existing_only=False)
         assert len(tables) == 14
+
+    def test_returns_existing_by_default(self):
+        """list_tables() defaults to existing_only=True."""
+        tables = list_tables()
+        # In test env with no S3 and no local data, no tables exist.
+        for t in tables:
+            assert t["exists"] is True
 
     def test_each_entry_has_required_keys(self):
         """Every entry has layer, name, path, exists."""
-        tables = list_tables()
+        tables = list_tables(existing_only=False)
         for t in tables:
             assert "layer" in t
             assert "name" in t
