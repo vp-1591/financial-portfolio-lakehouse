@@ -337,6 +337,8 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
 
     For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` to the
     server URL and ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
+    DuckDB's ``ENDPOINT`` parameter expects ``host:port`` (without scheme),
+    so the URL scheme is stripped automatically.
     """
     key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
     secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
@@ -355,7 +357,15 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
             f"REGION '{safe_region}'",
         ]
         if endpoint_url:
-            safe_endpoint = endpoint_url.replace("'", "''")
+            # DuckDB ENDPOINT expects host:port, not a full URL.
+            # Strip the scheme if present (e.g. "http://minio:9000" -> "minio:9000").
+            from urllib.parse import urlparse
+
+            parsed = urlparse(endpoint_url)
+            host = parsed.hostname or ""
+            port = parsed.port
+            endpoint_host = f"{host}:{port}" if port else host
+            safe_endpoint = endpoint_host.replace("'", "''")
             parts.append(f"ENDPOINT '{safe_endpoint}'")
         if allow_http:
             parts.append("USE_SSL false")
