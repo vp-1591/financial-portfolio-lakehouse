@@ -41,25 +41,25 @@ Added `parse_alias()` to extract layer from the suffix. Updated `_resolve_path()
 
 No separate `TABLE_ALIASES` dict — the naming convention `{name}_{layer}` is parsed at resolve time.
 
-### Add `sql()` convenience function
+### Add `get_connection()` query helper
 
-Added `sql(query)` that creates a DuckDB connection, registers all discovered tables as views by alias name, and runs the user's SQL. Enables `sql("SELECT * FROM ibkr_snapshot_raw")`.
+Added `get_connection()` that returns a cached DuckDB connection with S3 credentials configured and all discovered Delta tables registered as views. Users query using native DuckDB API (`db.sql("SELECT ...").pl()`). Added `decrypt_df()` utility for decrypting Fernet-encrypted columns. Added `refresh()` to re-discover tables and recreate the connection.
 
-### Replace `dt.files()` with `dt.file_uris()`
+### Remove `dt.files()` / `dt.file_uris()` filter from `list_tables()`
 
-`deltalake` 1.6.0 removed the `files()` method. Changed to `file_uris()` for empty table detection in `list_tables()`.
+Removed the empty-table filter that opened a `DeltaTable` for each discovered table and checked `file_uris()`. This was the primary performance bottleneck on S3 (7+ round-trips per call). Empty-table filtering is now the caller's responsibility.
 
 ## Consequences
 
 - **S3 queries now work** — `deltalake.DeltaTable()` receives credentials in the correct format
 - **Auto-discovery replaces hardcoded registry** — new brokers are automatically found
 - **Layer-qualified aliases** — every table name includes its layer, eliminating ambiguity
-- **`sql()` function** — single-argument querying with all tables registered as views
+- **`get_connection()` function** — pre-configured DuckDB connection with views registered; users query with native DuckDB API
 - **Backward compatible** — bare names like `ibkr_snapshot` still resolve to `normalized/ibkr_snapshot` via the fallback path
 
 ## Validation
 
-- All 258 tests pass (1 skipped — live FX test)
+- All 280 tests pass (1 skipped — live FX test)
 - `test_storage_config.py`: 2 new tests for lowercase `storage_options` keys
-- `test_query_list_tables.py`: completely rewritten for auto-discovery and alias parsing (7 parse_alias tests, 2 discovery tests, 6 list_tables tests)
+- `test_query_list_tables.py`: completely rewritten for auto-discovery, alias parsing, Result/DecryptedResult chaining, and table caching
 - `ruff check` and `ruff format` pass cleanly

@@ -11,8 +11,25 @@ Tables are identified by **aliases** that follow the
 - ``ibkr_snapshot_normalized`` — normalized layer
 - ``portfolio_allocation_analytics`` — analytics layer
 
-Aliases can be passed to :func:`decrypted_df`, :func:`query`, or used
-as table names in :func:`sql`.
+Usage::
+
+    from pipeline.query import get_connection, list_tables, decrypt_df
+
+    # Get a pre-configured DuckDB connection
+    db = get_connection()
+
+    # List available tables
+    list_tables()
+
+    # Query using native DuckDB API
+    db.sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5").pl()
+
+    # Decrypt encrypted columns
+    df = db.sql("SELECT * FROM ibkr_snapshot_raw").pl()
+    decrypt_df(df)
+
+    # Refresh after writing new tables
+    refresh()
 """
 
 from __future__ import annotations
@@ -35,6 +52,12 @@ LAYERS = ("raw", "normalized", "analytics")
 # Layer suffixes used in aliases, in reverse-length order so that longer
 # suffixes are matched first (e.g. "_analytics" before "_raw").
 _LAYER_SUFFIXES = ("_analytics", "_normalized", "_raw")
+
+# Module-level cache for list_tables().
+_TABLE_CACHE: list[str] | None = None
+
+# Module-level DuckDB connection (created lazily by get_connection()).
+_connection: duckdb.DuckDBPyConnection | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -106,16 +129,14 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
     return tables
 
 
-def list_tables() -> list[str]:
+def list_tables(*, refresh: bool = False) -> list[str]:
     """Discover Delta tables on disk/S3 and return layer-qualified aliases.
 
     Each returned alias follows the ``{name}_{layer}`` convention
     (e.g. ``ibkr_snapshot_raw``, ``portfolio_allocation_analytics``).
-    Empty tables (Delta log exists but no Parquet files) are excluded
-    because they would fail at query time with ``No files in log segment``.
 
-    Aliases can be passed directly to :func:`decrypted_df`,
-    :func:`query`, or used as table names in :func:`sql`.
+    Results are cached in memory for the lifetime of the process.
+    Pass ``refresh=True`` to force re-discovery.
 
     Returns
     -------
@@ -127,10 +148,10 @@ def list_tables() -> list[str]:
     >>> list_tables()
     ['consolidated_holdings_normalized', 'ibkr_snapshot_normalized',
      'ibkr_snapshot_raw', 'portfolio_allocation_analytics']
-    >>> for alias in list_tables():
-    ...     df = decrypted_df(alias)
     """
-    from deltalake import DeltaTable
+    global _TABLE_CACHE
+    if _TABLE_CACHE is not None and not refresh:
+        return _TABLE_CACHE
 
     config = get_storage()
 
@@ -139,27 +160,22 @@ def list_tables() -> list[str]:
     else:
         raw_tables = _discover_tables_local(Path(config.data_dir))
 
-    # Filter out empty tables (no Parquet files in the Delta log).
-    existing: list[str] = []
-    for layer, name in raw_tables:
-        path = config.backend.table_path(layer, name)
-        try:
-            storage_opts = config.storage_options
-            kwargs: dict = {}
-            if storage_opts:
-                kwargs["storage_options"] = storage_opts
-            dt = DeltaTable(path, **kwargs)
-            if not dt.file_uris():
-                continue  # empty table — no data to query
-        except Exception:
-            continue  # can't open table — skip it
-        existing.append(f"{name}_{layer}")
+    _TABLE_CACHE = sorted(f"{name}_{layer}" for layer, name in raw_tables)
+    return _TABLE_CACHE
 
-    return sorted(existing)
+
+def clear_table_cache() -> None:
+    """Clear the in-memory table discovery cache.
+
+    Call this after writing new tables if you need ``list_tables()`` to
+    reflect the change immediately.
+    """
+    global _TABLE_CACHE
+    _TABLE_CACHE = None
 
 
 # ---------------------------------------------------------------------------
-# Alias parsing and path resolution
+# Alias parsing
 # ---------------------------------------------------------------------------
 
 
@@ -197,52 +213,77 @@ def parse_alias(alias: str) -> tuple[str, str] | None:
     return None
 
 
-def _resolve_path(table_path: str | Path) -> str:
-    """Resolve a table path or alias to an absolute path or S3 URI.
+# ---------------------------------------------------------------------------
+# Connection management
+# ---------------------------------------------------------------------------
 
-    Resolution order:
 
-    1. **Layer-qualified alias** — if the input ends with ``_raw``,
-       ``_normalized``, or ``_analytics``, parse the suffix and resolve
-       via :meth:`StorageBackend.table_path`.
-    2. **S3 URI** — if the input starts with ``s3://``, use as-is.
-    3. **Absolute path** — if the input is an absolute filesystem path,
-       resolve it.
-    4. **Bare name** — treat as a normalized-layer table name (legacy
-       behaviour for backward compatibility).
+def get_connection() -> duckdb.DuckDBPyConnection:
+    """Get a DuckDB connection configured for Delta table queries.
+
+    Returns a cached connection with S3 credentials (if needed) and
+    all discovered Delta tables registered as views.  Call
+    :func:`refresh` to re-discover tables after schema changes.
+
+    Returns
+    -------
+    duckdb.DuckDBPyConnection
+        A DuckDB connection ready for queries.
+
+    Example
+    -------
+    >>> db = get_connection()
+    >>> db.sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5").pl()
     """
+    global _connection
+    if _connection is None:
+        _connection = duckdb.connect()
+        _setup_connection(_connection)
+    return _connection
+
+
+def _setup_connection(conn: duckdb.DuckDBPyConnection) -> None:
+    """Configure S3 credentials and register all discovered tables as views."""
     config = get_storage()
-    path_str = str(table_path).replace("\\", "/")
-
-    # Layer-qualified alias (e.g. "ibkr_snapshot_raw").
-    parsed = parse_alias(path_str)
-    if parsed is not None:
-        name, layer = parsed
-        return config.backend.table_path(layer, name)
-
-    # Already an S3 URI — use as-is.
-    if path_str.startswith("s3://"):
-        return path_str
-
-    # Already absolute — resolve.
-    path = Path(path_str)
-    if path.is_absolute():
-        return str(path.resolve())
-
-    # Bare name — resolve against normalized layer (legacy default).
     if isinstance(config.backend, S3Backend):
-        return config.backend.table_path("normalized", path_str)
-    return str((Path(config.data_dir) / "normalized" / path_str).resolve())
+        _configure_s3(conn)
+
+    for alias in list_tables():
+        parsed = parse_alias(alias)
+        if parsed is None:
+            continue
+        name, layer = parsed
+        path = config.backend.table_path(layer, name)
+        conn.execute(
+            f"CREATE OR REPLACE VIEW {alias} AS SELECT * FROM delta_scan('{path}')"
+        )
+
+
+def refresh() -> None:
+    """Re-discover tables and recreate the DuckDB connection.
+
+    Call this after writing new tables if you need them to appear
+    in query results.  Closes the existing connection, clears the
+    table cache, and the next :func:`get_connection` call will
+    re-discover and re-register everything.
+    """
+    global _connection
+    if _connection is not None:
+        _connection.close()
+    _connection = None
+    clear_table_cache()
+
+
+# ---------------------------------------------------------------------------
+# S3 configuration
+# ---------------------------------------------------------------------------
 
 
 def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     """Configure DuckDB S3 credentials from environment variables.
 
     Uses DuckDB's SECRET mechanism (v0.10+) which propagates credentials
-    to all extensions including ``delta_scan()``.  The legacy ``SET s3_*``
-    variables only affect DuckDB's built-in httpfs extension and are
-    invisible to the Delta Kernel's object store, causing S3 reads to
-    fall back to EC2 instance metadata and fail on non-EC2 machines.
+    to all extensions including ``delta_scan()``.
     """
     key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
     secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
@@ -253,168 +294,59 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def _create_connection(table_path: str) -> duckdb.DuckDBPyConnection:
-    """Create a DuckDB connection with S3 config if needed."""
-    conn = duckdb.connect()
-    if table_path.startswith("s3://"):
-        _configure_s3(conn)
-    return conn
-
-
 # ---------------------------------------------------------------------------
-# Public query API
+# Decryption
 # ---------------------------------------------------------------------------
 
 
-def query(
-    table_path: str | Path,
-    sql: str,
-    *,
-    decrypt: bool = True,
+def decrypt_df(
+    df: pl.DataFrame,
+    columns: list[str] | None = None,
     key: bytes | None = None,
-) -> duckdb.DuckDBPyRelation:
-    """Run a SQL query against a Delta table with automatic decryption.
+) -> pl.DataFrame:
+    """Decrypt Fernet-encrypted columns in a Polars DataFrame.
 
     Parameters
     ----------
-    table_path:
-        A layer-qualified alias (e.g. ``ibkr_snapshot_raw``),
-        an S3 URI, or a local path to the Delta table directory.
-    sql:
-        SQL expression.  The table is available as ``delta_table``.
-    decrypt:
-        If True (default), decrypt Fernet-encrypted binary columns
-        (``value``, ``quantity``, ``amount``) into floats.  When False,
-        the raw binary is preserved.
+    df:
+        Polars DataFrame with encrypted binary columns.
+    columns:
+        Column names to decrypt.  Defaults to
+        ``["value", "quantity", "amount"]``.
     key:
         Fernet key.  When *None*, loaded from the default location.
 
     Returns
     -------
-    duckdb.DuckDBPyRelation
-        Query result relation.  When *decrypt* is True, encrypted
-        columns are replaced with decrypted floats.
+    pl.DataFrame
+        DataFrame with encrypted columns decrypted and rounded to
+        2 decimal places.
 
     Example
     -------
-    >>> result = query(
-    ...     "ibkr_snapshot_raw",
-    ...     "SELECT * FROM delta_table ORDER BY label",
-    ... )
-    >>> result.pl()  # Polars DataFrame with decrypted values
+    >>> db = get_connection()
+    >>> df = db.sql("SELECT * FROM ibkr_snapshot_raw").pl()
+    >>> decrypt_df(df)
     """
-    abs_path = _resolve_path(table_path)
-    conn = _create_connection(abs_path)
-    conn.execute(f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')")
-    return conn.sql(sql)
+    encrypted_cols = columns if columns is not None else list(_ENCRYPTED_COLUMNS)
+    decrypt_key = key if key is not None else load_key()
 
+    result = df
+    for col in encrypted_cols:
+        if col in result.columns:
+            result = result.with_columns(
+                pl.col(col).map_elements(
+                    lambda v: _decrypt_value(v, decrypt_key),
+                    return_dtype=pl.Float64,
+                )
+            )
 
-def sql(query: str) -> duckdb.DuckDBPyRelation:
-    """Run a SQL query against all discovered Delta tables.
+    # Round decrypted float columns to 2 decimal places.
+    for col in encrypted_cols:
+        if col in result.columns:
+            result = result.with_columns(pl.col(col).round(2))
 
-    Creates a DuckDB connection, configures S3 credentials, registers
-    all existing Delta tables as views (using their layer-qualified
-    aliases), and executes the query.  This is the simplest way to
-    query multiple tables in a single call.
-
-    Tables are available by their layer-qualified alias names
-    (e.g. ``ibkr_snapshot_raw``, ``ibkr_snapshot_normalized``,
-    ``portfolio_allocation_analytics``).
-
-    Parameters
-    ----------
-    query:
-        SQL expression referencing tables by alias name.
-
-    Returns
-    -------
-    duckdb.DuckDBPyRelation
-        Query result relation.
-
-    Example
-    -------
-    >>> sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5")
-    >>> sql(
-    ...     "SELECT * FROM consolidated_holdings_normalized "
-    ...     "WHERE value > 1000"
-    ... )
-    """
-    config = get_storage()
-    conn = duckdb.connect()
-
-    # Configure S3 if needed.
-    if isinstance(config.backend, S3Backend):
-        _configure_s3(conn)
-
-    # Register all discovered tables as views.
-    for alias in list_tables():
-        parsed = parse_alias(alias)
-        if parsed is None:
-            continue
-        name, layer = parsed
-        path = config.backend.table_path(layer, name)
-        conn.execute(f"CREATE VIEW {alias} AS SELECT * FROM delta_scan('{path}')")
-
-    return conn.sql(query)
-
-
-def load_decrypted(
-    table_path: str | Path,
-    encrypted_cols: list[str] | None = None,
-    key: bytes | None = None,
-) -> list[dict]:
-    """Read a Delta table and decrypt specified columns.
-
-    Parameters
-    ----------
-    table_path:
-        A layer-qualified alias (e.g. ``ibkr_snapshot_raw``),
-        an S3 URI, or a local path to the Delta table directory.
-    encrypted_cols:
-        Column names that contain Fernet-encrypted binary values.
-        Defaults to ``["value"]``.
-    key:
-        Fernet key.  When *None*, loaded from the default location.
-
-    Returns
-    -------
-    list[dict]
-        Rows as dictionaries with encrypted columns replaced by decrypted floats.
-    """
-    if encrypted_cols is None:
-        encrypted_cols = ["value"]
-    if key is None:
-        key = load_key()
-
-    abs_path = _resolve_path(table_path)
-    conn = _create_connection(abs_path)
-    conn.execute(f"CREATE VIEW delta_table AS SELECT * FROM delta_scan('{abs_path}')")
-    result = conn.execute("SELECT * FROM delta_table").fetchall()
-    columns = [
-        desc[0] for desc in conn.execute("SELECT * FROM delta_table").description
-    ]
-    encrypted_indices = {
-        col: columns.index(col) for col in encrypted_cols if col in columns
-    }
-
-    rows = []
-    for row in result:
-        row_dict = dict(zip(columns, row))
-        for col, idx in encrypted_indices.items():
-            raw = row[idx]
-            if raw is not None:
-                # DuckDB returns BLOB as bytearray; convert to bytes for Fernet
-                if isinstance(raw, (bytes, bytearray, memoryview)):
-                    raw = bytes(raw)
-                try:
-                    row_dict[col] = decrypt_float(raw, key)
-                except Exception:
-                    try:
-                        row_dict[col] = decrypt_string(raw, key)
-                    except Exception:
-                        row_dict[col] = raw
-        rows.append(row_dict)
-    return rows
+    return result
 
 
 def _decrypt_value(v, key: bytes):
@@ -431,67 +363,3 @@ def _decrypt_value(v, key: bytes):
             except Exception:
                 return v
     return v
-
-
-def decrypted_df(
-    table_path: str | Path,
-    sql: str | None = None,
-    encrypted_cols: list[str] | None = None,
-    key: bytes | None = None,
-) -> pl.DataFrame:
-    """Run a query and return a Polars DataFrame with decrypted values.
-
-    This is the recommended way to inspect normalized Delta tables.
-    Encrypted binary columns (``value``, ``quantity``, ``amount``) are
-    automatically decrypted into floats for easy viewing.
-
-    Parameters
-    ----------
-    table_path:
-        A layer-qualified alias (e.g. ``ibkr_snapshot_raw``),
-        an S3 URI, or a local path to the Delta table directory.
-    sql:
-        SQL expression.  The table is available as ``delta_table``.
-        Defaults to ``SELECT * FROM delta_table``.
-    encrypted_cols:
-        Column names that contain Fernet-encrypted binary values.
-        Defaults to ``["value"]``.
-    key:
-        Fernet key.  When *None*, loaded from the default location.
-
-    Returns
-    -------
-    polars.DataFrame
-        Query result with encrypted columns replaced by decrypted floats.
-
-    Example
-    -------
-    >>> df = decrypted_df("ibkr_snapshot_raw")
-    >>> df[["label", "value", "currency"]].head()
-    >>> df.filter(pl.col("position_type") == "EQUITY")  # Polars filter
-    """
-    if sql is None:
-        sql = "SELECT * FROM delta_table"
-    result = query(table_path, sql, decrypt=False)
-    df = result.pl()
-
-    if encrypted_cols is None:
-        encrypted_cols = list(_ENCRYPTED_COLUMNS)
-    if key is None:
-        key = load_key()
-
-    for col in encrypted_cols:
-        if col in df.columns:
-            df = df.with_columns(
-                pl.col(col).map_elements(
-                    lambda v: _decrypt_value(v, key),
-                    return_dtype=pl.Float64,
-                )
-            )
-
-    # Round decrypted float columns to 2 decimal places.
-    for col in encrypted_cols:
-        if col in df.columns:
-            df = df.with_columns(pl.col(col).round(2))
-
-    return df
