@@ -7,7 +7,8 @@ Verifies that:
 - ``get_storage`` returns the active config
 - ``pipeline.paths`` module delegates to the active ``StorageConfig``
 - ``S3Backend`` generates correct URIs and has no-op ensure_parent
-- ``LocalBackend`` creates directories on ensure_parent
+- ``LocalBackend.ensure_parent`` cleans up orphaned parquet files
+  from failed writes (e.g. Docker volume mount rename failures)
 """
 
 from __future__ import annotations
@@ -168,6 +169,67 @@ class TestLocalBackend:
         path = str(tmp_path / "raw" / "ibkr_snapshot")
         backend.ensure_parent(path)
         assert (tmp_path / "raw").exists()
+
+    def test_ensure_parent_creates_parent_dirs(self, tmp_path: Path):
+        backend = LocalBackend(tmp_path)
+        path = str(tmp_path / "raw" / "ibkr_snapshot")
+        backend.ensure_parent(path)
+        assert (tmp_path / "raw").is_dir()
+
+    def test_ensure_parent_cleans_orphaned_parquets(self, tmp_path: Path):
+        """Corrupted table dir (parquet files, no _delta_log) is cleaned up."""
+        backend = LocalBackend(tmp_path)
+        table_dir = tmp_path / "raw" / "trading212_snapshot"
+        table_dir.mkdir(parents=True)
+        # Simulate a failed write: parquet files but no _delta_log
+        (table_dir / "part-00000-abc.snappy.parquet").write_bytes(b"\x00")
+        (table_dir / "part-00001-def.snappy.parquet").write_bytes(b"\x00")
+
+        backend.ensure_parent(str(table_dir))
+
+        # Orphaned parquet files should be removed
+        assert list(table_dir.glob("*.parquet")) == []
+        # The directory itself should be removed so write_deltalake starts fresh
+        assert not table_dir.exists()
+
+    def test_ensure_parent_preserves_valid_table(self, tmp_path: Path):
+        """A valid Delta table (with _delta_log) is left intact."""
+        backend = LocalBackend(tmp_path)
+        table_dir = tmp_path / "raw" / "ibkr_snapshot"
+        table_dir.mkdir(parents=True)
+        delta_log = table_dir / "_delta_log"
+        delta_log.mkdir()
+        (delta_log / "00000000000000000000.json").write_text("{}")
+        (table_dir / "part-00000-abc.snappy.parquet").write_bytes(b"\x00")
+
+        backend.ensure_parent(str(table_dir))
+
+        # Valid table should be untouched
+        assert (table_dir / "_delta_log").is_dir()
+        assert (table_dir / "part-00000-abc.snappy.parquet").exists()
+
+    def test_ensure_parent_noop_for_empty_dir(self, tmp_path: Path):
+        """An empty table directory is removed to let write_deltalake start fresh."""
+        backend = LocalBackend(tmp_path)
+        table_dir = tmp_path / "raw" / "ibkr_snapshot"
+        table_dir.mkdir(parents=True)
+
+        backend.ensure_parent(str(table_dir))
+
+        # Empty dir removed
+        assert not table_dir.exists()
+        # But parent dir created
+        assert (tmp_path / "raw").is_dir()
+
+    def test_ensure_parent_noop_for_nonexistent_path(self, tmp_path: Path):
+        """A path that doesn't exist yet is simply prepared (parent created)."""
+        backend = LocalBackend(tmp_path)
+        path = str(tmp_path / "raw" / "new_table")
+
+        backend.ensure_parent(path)
+
+        assert (tmp_path / "raw").is_dir()
+        assert not (tmp_path / "raw" / "new_table").exists()
 
 
 class TestS3Backend:

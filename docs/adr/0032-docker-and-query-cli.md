@@ -65,6 +65,10 @@ Add a `docker` job to ci.yml that builds the image and verifies `--help`,
   Docker volume mounts on Windows (NTFS) and network filesystems do not support
   the atomic renames that Delta Lake's commit protocol requires; safe for
   single-writer usage (the pipeline runs sequentially)
+- `LocalBackend.ensure_parent` cleans up orphaned parquet files from failed writes:
+  if a table directory has parquet files but no `_delta_log/`, the orphaned files
+  are removed and the directory is deleted so the next `write_deltalake` starts
+  fresh. This recovers from the corrupted state left by Docker volume mount failures.
 - `refresh()` call before every query ensures table discovery is current
 - `.dockerignore` ensures no secrets or local data enter the image
 - Docker build requires `pipeline/` and `pyproject.toml` in the build context

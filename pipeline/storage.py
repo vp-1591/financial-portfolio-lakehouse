@@ -47,7 +47,10 @@ class StorageBackend(Protocol):
     """
 
     def table_path(self, layer: str, table_name: str) -> str: ...
-    def ensure_parent(self, table_path: str) -> None: ...
+    def ensure_parent(self, table_path: str) -> None:
+        """Create parent dirs and clean up orphaned files from failed writes."""
+        ...
+
     @property
     def storage_options(self) -> dict[str, str] | None: ...
 
@@ -70,7 +73,25 @@ class LocalBackend:
         return str(self.data_dir / layer / table_name)
 
     def ensure_parent(self, table_path: str) -> None:
-        Path(table_path).parent.mkdir(parents=True, exist_ok=True)
+        """Create parent directory and clean up orphaned files from failed writes.
+
+        If the table directory exists but contains parquet files without a
+        ``_delta_log/`` sub-directory, the table is in a corrupted state from
+        a previous failed write (e.g. Docker volume mount rename failure).
+        Remove the orphaned files so ``write_deltalake`` can start fresh.
+        """
+        table_dir = Path(table_path)
+        table_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        if table_dir.exists() and not (table_dir / "_delta_log").exists():
+            for parquet in table_dir.glob("*.parquet"):
+                parquet.unlink()
+            # Remove empty dir to let write_deltalake create it cleanly
+            try:
+                table_dir.rmdir()
+            except OSError:
+                # Directory not empty (e.g. unexpected files) — leave it
+                pass
 
     @property
     def storage_options(self) -> dict[str, str]:
