@@ -26,4 +26,4 @@ data/
 *.egg-info/
 
 # Exploration notebooks
-exploration/prompt.txt
+exploration/
