@@ -8,6 +8,8 @@ Usage::
     python -m pipeline.run allocate --target-currency EUR
     python -m pipeline.run full
     python -m pipeline.run keygen
+    python -m pipeline.run query "SELECT * FROM portfolio_allocation_analytics"
+    python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
 
 Connector enable/disable is controlled by environment variables:
 
@@ -67,6 +69,32 @@ def parse_isin_override(value: str) -> tuple[str, str]:
 def cmd_keygen(args: argparse.Namespace) -> int:
     """Generate a Fernet encryption key."""
     keygen_main()
+    return 0
+
+
+def cmd_query(args: argparse.Namespace) -> int:
+    """Execute a SQL query against Delta tables and print results."""
+    from pipeline.query import decrypt_df, get_connection, refresh
+
+    refresh()  # Re-discover tables in case new ones were written
+    conn = get_connection()
+
+    try:
+        result = conn.sql(args.sql).pl()
+    except Exception as exc:
+        print(f"Query error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.decrypt:
+        result = decrypt_df(result)
+
+    if args.format == "table":
+        print(result)
+    elif args.format == "csv":
+        print(result.write_csv())
+    elif args.format == "json":
+        print(result.write_json())
+
     return 0
 
 
@@ -417,6 +445,24 @@ def main() -> int:
     # keygen
     subparsers.add_parser("keygen", help="Generate encryption key")
 
+    # query
+    query_parser = subparsers.add_parser(
+        "query",
+        help="Query Delta tables via SQL",
+    )
+    query_parser.add_argument("sql", help="SQL query to execute")
+    query_parser.add_argument(
+        "--decrypt",
+        action="store_true",
+        help="Decrypt Fernet-encrypted binary columns",
+    )
+    query_parser.add_argument(
+        "--format",
+        choices=["table", "csv", "json"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
     # fetch
     fetch_parser = subparsers.add_parser("fetch", help="Fetch data from brokers")
     fetch_parser.add_argument(
@@ -535,6 +581,7 @@ def main() -> int:
         "consolidate": cmd_consolidate,
         "allocate": cmd_allocate,
         "full": cmd_full,
+        "query": cmd_query,
     }
 
     return commands[args.command](args)

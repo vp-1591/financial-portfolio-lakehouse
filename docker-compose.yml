@@ -1,0 +1,13 @@
+services:
+  pipeline:
+    build: .
+    image: investment-portfolio-pipeline
+    env_file:
+      - .env
+    environment:
+      - PIPELINE_DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+      - ./.secrets:/app/.secrets
+      # - ./xtb-reports:/data/xtb-reports:ro  # uncomment for XTB
+    # No command override — use ENTRYPOINT from Dockerfile

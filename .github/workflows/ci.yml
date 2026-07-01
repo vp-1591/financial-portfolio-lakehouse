@@ -45,3 +45,17 @@ jobs:
 
       - name: Run tests
         run: .venv/bin/python -m pytest tests/ -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t pipeline .
+
+      - name: Verify container starts
+        run: docker run --rm pipeline --help
+
+      - name: Verify query subcommand
+        run: docker run --rm pipeline query --help
