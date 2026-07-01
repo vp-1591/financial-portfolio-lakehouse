@@ -46,6 +46,8 @@ variable "iam_user_name" {
 # ------------------------------------------------------------------------------
 
 terraform {
+  required_version = ">= 1.11"
+
   # Backend configuration is in backend.tf (gitignored) — copy from backend.tf.sample.
   required_providers {
     aws = {
