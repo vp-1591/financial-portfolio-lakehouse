@@ -22,10 +22,15 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,7 +52,10 @@ class StorageBackend(Protocol):
     """
 
     def table_path(self, layer: str, table_name: str) -> str: ...
-    def ensure_parent(self, table_path: str) -> None: ...
+    def ensure_parent(self, table_path: str) -> None:
+        """Create parent dirs and clean up orphaned files from failed writes."""
+        ...
+
     @property
     def storage_options(self) -> dict[str, str] | None: ...
 
@@ -57,7 +65,10 @@ class LocalBackend:
 
     ``table_path()`` returns absolute filesystem paths.
     ``ensure_parent()`` creates parent directories as needed.
-    ``storage_options`` returns ``None`` — no cloud config needed.
+    ``storage_options`` returns ``{"allow_unsafe_rename": "true"}`` because
+    Docker volume mounts on Windows (NTFS) and some network filesystems do not
+    support the atomic renames that Delta Lake's commit protocol requires.
+    This is safe for single-writer usage (the pipeline runs sequentially).
     """
 
     def __init__(self, data_dir: Path) -> None:
@@ -67,11 +78,35 @@ class LocalBackend:
         return str(self.data_dir / layer / table_name)
 
     def ensure_parent(self, table_path: str) -> None:
-        Path(table_path).parent.mkdir(parents=True, exist_ok=True)
+        """Create parent directory and rescue orphaned files from failed writes.
+
+        If the table directory exists but contains parquet files without a
+        ``_delta_log/`` sub-directory, the table is in a corrupted state from
+        a previous failed write (e.g. Docker volume mount rename failure).
+        Move the orphaned directory to ``.rescue/<table_name>_<timestamp>/``
+        under the data directory so ``write_deltalake`` can start fresh
+        and the data remains recoverable.
+        """
+        table_dir = Path(table_path)
+        table_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        if table_dir.exists() and not (table_dir / "_delta_log").exists():
+            rescue_dir = (
+                self.data_dir
+                / ".rescue"
+                / f"{table_dir.name}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+            )
+            rescue_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(table_dir), str(rescue_dir))
+            logger.warning(
+                "Rescued orphaned table %s → %s",
+                table_dir,
+                rescue_dir,
+            )
 
     @property
-    def storage_options(self) -> dict[str, str] | None:
-        return None
+    def storage_options(self) -> dict[str, str]:
+        return {"allow_unsafe_rename": "true"}
 
 
 class S3Backend:
@@ -87,6 +122,10 @@ class S3Backend:
     ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``.
     The ``deltalake`` library handles S3 connectivity via its Rust
     ``object_store`` crate — no ``boto3`` dependency required.
+
+    For S3-compatible stores (MinIO, etc.), set ``S3_ENDPOINT_URL``
+    to the server URL (e.g. ``http://minio:9000``) and
+    ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
     """
 
     def __init__(self, bucket: str, prefix: str = S3_DEFAULT_PREFIX) -> None:
@@ -123,6 +162,9 @@ class S3Backend:
         Empty credentials are omitted so that ``object_store`` can fall
         back to its own credential chain (environment variables, IAM
         role, etc.) rather than overriding with an empty string.
+
+        For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
+        ``S3_ALLOW_HTTP`` environment variables.
         """
         opts: dict[str, str] = {}
         key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
@@ -133,6 +175,12 @@ class S3Backend:
         if secret:
             opts["aws_secret_access_key"] = secret
         opts["aws_region"] = region
+        endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
+        if endpoint_url:
+            opts["aws_endpoint_url"] = endpoint_url
+        allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower()
+        if allow_http in ("1", "true", "yes"):
+            opts["aws_allow_http"] = "true"
         return opts
 
 

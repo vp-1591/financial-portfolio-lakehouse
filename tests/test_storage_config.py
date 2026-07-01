@@ -7,7 +7,9 @@ Verifies that:
 - ``get_storage`` returns the active config
 - ``pipeline.paths`` module delegates to the active ``StorageConfig``
 - ``S3Backend`` generates correct URIs and has no-op ensure_parent
-- ``LocalBackend`` creates directories on ensure_parent
+- ``LocalBackend.ensure_parent`` rescues orphaned parquet files
+  from failed writes (e.g. Docker volume mount rename failures)
+  to a ``.rescue/`` directory under the data directory
 """
 
 from __future__ import annotations
@@ -169,6 +171,79 @@ class TestLocalBackend:
         backend.ensure_parent(path)
         assert (tmp_path / "raw").exists()
 
+    def test_ensure_parent_creates_parent_dirs(self, tmp_path: Path):
+        backend = LocalBackend(tmp_path)
+        path = str(tmp_path / "raw" / "ibkr_snapshot")
+        backend.ensure_parent(path)
+        assert (tmp_path / "raw").is_dir()
+
+    def test_ensure_parent_rescues_orphaned_parquets(self, tmp_path: Path):
+        """Corrupted table dir (parquet files, no _delta_log) is moved to .rescue/."""
+        backend = LocalBackend(tmp_path)
+        table_dir = tmp_path / "raw" / "trading212_snapshot"
+        table_dir.mkdir(parents=True)
+        # Simulate a failed write: parquet files but no _delta_log
+        (table_dir / "part-00000-abc.snappy.parquet").write_bytes(b"\x00")
+        (table_dir / "part-00001-def.snappy.parquet").write_bytes(b"\x00")
+
+        backend.ensure_parent(str(table_dir))
+
+        # Original table directory should be removed so write_deltalake starts fresh
+        assert not table_dir.exists()
+        # Orphaned files should be rescued to .rescue/ under data_dir
+        rescue_dir = tmp_path / ".rescue"
+        assert rescue_dir.is_dir()
+        rescued = list(rescue_dir.iterdir())
+        assert len(rescued) == 1
+        assert rescued[0].name.startswith("trading212_snapshot_")
+        # The rescued directory should contain the orphaned parquet files
+        assert len(list(rescued[0].glob("*.parquet"))) == 2
+
+    def test_ensure_parent_preserves_valid_table(self, tmp_path: Path):
+        """A valid Delta table (with _delta_log) is left intact."""
+        backend = LocalBackend(tmp_path)
+        table_dir = tmp_path / "raw" / "ibkr_snapshot"
+        table_dir.mkdir(parents=True)
+        delta_log = table_dir / "_delta_log"
+        delta_log.mkdir()
+        (delta_log / "00000000000000000000.json").write_text("{}")
+        (table_dir / "part-00000-abc.snappy.parquet").write_bytes(b"\x00")
+
+        backend.ensure_parent(str(table_dir))
+
+        # Valid table should be untouched
+        assert (table_dir / "_delta_log").is_dir()
+        assert (table_dir / "part-00000-abc.snappy.parquet").exists()
+
+    def test_ensure_parent_rescues_empty_dir(self, tmp_path: Path):
+        """An empty table directory is moved to .rescue/ so write_deltalake starts fresh."""
+        backend = LocalBackend(tmp_path)
+        table_dir = tmp_path / "raw" / "ibkr_snapshot"
+        table_dir.mkdir(parents=True)
+
+        backend.ensure_parent(str(table_dir))
+
+        # Empty dir moved to rescue
+        assert not table_dir.exists()
+        # But parent dir created
+        assert (tmp_path / "raw").is_dir()
+        # Rescue dir contains the moved empty directory
+        rescue_dir = tmp_path / ".rescue"
+        assert rescue_dir.is_dir()
+        rescued = list(rescue_dir.iterdir())
+        assert len(rescued) == 1
+        assert rescued[0].name.startswith("ibkr_snapshot_")
+
+    def test_ensure_parent_noop_for_nonexistent_path(self, tmp_path: Path):
+        """A path that doesn't exist yet is simply prepared (parent created)."""
+        backend = LocalBackend(tmp_path)
+        path = str(tmp_path / "raw" / "new_table")
+
+        backend.ensure_parent(path)
+
+        assert (tmp_path / "raw").is_dir()
+        assert not (tmp_path / "raw" / "new_table").exists()
+
 
 class TestS3Backend:
     """Test S3Backend URI generation and no-op ensure_parent."""
@@ -255,6 +330,54 @@ class TestS3Backend:
             assert "aws_secret_access_key" not in opts
             # Region is always present (has default).
             assert opts["aws_region"] == "eu-west-1"
+
+    def test_storage_options_includes_endpoint_url(self):
+        """S3_ENDPOINT_URL is included in storage options for MinIO."""
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "minioadmin",
+                "AWS_SECRET_ACCESS_KEY": "minioadmin",
+                "AWS_REGION": "us-east-1",
+                "S3_ENDPOINT_URL": "http://minio:9000",
+            },
+        ):
+            backend = S3Backend(bucket="pipeline")
+            opts = backend.storage_options
+            assert opts["aws_endpoint_url"] == "http://minio:9000"
+
+    def test_storage_options_includes_allow_http(self):
+        """S3_ALLOW_HTTP=true adds aws_allow_http to storage options."""
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "minioadmin",
+                "AWS_SECRET_ACCESS_KEY": "minioadmin",
+                "AWS_REGION": "us-east-1",
+                "S3_ALLOW_HTTP": "true",
+            },
+        ):
+            backend = S3Backend(bucket="pipeline")
+            opts = backend.storage_options
+            assert opts["aws_allow_http"] == "true"
+
+    def test_storage_options_omits_endpoint_url_when_not_set(self):
+        """aws_endpoint_url is absent when S3_ENDPOINT_URL is not set."""
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "test-key",
+                "AWS_SECRET_ACCESS_KEY": "test-secret",
+                "AWS_REGION": "us-east-1",
+            },
+            clear=False,
+        ):
+            os.environ.pop("S3_ENDPOINT_URL", None)
+            os.environ.pop("S3_ALLOW_HTTP", None)
+            backend = S3Backend(bucket="my-bucket")
+            opts = backend.storage_options
+            assert "aws_endpoint_url" not in opts
+            assert "aws_allow_http" not in opts
 
 
 class TestPathsModule:

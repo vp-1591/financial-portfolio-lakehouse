@@ -92,6 +92,40 @@ Generate an encryption key (only needed once):
 .venv\Scripts\python -m pipeline.run keygen
 ```
 
+### Docker
+
+Run the pipeline in a container without installing Python. Data is stored in
+MinIO (S3-compatible storage) to avoid filesystem compatibility issues with
+Docker volume mounts on Windows.
+
+```bash
+# Build and start MinIO + pipeline
+docker compose build
+docker compose up minio -d   # start MinIO in background
+
+# First-time setup: generate encryption key
+docker compose run --rm pipeline keygen
+
+# Run the full pipeline
+docker compose run --rm pipeline full
+
+# Query Delta tables (human-readable)
+docker compose run --rm pipeline query "SELECT * FROM portfolio_allocation_analytics"
+
+# Query with decryption
+docker compose run --rm pipeline query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
+
+# Export as CSV
+docker compose run --rm pipeline query "SELECT * FROM portfolio_allocation_analytics" --format csv
+
+# MinIO console (browse data at http://localhost:9001)
+# Login: minioadmin / minioadmin
+```
+
+Data persists in the `minio-data` Docker volume. Secrets come from `.env`
+(via `env_file` in docker-compose). MinIO credentials are configured in
+`docker-compose.yml` (default: `minioadmin` / `minioadmin`).
+
 ### Secrets Management
 
 **Secrets (API keys, encryption keys) are never stored in config files or S3.**
@@ -132,6 +166,8 @@ Environment variables always take priority over `.env` file values.
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
 | `AWS_REGION` | AWS region (default: `eu-west-1`) |
+| `S3_ENDPOINT_URL` | Custom S3 endpoint (for MinIO or other S3-compatible stores) |
+| `S3_ALLOW_HTTP` | Allow non-HTTPS connections to S3 endpoint (set to `true` for MinIO) |
 
 All connectors are **enabled by default**. Set a toggle to `0`, `false`, or
 `no` to disable it.
@@ -143,6 +179,10 @@ in S3. AWS credentials come from `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`. No additional dependencies
 are needed — `deltalake` handles S3 natively via its Rust `object_store`
 crate.
+
+For S3-compatible stores like MinIO, set `S3_ENDPOINT_URL` to the server
+URL (e.g. `http://minio:9000`) and `S3_ALLOW_HTTP=true` to allow non-HTTPS
+connections. The Docker setup uses MinIO by default — see the Docker section.
 
 The `keygen` command only works in local mode. For S3, set
 `ENCRYPTION_KEY` as an environment variable — **the encryption
@@ -188,6 +228,44 @@ $env:ENCRYPTION_KEY = "..."
 
 Go to Actions → Pipeline → Run workflow. Secrets are injected automatically
 from GitHub Secrets. See `.github/workflows/pipeline.yml`.
+
+### Querying data
+
+After running the pipeline, query Delta tables with SQL:
+
+```bash
+# List all tables (Python API)
+python -m pipeline.run query "SHOW TABLES"
+
+# Query with human-readable output
+python -m pipeline.run query "SELECT * FROM portfolio_allocation_analytics"
+
+# Decrypt encrypted columns
+python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
+
+# Export as CSV
+python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_allocation_analytics" --format csv
+
+# Export as JSON
+python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --format json --decrypt
+```
+
+Table names follow the `{name}_{layer}` convention:
+
+| Table | Layer |
+|-------|-------|
+| `ibkr_snapshot_raw` | Raw |
+| `ibkr_snapshot_normalized` | Normalized |
+| `trading212_snapshot_raw` | Raw |
+| `trading212_snapshot_normalized` | Normalized |
+| `xtb_snapshot_raw` | Raw |
+| `xtb_snapshot_normalized` | Normalized |
+| `consolidated_holdings_normalized` | Normalized |
+| `portfolio_allocation_analytics` | Analytics |
+
+Use `--decrypt` to decode Fernet-encrypted binary columns (financial values
+in normalized tables, payloads in raw tables). Without `--decrypt`, encrypted
+columns appear as binary data.
 
 ### Infrastructure
 
