@@ -34,20 +34,20 @@ If ADR X explicitly says "supersedes ADR Y" or "merged from ADR Y", mark Y as su
 ### Heuristic 2 — Same-component, later-replaces-earlier
 If two ADRs affect the same component and the later one removes or replaces what the earlier one introduced, mark the earlier as superseded — **even if the later ADR does not reference the earlier one by number**. The key signal is that the later ADR's Decision section uses words like "Delete", "Remove", "Replace", "Rewrite", or "Redesign" for a module, config format, or API that the earlier ADR introduced.
 
-For example: ADR 0020's Decision says "Delete `pipeline/config.py`" and "Remove `pyyaml` dependency" — ADR 0018 introduced that config system and ADR 0015 configured data paths through it. Both are superseded by 0020 even though 0020 does not cite them by number.
+For example: if a later ADR's Decision says "Delete `pipeline/config.py`" and "Remove `pyyaml` dependency", an earlier ADR that introduced that config system is superseded, even if the later ADR does not cite it by number.
 
-Similarly: ADR 0029 removed `--account-id`, `--user-agent`, and gateway code — ADRs 0007, 0010, and 0011 introduced or fixed those features. They are superseded by 0029.
+Similarly: if a later ADR removed `--account-id`, `--user-agent`, and gateway code, the earlier ADRs that introduced or fixed those features are superseded by it.
 
 ### Heuristic 3 — Bugfix subsumed by redesign
 If a bugfix ADR modified code introduced by an earlier ADR, and a subsequent ADR redesigns the entire subsystem (look for "redesign", "replace", "rewrite", "drop wrappers" in the Decision), the bugfix ADR is superseded by the redesign ADR.
 
-For example: ADR 0024 fixed DuckDB S3 credential propagation. ADR 0027 redesigned the query API with "native DuckDB connection, decrypt utility, drop wrappers" — the code that 0024 fixed no longer exists. ADR 0024 is superseded by 0027.
+For example: if an ADR fixed DuckDB S3 credential propagation, and a later ADR redesigned the query API with "native DuckDB connection, decrypt utility, drop wrappers", the code the bugfix ADR touched no longer exists. The bugfix ADR is superseded by the redesign ADR.
 
 ### Heuristic 4 — Do NOT mark as superseded
 - Do not mark a foundational ADR as superseded just because later ADRs build on it.
 - Do not mark an ADR as superseded just because the codebase has evolved past it — only when a later ADR explicitly replaces or contradicts it.
 
-For each supersession, **write a one-sentence rationale** explaining why the ADR is superseded (e.g., "ADR 0018 introduced YAML config; ADR 0020 removed it entirely").
+For each supersession, **write a one-sentence rationale** explaining why the ADR is superseded (e.g., "Introduced YAML config; the later ADR removed it entirely").
 
 ## Step 5 — Build the index table
 
@@ -67,9 +67,9 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 
 | ADR | Title | Created | Status | Superseded by |
 |-----|-------|---------|--------|---------------|
-| 0001 | Disable Pytest Cache Provider | 2026-06-15 | active | — |
+| 0001 | ... | 2026-06-15 | active | — |
 | ... | ... | ... | ... | ... |
-| 0018 | Bitwarden Secrets and YAML Config | 2026-06-28 | superseded | 0020 |
+| 0018 | ... | 2026-06-28 | superseded | 0020 |
 | ... | ... | ... | ... | ... |
 
 <!-- Duplicate-number mapping
@@ -108,8 +108,8 @@ Do NOT modify any other content in the ADR file. If a "Superseded by" notice alr
 
 | ADR | Superseded by | Rationale |
 |-----|---------------|-----------|
-| 0018 | 0020 | Introduced YAML config; ADR 0020 removed it entirely |
-| 0019 | 0020 | Introduced S3/GitHub secrets alongside YAML; ADR 0020 removed YAML config |
+| 0018 | 0020 | Introduced YAML config; the later ADR removed it entirely |
+| 0019 | 0020 | Introduced S3/GitHub secrets alongside YAML; the later ADR removed YAML config |
 | ... | ... | ... |
 ```
 
