@@ -12,7 +12,9 @@ Verifies that:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -210,6 +212,49 @@ class TestS3Backend:
         backend = S3Backend(bucket="my-bucket")
         # Should not raise — S3 doesn't need parent dirs
         backend.ensure_parent("s3://my-bucket/pipeline/raw/ibkr_snapshot")
+
+    def test_storage_options_lowercase_keys(self):
+        """S3Backend.storage_options returns lowercase keys for deltalake."""
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "test-key-id",
+                "AWS_SECRET_ACCESS_KEY": "test-secret",
+                "AWS_REGION": "us-east-1",
+            },
+        ):
+            backend = S3Backend(bucket="my-bucket")
+            opts = backend.storage_options
+            # Keys must be lowercase — deltalake's object_store only
+            # recognizes lowercase keys.
+            assert "aws_access_key_id" in opts
+            assert "aws_secret_access_key" in opts
+            assert "aws_region" in opts
+            # Uppercase keys must NOT be present.
+            assert "AWS_ACCESS_KEY_ID" not in opts
+            assert "AWS_SECRET_ACCESS_KEY" not in opts
+            assert "AWS_REGION" not in opts
+            # Values come from environment variables.
+            assert opts["aws_access_key_id"] == "test-key-id"
+            assert opts["aws_secret_access_key"] == "test-secret"
+            assert opts["aws_region"] == "us-east-1"
+
+    def test_storage_options_omits_empty_credentials(self):
+        """Empty credential strings are omitted so object_store can fall back."""
+        with patch.dict(
+            os.environ,
+            {"AWS_REGION": "eu-west-1"},
+            clear=False,
+        ):
+            os.environ.pop("AWS_ACCESS_KEY_ID", None)
+            os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+            backend = S3Backend(bucket="my-bucket")
+            opts = backend.storage_options
+            # Empty credentials should be absent, not present with "".
+            assert "aws_access_key_id" not in opts
+            assert "aws_secret_access_key" not in opts
+            # Region is always present (has default).
+            assert opts["aws_region"] == "eu-west-1"
 
 
 class TestPathsModule:
