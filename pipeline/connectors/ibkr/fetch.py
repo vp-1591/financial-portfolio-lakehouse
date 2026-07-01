@@ -1,17 +1,14 @@
-"""IBKR connector: fetch raw snapshot data from the IBKR Client Portal API or Flex Web Service."""
+"""IBKR connector: fetch raw snapshot data via the Flex Web Service API."""
 
 from __future__ import annotations
 
 import hashlib
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 import pyarrow as pa
 
-from pipeline.connectors.ibkr.client import (
-    IbkrClient,
-    IbkrError,
-    account_id as get_account_id,
-)
+from pipeline.connectors.ibkr.client import IbkrFlexClient
 from pipeline.raw.models import RAW_SCHEMA
 
 
@@ -25,16 +22,13 @@ def fetch_snapshot_via_flex(
 ) -> pa.Table:
     """Fetch IBKR positions and cash data via the Flex Web Service API.
 
-    This is an alternative to :func:`fetch_snapshot` that uses the Flex Web
-    Service instead of the Client Portal Gateway.  No local gateway process or
-    browser login is required — only a Flex token and query ID.
+    No local gateway process or browser login is required — only a Flex
+    token and query ID.
 
     The raw XML response is stored as encrypted payloads in the raw-layer
-    table, using ``source="flex"`` to distinguish Flex data from gateway
-    data during transformation.
+    table, using ``source="flex"`` to distinguish Flex data during
+    transformation.
     """
-    from scripts.ibkr_net_worth import IbkrFlexClient
-
     client = IbkrFlexClient(
         token=token,
         query_id=query_id,
@@ -44,10 +38,6 @@ def fetch_snapshot_via_flex(
 
     ref_code = client.request_report()
     root = client.fetch_report(ref_code, retries=retries, delay=delay)
-
-    # Store the full XML as a single raw payload so the transform step can
-    # parse positions, account info, and cash report from it.
-    import xml.etree.ElementTree as ET
 
     xml_bytes = ET.tostring(root, encoding="unicode").encode("utf-8")
 
@@ -63,96 +53,6 @@ def fetch_snapshot_via_flex(
             "payload_hash": [payload_hash],
             "account_id": [""],
             "source_file": [""],
-        },
-        schema=RAW_SCHEMA,
-    )
-
-
-def fetch_snapshot(
-    base_url: str = "https://localhost:5000/v1/api",
-    account: str | None = None,
-    verify_tls: bool = False,
-    timeout: float = 20.0,
-    skip_auth_check: bool = False,
-    require_brokerage_session: bool = False,
-) -> pa.Table:
-    """Fetch IBKR positions and ledger data and return a raw-layer table.
-
-    Each API response is captured as a separate row with the endpoint
-    path stored in the ``source`` column.
-    """
-    client = IbkrClient(
-        base_url, verify_tls=verify_tls, timeout=timeout, capture_raw=True
-    )
-
-    if not skip_auth_check:
-        if require_brokerage_session:
-            status = client.auth_status()
-            if not status.get("authenticated"):
-                message = status.get("message") or "not authenticated"
-                raise IbkrError(
-                    f"IBKR brokerage session is not authenticated ({message}). "
-                    "Open the gateway in your browser and sign in first."
-                )
-        else:
-            status = client.sso_validate()
-            if not status.get("RESULT"):
-                raise IbkrError(
-                    "IBKR gateway SSO session is not valid. Open the gateway in your "
-                    "browser and sign in first."
-                )
-
-    accounts = client.accounts()
-    account_ids = [account] if account else [get_account_id(a) for a in accounts]
-
-    now = datetime.now(timezone.utc)
-    fetched_ats: list[datetime] = []
-    brokers: list[str] = []
-    sources: list[str] = []
-    payloads: list[bytes] = []
-    payload_hashes: list[str] = []
-    account_ids_col: list[str] = []
-    source_files: list[str] = []
-
-    import hashlib
-
-    for acct_id in account_ids:
-        # Fetch positions
-        client.captured_responses.clear()
-        client.positions(acct_id)
-        for path, raw_bytes in client.captured_responses:
-            fetched_ats.append(now)
-            brokers.append("IBKR")
-            sources.append(path)
-            payloads.append(raw_bytes)
-            payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-            account_ids_col.append(acct_id)
-            source_files.append("")
-
-        # Fetch ledger
-        client.captured_responses.clear()
-        client.ledger(acct_id)
-        for path, raw_bytes in client.captured_responses:
-            fetched_ats.append(now)
-            brokers.append("IBKR")
-            sources.append(path)
-            payloads.append(raw_bytes)
-            payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-            account_ids_col.append(acct_id)
-            source_files.append("")
-
-    # Also capture contract info for any conids found
-    # This is done as a secondary enrichment pass, not stored in raw
-
-    return pa.table(
-        {
-            "fetched_at": fetched_ats,
-            "broker": brokers,
-            "source": sources,
-            "payload": payloads,
-            "payload_hash": payload_hashes,
-            "account_id": account_ids_col,
-            "source_file": source_files,
         },
         schema=RAW_SCHEMA,
     )

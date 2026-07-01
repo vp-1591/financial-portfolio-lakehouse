@@ -1,17 +1,30 @@
-"""IBKR API client — moved from scripts/ibkr_net_worth.py.
+"""IBKR API client for the Flex Web Service.
 
-This module preserves the original client logic and adds raw response
-interception for pipeline ingestion.
+This module provides the ``IbkrFlexClient`` for fetching data via the IBKR
+Flex Web Service API, plus parsing helpers for Flex XML responses.
+
+Previously, this module also contained the Client Portal Gateway client
+(``IbkrClient``) and associated gateway-only helpers. Those were removed
+because the pipeline now exclusively uses the Flex Web Service API.
 """
 
 from __future__ import annotations
 
-import json
-import ssl
+import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from typing import Any
+
+# ISO 4217 currency codes are exactly 3 uppercase letters.
+_IS_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+
+DEFAULT_FLEX_BASE_URL = (
+    "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+)
+DEFAULT_QUERY_ID = "1554188"
 
 
 class IbkrError(RuntimeError):
@@ -27,140 +40,140 @@ class IbkrHttpError(IbkrError):
         super().__init__(f"{method} {url} failed: HTTP {code} {details}")
 
 
-class IbkrClient:
-    """HTTP client for the IBKR Client Portal Web API.
+class IbkrFlexClient:
+    """Client for the IBKR Flex Web Service API.
 
-    Parameters
-    ----------
-    base_url:
-        API base URL, e.g. ``https://localhost:5000/v1/api``.
-    verify_tls:
-        Whether to verify the gateway TLS certificate.
-    timeout:
-        HTTP request timeout in seconds.
-    capture_raw:
-        When *True*, every successful ``request()`` call appends the
-        raw response bytes to :attr:`captured_responses` as ``(path,
-        raw_bytes)`` tuples.  This enables the pipeline connector to
-        store exact API payloads without re-fetching.
+    The Flex Web Service uses a two-step process:
+    1. Send a request to generate a report, receiving a reference code.
+    2. Poll for the report using the reference code until it is ready.
     """
 
     def __init__(
         self,
-        base_url: str,
-        verify_tls: bool = False,
-        timeout: float = 20.0,
-        capture_raw: bool = False,
+        token: str,
+        query_id: str = DEFAULT_QUERY_ID,
+        base_url: str = DEFAULT_FLEX_BASE_URL,
+        timeout: float = 30.0,
     ) -> None:
+        self.token = token
+        self.query_id = query_id
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self.ssl_context = None if verify_tls else ssl._create_unverified_context()
-        self.capture_raw = capture_raw
-        self.captured_responses: list[tuple[str, bytes]] = []
 
-    def request(
-        self, method: str, path: str, body: dict[str, Any] | None = None
-    ) -> Any:
-        """Make an HTTP request and return the parsed JSON response."""
-        url = f"{self.base_url}{path}"
-        data = None
-        headers = {"Accept": "application/json"}
-        if body is not None:
-            data = json.dumps(body).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    def _request(self, path: str, params: dict[str, str]) -> str:
+        """Make an HTTP GET request and return the response body as text."""
+        query_string = urllib.parse.urlencode(params)
+        url = f"{self.base_url}/{path}?{query_string}"
+        req = urllib.request.Request(url, headers={"Accept": "application/xml"})
         try:
-            with urllib.request.urlopen(
-                req, timeout=self.timeout, context=self.ssl_context
-            ) as response:
-                raw_bytes = response.read()
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                return response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="replace")
-            raise IbkrHttpError(method, url, exc.code, details) from exc
+            raise IbkrHttpError("GET", url, exc.code, details) from exc
         except urllib.error.URLError as exc:
             raise IbkrError(
-                f"{method} {url} failed: {exc.reason}. Is the IBKR Client Portal "
-                "Gateway running and authenticated?"
+                f"GET {url} failed: {exc.reason}. Check your network connection "
+                "and the Flex Web Service base URL."
             ) from exc
 
-        if self.capture_raw:
-            self.captured_responses.append((path, raw_bytes))
+    def request_report(self) -> str:
+        """Submit a Flex Query request and return the reference code.
 
-        raw = raw_bytes.decode("utf-8")
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
+        Raises IbkrError if the response indicates an error (e.g. invalid token
+        or query ID).
+        """
+        params = {"t": self.token, "q": self.query_id, "v": "3"}
+        body = self._request("SendRequest", params)
+        root = ET.fromstring(body)
+
+        status = root.findtext("Status")
+        if status and status.strip().upper() != "SUCCESS":
+            error_msg = root.findtext("ErrorMessage") or root.findtext("Message") or ""
+            error_code = root.findtext("ErrorCode") or ""
             raise IbkrError(
-                f"{method} {url} returned non-JSON response: {raw[:200]}"
-            ) from exc
+                f"Flex request failed (status={status}, code={error_code}): {error_msg}".strip()
+            )
 
-    def auth_status(self) -> dict[str, Any]:
-        try:
-            status = self.request("POST", "/iserver/auth/status", {})
-        except IbkrHttpError as exc:
-            if exc.code == 401:
-                raise IbkrError(
-                    "IBKR brokerage session is not authenticated. This endpoint "
-                    "requires the single active brokerage session for your username; "
-                    "log out of TWS/Client Portal/IBKR Mobile or approve resetting "
-                    "the other session, then reauthenticate the gateway."
-                ) from exc
-            raise
-        if not isinstance(status, dict):
-            raise IbkrError("Unexpected authentication status response.")
-        return status
+        ref_code = root.findtext("ReferenceCode")
+        if not ref_code:
+            raise IbkrError(
+                f"Flex request returned no reference code. Response: {body[:500]}"
+            )
+        return ref_code
 
-    def sso_validate(self) -> dict[str, Any]:
-        try:
-            status = self.request("GET", "/sso/validate")
-        except IbkrHttpError as exc:
-            if exc.code == 401:
-                raise IbkrError(
-                    "IBKR gateway is not logged in. Open https://localhost:5000 "
-                    "on this machine, complete login, and wait for the page to show "
-                    "'Client login succeeds' before running the script."
-                ) from exc
-            raise
-        if not isinstance(status, dict):
-            raise IbkrError("Unexpected SSO validation response.")
-        return status
+    def fetch_report(
+        self,
+        reference_code: str,
+        retries: int = 6,
+        delay: float = 3.0,
+    ) -> ET.Element:
+        """Poll for a Flex report until it is ready.
 
-    def accounts(self) -> list[dict[str, Any]]:
-        accounts = self.request("GET", "/portfolio/accounts")
-        if not isinstance(accounts, list):
-            raise IbkrError("Unexpected accounts response.")
-        return accounts
+        Reports take a few seconds to generate. This method retries up to
+        *retries* times, waiting *delay* seconds between attempts.
 
-    def positions(self, account_id: str) -> list[dict[str, Any]]:
-        path_account_id = urllib.parse.quote(account_id, safe="")
-        positions = self.request(
-            "GET", f"/portfolio2/{path_account_id}/positions?sort=position&direction=d"
+        Returns the root XML element of the FlexQueryResponse.
+        """
+        params = {"t": self.token, "q": reference_code, "v": "3"}
+        last_error: str = ""
+
+        for attempt in range(1, retries + 1):
+            body = self._request("GetStatement", params)
+            root = ET.fromstring(body)
+
+            # Successful report: root tag is FlexQueryResponse or
+            # FlexStatementResponse with Status=Success/Warn
+            tag = root.tag.lower() if root.tag else ""
+            if "flexqueryresponse" in tag or "flexstatementresponse" in tag:
+                status_elem = root.find("Status")
+                if status_elem is not None and status_elem.text:
+                    status_text = status_elem.text.strip().upper()
+                    if status_text in ("SUCCESS", "WARN"):
+                        return root
+                    if status_text == "FAIL":
+                        error_msg = (
+                            root.findtext("ErrorMessage")
+                            or root.findtext("Message")
+                            or ""
+                        )
+                        error_code = root.findtext("ErrorCode") or ""
+                        raise IbkrError(
+                            f"Flex report generation failed (code={error_code}): "
+                            f"{error_msg}".strip()
+                        )
+                    # Status might be "Processing" — treat as not ready
+                    last_error = f"status={status_text}"
+                else:
+                    # If there are FlexStatements children, the data is ready
+                    if root.find(".//FlexStatement") is not None:
+                        return root
+                    last_error = "no Status element and no FlexStatement found"
+
+            # Error or still processing
+            error_code = root.findtext("ErrorCode")
+            if error_code:
+                last_error = f"code={error_code}, message={root.findtext('ErrorMessage') or root.findtext('Message') or ''}"
+                # Error code 1018 = not ready yet
+                if error_code.strip() == "1018" and attempt < retries:
+                    time.sleep(delay)
+                    continue
+                # Other error codes are fatal
+                if error_code.strip() != "1018":
+                    raise IbkrError(
+                        f"Flex report error ({last_error}). Response: {body[:500]}"
+                    )
+
+            if attempt < retries:
+                time.sleep(delay)
+
+        raise IbkrError(
+            f"Flex report not ready after {retries} retries ({delay}s each). "
+            f"Last status: {last_error}"
         )
-        if not isinstance(positions, list):
-            raise IbkrError(f"Unexpected positions response for account {account_id}.")
-        return positions
-
-    def ledger(self, account_id: str) -> dict[str, Any]:
-        path_account_id = urllib.parse.quote(account_id, safe="")
-        ledger = self.request("GET", f"/portfolio/{path_account_id}/ledger")
-        if not isinstance(ledger, dict):
-            raise IbkrError(f"Unexpected ledger response for account {account_id}.")
-        return ledger
-
-    def contract_info(self, conid: object) -> dict[str, Any]:
-        path_conid = urllib.parse.quote(str(conid), safe="")
-        details = self.request("GET", f"/iserver/contract/{path_conid}/info")
-        if not isinstance(details, dict):
-            raise IbkrError(f"Unexpected contract info response for conid {conid}.")
-        return details
 
 
-# --- Parsing helpers (preserved from scripts/ibkr_net_worth.py) ---
-
-DEFAULT_BASE_URL = "https://localhost:5000/v1/api"
+# --- Parsing helpers ---
 
 
 def as_float(value: Any, default: float = 0.0) -> float:
@@ -172,135 +185,64 @@ def as_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def account_id(account: dict[str, Any]) -> str:
-    for key in ("accountId", "id", "accountVan"):
-        value = account.get(key)
-        if value:
-            return str(value)
-    raise IbkrError(f"Could not determine account id from account object: {account}")
+def parse_positions(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse <OpenPosition> elements from a Flex XML response."""
+    positions: list[dict[str, Any]] = []
+    for pos in root.iter("OpenPosition"):
+        positions.append(dict(pos.attrib))
+    return positions
 
 
-def position_value(position: dict[str, Any]) -> float:
-    return as_float(
-        position.get("mktValue", position.get("marketValue", position.get("value")))
-    )
+def parse_account_info(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse <AccountInformation> elements from a Flex XML response.
+
+    The XML has an outer <AccountInformation> section element (with no
+    attributes) wrapping inner <AccountInformation> elements that contain
+    the actual data. We skip the outer section element.
+    """
+    accounts: list[dict[str, Any]] = []
+    for info in root.iter("AccountInformation"):
+        if info.get("accountId"):
+            accounts.append(dict(info.attrib))
+    return accounts
 
 
-def position_label(position: dict[str, Any]) -> str:
-    for key in ("contractDesc", "description", "ticker", "symbol", "conid"):
-        value = position.get(key)
-        if value not in (None, ""):
-            return str(value)
-    return "UNKNOWN"
+def parse_cash_report(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse cash report entries from a Flex XML response.
+
+    IBKR uses <CashReportCurrency> elements inside the <CashReport> section.
+    Each element represents a currency row with fields like endingCash,
+    startingCash, and currency. The Cash Report section must be included
+    in the Flex Query configuration for these elements to appear.
+
+    Summary rows (e.g. currency="BASE SUMMARY") are excluded — they are
+    subtotals that would double-count per-currency entries.
+
+    Returns a list of attribute dicts, one per per-currency <CashReportCurrency>.
+    """
+    entries: list[dict[str, Any]] = []
+    for cr in root.iter("CashReportCurrency"):
+        attribs = dict(cr.attrib)
+        currency = str(attribs.get("currency", "") or "").upper()
+        # Skip summary/total rows: IBKR includes rows like "BASE SUMMARY",
+        # "Total", etc. that are subtotals, not actual currency balances.
+        if currency and not _IS_CURRENCY_RE.match(currency):
+            continue
+        entries.append(attribs)
+    return entries
 
 
-def position_conid(position: dict[str, Any]) -> str:
-    value = position.get("conid")
-    return str(value) if value not in (None, "") else ""
+def parse_conversion_rates(root: ET.Element) -> dict[str, float]:
+    """Parse <ConversionRate> elements from a Flex XML response.
 
-
-def first_value(data: dict[str, Any], keys: tuple[str, ...]) -> str:
-    for key in keys:
-        value = data.get(key)
-        if value not in (None, ""):
-            return str(value)
-    return ""
-
-
-def position_description(
-    position: dict[str, Any],
-    contract_info: dict[str, Any] | None = None,
-) -> str:
-    contract_info = contract_info or {}
-    return (
-        first_value(
-            contract_info,
-            (
-                "companyName",
-                "companyHeader",
-                "description",
-                "contractDesc",
-                "symbol",
-            ),
-        )
-        or first_value(
-            position,
-            ("companyName", "description", "fullName", "contractDesc", "symbol"),
-        )
-        or position_label(position)
-    )
-
-
-def position_isin(position: dict[str, Any]) -> str:
-    for key in ("isin", "ISIN", "securityId", "securityID"):
-        value = position.get(key)
-        if value not in (None, ""):
-            return str(value)
-
-    sec_id_type = str(position.get("secIdType") or position.get("secidType") or "")
-    sec_id = position.get("secId") or position.get("secid")
-    if sec_id_type.upper() == "ISIN" and sec_id not in (None, ""):
-        return str(sec_id)
-
-    return ""
-
-
-def net_liquidation_value(ledger: dict[str, Any]) -> float:
-    base = ledger.get("BASE")
-    if isinstance(base, dict):
-        value = as_float(base.get("netliquidationvalue"))
-        if value:
-            return value
-
-    return sum(
-        to_base_currency(
-            as_float(entry.get("netliquidationvalue")),
-            str(entry.get("currency") or currency),
-            exchange_rates(ledger),
-        )
-        for currency, entry in ledger.items()
-        if isinstance(entry, dict)
-    )
-
-
-def exchange_rates(ledger: dict[str, Any]) -> dict[str, float]:
+    Returns a dict mapping from currency code to the conversion rate
+    (e.g. {"EUR": 1.1, "USD": 1.0}) where the rate converts from that
+    currency to the account's base currency.
+    """
     rates: dict[str, float] = {}
-    for currency, entry in ledger.items():
-        if not isinstance(entry, dict):
-            continue
-        currency_code = str(entry.get("currency") or currency)
-        rates[currency_code] = as_float(entry.get("exchangerate"), 1.0)
+    for cr in root.iter("ConversionRate"):
+        from_ccy = str(cr.get("fromCurrency", "") or "").upper()
+        rate = as_float(cr.get("rate"))
+        if from_ccy and rate:
+            rates[from_ccy] = rate
     return rates
-
-
-def to_base_currency(value: float, currency: str, rates: dict[str, float]) -> float:
-    rate = rates.get(currency, 1.0)
-    if rate == 0:
-        return value
-    return value * rate
-
-
-def cash_assets(account_id_value: str, ledger: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return a list of cash asset dicts from the IBKR ledger."""
-    assets: list[dict[str, Any]] = []
-    rates = exchange_rates(ledger)
-    for currency, entry in ledger.items():
-        if currency == "BASE" or not isinstance(entry, dict):
-            continue
-        cash_balance = as_float(entry.get("cashbalance"))
-        currency_code = str(entry.get("currency") or currency)
-        if cash_balance == 0:
-            continue
-        assets.append(
-            {
-                "account_id": account_id_value,
-                "label": f"CASH {currency_code}",
-                "asset_class": "CASH",
-                "currency": currency_code,
-                "value": to_base_currency(cash_balance, currency_code, rates),
-                "isin": "",
-                "conid": "",
-                "description": f"Cash {currency_code}",
-            }
-        )
-    return assets

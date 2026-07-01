@@ -1,4 +1,4 @@
-"""XTB XLS parsing — moved from scripts/xtb_net_worth.py.
+"""XTB XLS parsing.
 
 Parses XTB Excel (.xlsx) reports for open positions and cash operations.
 """

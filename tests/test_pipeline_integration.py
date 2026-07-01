@@ -1,11 +1,10 @@
 """Integration tests for pipeline run.py, ingest.py, and path creation.
 
 Covers bugs found during end-to-end runs:
-- T212 CDC kwargs leak (include_metadata passed to fetch_cdc)
 - XTB set_column() PyArrow 3-arg API
 - Missing parent directory creation for Delta table paths
 - Transform functions must decrypt payloads before JSON parsing
-- T212 auth uses Bearer token, not Basic Auth
+- T212 auth uses Basic Auth, not Bearer token
 - allocate_percentages handles missing Delta table gracefully
 """
 
@@ -75,40 +74,23 @@ class TestEncryptRawPayloadsSetColumn:
 
 
 class TestT212CdcKwargsSeparation:
-    """Test that CDC fetch calls don't receive snapshot-only kwargs.
-
-    fetch_cdc() for Trading 212 does not accept include_metadata,
-    so the CLI must build separate kwargs dicts for snapshot and CDC.
-    """
+    """Test that CDC fetch calls work with the same kwargs as snapshot."""
 
     @patch("pipeline.connectors.trading212.fetch.fetch_cdc")
     @patch("pipeline.connectors.trading212.fetch.fetch_snapshot")
-    def test_cdc_does_not_receive_include_metadata(
+    def test_cdc_and_snapshot_use_same_kwargs(
         self, mock_snapshot: MagicMock, mock_cdc: MagicMock
     ) -> None:
         from pipeline.connectors.registry import get
 
         connector = get("trading212")
 
-        # fetch_cdc should NOT receive include_metadata
-        # Simulate what cmd_fetch passes
-        snapshot_kwargs = {
+        common_kwargs = {
             "api_key": "test_key",
             "api_secret": "test_secret",
-            "account_id": "ACCT1",
             "base_url": "https://live.trading212.com/api/v0",
-            "include_metadata": True,
-            "user_agent": "TestAgent/1.0",
-        }
-        cdc_kwargs = {
-            "api_key": "test_key",
-            "api_secret": "test_secret",
-            "account_id": "ACCT1",
-            "base_url": "https://live.trading212.com/api/v0",
-            "user_agent": "TestAgent/1.0",
         }
 
-        # fetch_snapshot should accept include_metadata
         mock_snapshot.return_value = pa.table(
             {
                 "fetched_at": [None],
@@ -116,13 +98,12 @@ class TestT212CdcKwargsSeparation:
                 "source": ["test"],
                 "payload": [b"{}"],
                 "payload_hash": ["hash"],
-                "account_id": ["ACCT1"],
+                "account_id": [""],
                 "source_file": [""],
             },
             schema=RAW_SCHEMA,
         )
 
-        # fetch_cdc should NOT receive include_metadata
         mock_cdc.return_value = pa.table(
             {
                 "fetched_at": [None],
@@ -130,19 +111,19 @@ class TestT212CdcKwargsSeparation:
                 "source": ["test_cdc"],
                 "payload": [b"[]"],
                 "payload_hash": ["hash_cdc"],
-                "account_id": ["ACCT1"],
+                "account_id": [""],
                 "source_file": [""],
             },
             schema=RAW_SCHEMA,
         )
 
-        # This should work — include_metadata is only for snapshot
-        connector.fetch_snapshot(**snapshot_kwargs)
-        connector.fetch_cdc(**cdc_kwargs)
+        # Both snapshot and CDC should work with the same kwargs
+        connector.fetch_snapshot(**common_kwargs)
+        connector.fetch_cdc(**common_kwargs)
 
-        # Verify include_metadata was NOT passed to fetch_cdc
-        cdc_call_kwargs = mock_cdc.call_args[1]
-        assert "include_metadata" not in cdc_call_kwargs
+        # Verify both were called
+        mock_snapshot.assert_called_once()
+        mock_cdc.assert_called_once()
 
 
 class TestT212BasicAuth:
@@ -209,6 +190,7 @@ class TestT212BasicAuth:
             api_key="test-key",
             api_secret="test-secret",
         )
+        client.account_summary()
         client.account_summary()
 
         # Verify the request was made with Basic auth

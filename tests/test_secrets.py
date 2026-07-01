@@ -95,14 +95,14 @@ class TestGetConfig:
     """Test get_config() reads env vars with defaults."""
 
     def test_get_config_with_value(self, monkeypatch):
-        monkeypatch.setenv("IBKR_BASE_URL", "https://custom.api")
-        assert get_config("IBKR_BASE_URL") == "https://custom.api"
+        monkeypatch.setenv("T212_BASE_URL", "https://custom.api")
+        assert get_config("T212_BASE_URL") == "https://custom.api"
 
     def test_get_config_with_default(self, monkeypatch):
-        monkeypatch.delenv("IBKR_BASE_URL", raising=False)
+        monkeypatch.delenv("T212_BASE_URL", raising=False)
         assert (
-            get_config("IBKR_BASE_URL", "https://localhost:5000")
-            == "https://localhost:5000"
+            get_config("T212_BASE_URL", "https://live.trading212.com/api/v0")
+            == "https://live.trading212.com/api/v0"
         )
 
     def test_get_config_no_default(self, monkeypatch):

@@ -93,28 +93,20 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
         if connector.name == "ibkr":
             ibkr_flex_token = os.environ.get("IBKR_FLEX_TOKEN")
-            if ibkr_flex_token:
-                snapshot_kwargs = {
-                    "flex_token": ibkr_flex_token,
-                    "flex_query_id": get_config("IBKR_FLEX_QUERY_ID", "1554188"),
-                    "flex_base_url": get_config(
-                        "IBKR_FLEX_BASE_URL",
-                        "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
-                    ),
-                }
-                cdc_kwargs = {}
-            else:
-                snapshot_kwargs = cdc_kwargs = {
-                    "base_url": get_config(
-                        "IBKR_BASE_URL", "https://localhost:5000/v1/api"
-                    ),
-                    "account": get_config("IBKR_ACCOUNT"),
-                    "verify_tls": parse_bool("IBKR_VERIFY_TLS"),
-                    "skip_auth_check": parse_bool("IBKR_SKIP_AUTH_CHECK"),
-                    "require_brokerage_session": parse_bool(
-                        "IBKR_REQUIRE_BROKERAGE_SESSION"
-                    ),
-                }
+            if not ibkr_flex_token:
+                logger.debug(
+                    "Skipping %s: IBKR_FLEX_TOKEN not set", connector.display_name
+                )
+                continue
+            snapshot_kwargs = {
+                "flex_token": ibkr_flex_token,
+                "flex_query_id": get_config("IBKR_FLEX_QUERY_ID", "1554188"),
+                "flex_base_url": get_config(
+                    "IBKR_FLEX_BASE_URL",
+                    "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
+                ),
+            }
+            cdc_kwargs = {}
 
         elif connector.name == "trading212":
             t212_api_key = os.environ.get("T212_API_KEY")
@@ -131,18 +123,12 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 else "https://live.trading212.com/api/v0"
             )
             base_url = get_config("T212_BASE_URL") or default_base
-            common = {
+            snapshot_kwargs = {
                 "api_key": t212_api_key,
                 "api_secret": t212_api_secret,
-                "account_id": get_config("T212_ACCOUNT_ID") or "",
                 "base_url": base_url,
-                "user_agent": get_config("T212_USER_AGENT") or "Mozilla/5.0",
             }
-            snapshot_kwargs = {
-                **common,
-                "include_metadata": not parse_bool("T212_SKIP_METADATA"),
-            }
-            cdc_kwargs = common
+            cdc_kwargs = snapshot_kwargs
 
         elif connector.name == "xtb":
             if not args.xtb_file:
@@ -153,7 +139,6 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             for xtb_file in args.xtb_file:
                 xtb_kwargs = {
                     "file_path": xtb_file,
-                    "account_id": get_config("XTB_ACCOUNT_ID"),
                 }
                 try:
                     raw = connector.fetch_snapshot(**xtb_kwargs)

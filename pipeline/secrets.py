@@ -22,7 +22,6 @@ Usage::
 
     inject_secrets()           # call once at startup (loads .env, validates)
     token = get_secret("IBKR_FLEX_TOKEN")  # returns str | None
-    base_url = get_config("IBKR_BASE_URL")  # returns str | None
     if is_enabled("IBKR_ENABLED"):          # True unless set to 0/false/no
         ...
 """
