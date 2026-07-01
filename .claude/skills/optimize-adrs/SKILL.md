@@ -32,10 +32,16 @@ Apply these heuristics in priority order. A higher-priority heuristic overrides 
 If ADR X explicitly says "supersedes ADR Y" or "merged from ADR Y", mark Y as superseded by X. Also check `## Merged from` sections.
 
 ### Heuristic 2 — Same-component, later-replaces-earlier
-If two ADRs affect the same component and the later one removes or replaces what the earlier one introduced, and the later ADR references the earlier one in its Context section, mark the earlier as superseded.
+If two ADRs affect the same component and the later one removes or replaces what the earlier one introduced, mark the earlier as superseded — **even if the later ADR does not reference the earlier one by number**. The key signal is that the later ADR's Decision section uses words like "Delete", "Remove", "Replace", "Rewrite", or "Redesign" for a module, config format, or API that the earlier ADR introduced.
+
+For example: ADR 0020's Decision says "Delete `pipeline/config.py`" and "Remove `pyyaml` dependency" — ADR 0018 introduced that config system and ADR 0015 configured data paths through it. Both are superseded by 0020 even though 0020 does not cite them by number.
+
+Similarly: ADR 0029 removed `--account-id`, `--user-agent`, and gateway code — ADRs 0007, 0010, and 0011 introduced or fixed those features. They are superseded by 0029.
 
 ### Heuristic 3 — Bugfix subsumed by redesign
-If a bugfix ADR modified code introduced by an earlier ADR, and a subsequent ADR redesigns the entire subsystem, the bugfix ADR is superseded by the redesign ADR.
+If a bugfix ADR modified code introduced by an earlier ADR, and a subsequent ADR redesigns the entire subsystem (look for "redesign", "replace", "rewrite", "drop wrappers" in the Decision), the bugfix ADR is superseded by the redesign ADR.
+
+For example: ADR 0024 fixed DuckDB S3 credential propagation. ADR 0027 redesigned the query API with "native DuckDB connection, decrypt utility, drop wrappers" — the code that 0024 fixed no longer exists. ADR 0024 is superseded by 0027.
 
 ### Heuristic 4 — Do NOT mark as superseded
 - Do not mark a foundational ADR as superseded just because later ADRs build on it.
@@ -75,7 +81,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 
 **Duplicate numbers:** If two files share a number, disambiguate with `a`/`b` suffixes sorted alphabetically by filename. Document the mapping in an HTML comment below the table. Do NOT rename actual files.
 
-**`last-indexed`:** Set to the current ISO 8601 datetime (with timezone) of when you are running this workflow.
+**`last-indexed`:** Run `git log -1 --format="%ai" -- docs/adr/` to get the timestamp of the most recent commit that touched an ADR file. Use that value. This ensures no ADR commits are missed on the next incremental run.
 
 **`Created` dates:** Use `git log --format="%ai" --diff-filter=A -- <file>` to get each file's creation date.
 
