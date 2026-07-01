@@ -87,12 +87,45 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
 
     Uses PyArrow's S3FileSystem to list directories under each layer
     prefix and checks for ``_delta_log/`` objects to identify Delta tables.
+
+    For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
+    ``S3_ALLOW_HTTP`` environment variables.
     """
     import pyarrow as pa
     import pyarrow.fs as pafs
 
     region = os.environ.get("AWS_REGION", "eu-west-1")
-    fs = pafs.S3FileSystem(region=region)
+    endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
+    allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    fs_kwargs: dict = {"region": region}
+    key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    if key_id:
+        fs_kwargs["access_key"] = key_id
+    if secret:
+        fs_kwargs["secret_key"] = secret
+    if endpoint_url:
+        # Parse scheme+host from endpoint_url for PyArrow.
+        # e.g. "http://minio:9000" -> scheme="http", endpoint_override="minio:9000"
+        from urllib.parse import urlparse
+
+        parsed = urlparse(endpoint_url)
+        host = parsed.hostname
+        port = parsed.port
+        if host:
+            endpoint_override = f"{host}:{port}" if port else host
+            fs_kwargs["endpoint_override"] = endpoint_override
+        if parsed.scheme == "http":
+            fs_kwargs["scheme"] = "http"
+    if allow_http:
+        fs_kwargs["scheme"] = "http"
+
+    fs = pafs.S3FileSystem(**fs_kwargs)
 
     # Exceptions raised by PyArrow S3 operations.  We catch these
     # specifically so that programming errors (e.g. TypeError, ValueError)
@@ -301,19 +334,33 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     DuckDB / Delta Kernel can fall back to IAM instance metadata or
     other credential providers — mirroring the empty-credential logic
     in ``S3Backend.storage_options``.
+
+    For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` to the
+    server URL and ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
     """
     key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
     secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
     region = os.environ.get("AWS_REGION", "eu-west-1")
+    endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
+    allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in ("1", "true", "yes")
 
     if key_id and secret:
         # Escape single quotes to prevent SQL injection via env vars.
         safe_key_id = key_id.replace("'", "''")
         safe_secret = secret.replace("'", "''")
-        conn.execute(
-            f"CREATE SECRET (TYPE S3, KEY_ID '{safe_key_id}', "
-            f"SECRET '{safe_secret}', REGION '{region}')"
-        )
+        safe_region = region.replace("'", "''")
+        parts = [
+            f"KEY_ID '{safe_key_id}'",
+            f"SECRET '{safe_secret}'",
+            f"REGION '{safe_region}'",
+        ]
+        if endpoint_url:
+            safe_endpoint = endpoint_url.replace("'", "''")
+            parts.append(f"ENDPOINT '{safe_endpoint}'")
+        if allow_http:
+            parts.append("USE_SSL false")
+            parts.append("URL_STYLE path")
+        conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
     else:
         # No explicit credentials — rely on IAM role / instance metadata.
         logger.debug(

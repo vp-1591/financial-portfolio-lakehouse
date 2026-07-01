@@ -111,6 +111,10 @@ class S3Backend:
     ``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``, ``AWS_REGION``.
     The ``deltalake`` library handles S3 connectivity via its Rust
     ``object_store`` crate — no ``boto3`` dependency required.
+
+    For S3-compatible stores (MinIO, etc.), set ``S3_ENDPOINT_URL``
+    to the server URL (e.g. ``http://minio:9000``) and
+    ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
     """
 
     def __init__(self, bucket: str, prefix: str = S3_DEFAULT_PREFIX) -> None:
@@ -147,6 +151,9 @@ class S3Backend:
         Empty credentials are omitted so that ``object_store`` can fall
         back to its own credential chain (environment variables, IAM
         role, etc.) rather than overriding with an empty string.
+
+        For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
+        ``S3_ALLOW_HTTP`` environment variables.
         """
         opts: dict[str, str] = {}
         key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
@@ -157,6 +164,12 @@ class S3Backend:
         if secret:
             opts["aws_secret_access_key"] = secret
         opts["aws_region"] = region
+        endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
+        if endpoint_url:
+            opts["aws_endpoint_url"] = endpoint_url
+        allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower()
+        if allow_http in ("1", "true", "yes"):
+            opts["aws_allow_http"] = "true"
         return opts
 
 

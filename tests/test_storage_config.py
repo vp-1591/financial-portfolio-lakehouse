@@ -318,6 +318,54 @@ class TestS3Backend:
             # Region is always present (has default).
             assert opts["aws_region"] == "eu-west-1"
 
+    def test_storage_options_includes_endpoint_url(self):
+        """S3_ENDPOINT_URL is included in storage options for MinIO."""
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "minioadmin",
+                "AWS_SECRET_ACCESS_KEY": "minioadmin",
+                "AWS_REGION": "us-east-1",
+                "S3_ENDPOINT_URL": "http://minio:9000",
+            },
+        ):
+            backend = S3Backend(bucket="pipeline")
+            opts = backend.storage_options
+            assert opts["aws_endpoint_url"] == "http://minio:9000"
+
+    def test_storage_options_includes_allow_http(self):
+        """S3_ALLOW_HTTP=true adds aws_allow_http to storage options."""
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "minioadmin",
+                "AWS_SECRET_ACCESS_KEY": "minioadmin",
+                "AWS_REGION": "us-east-1",
+                "S3_ALLOW_HTTP": "true",
+            },
+        ):
+            backend = S3Backend(bucket="pipeline")
+            opts = backend.storage_options
+            assert opts["aws_allow_http"] == "true"
+
+    def test_storage_options_omits_endpoint_url_when_not_set(self):
+        """aws_endpoint_url is absent when S3_ENDPOINT_URL is not set."""
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "test-key",
+                "AWS_SECRET_ACCESS_KEY": "test-secret",
+                "AWS_REGION": "us-east-1",
+            },
+            clear=False,
+        ):
+            os.environ.pop("S3_ENDPOINT_URL", None)
+            os.environ.pop("S3_ALLOW_HTTP", None)
+            backend = S3Backend(bucket="my-bucket")
+            opts = backend.storage_options
+            assert "aws_endpoint_url" not in opts
+            assert "aws_allow_http" not in opts
+
 
 class TestPathsModule:
     """Test that pipeline.paths delegates to StorageConfig."""

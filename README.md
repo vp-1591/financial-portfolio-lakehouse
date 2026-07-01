@@ -94,11 +94,14 @@ Generate an encryption key (only needed once):
 
 ### Docker
 
-Run the pipeline in a container without installing Python:
+Run the pipeline in a container without installing Python. Data is stored in
+MinIO (S3-compatible storage) to avoid filesystem compatibility issues with
+Docker volume mounts on Windows.
 
 ```bash
-# Build the image
+# Build and start MinIO + pipeline
 docker compose build
+docker compose up minio -d   # start MinIO in background
 
 # First-time setup: generate encryption key
 docker compose run --rm pipeline keygen
@@ -115,12 +118,13 @@ docker compose run --rm pipeline query "SELECT * FROM ibkr_snapshot_normalized" 
 # Export as CSV
 docker compose run --rm pipeline query "SELECT * FROM portfolio_allocation_analytics" --format csv
 
-# With XTB data (uncomment xtb-reports volume in docker-compose.yml first)
-docker compose run --rm pipeline fetch --xtb-file /data/xtb-reports/report.xlsx
+# MinIO console (browse data at http://localhost:9001)
+# Login: minioadmin / minioadmin
 ```
 
-Data persists in `./data/` via volume mount. Secrets come from `.env`
-(via `env_file` in docker-compose).
+Data persists in the `minio-data` Docker volume. Secrets come from `.env`
+(via `env_file` in docker-compose). MinIO credentials are configured in
+`docker-compose.yml` (default: `minioadmin` / `minioadmin`).
 
 ### Secrets Management
 
@@ -162,6 +166,8 @@ Environment variables always take priority over `.env` file values.
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
 | `AWS_REGION` | AWS region (default: `eu-west-1`) |
+| `S3_ENDPOINT_URL` | Custom S3 endpoint (for MinIO or other S3-compatible stores) |
+| `S3_ALLOW_HTTP` | Allow non-HTTPS connections to S3 endpoint (set to `true` for MinIO) |
 
 All connectors are **enabled by default**. Set a toggle to `0`, `false`, or
 `no` to disable it.
@@ -173,6 +179,10 @@ in S3. AWS credentials come from `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`. No additional dependencies
 are needed — `deltalake` handles S3 natively via its Rust `object_store`
 crate.
+
+For S3-compatible stores like MinIO, set `S3_ENDPOINT_URL` to the server
+URL (e.g. `http://minio:9000`) and `S3_ALLOW_HTTP=true` to allow non-HTTPS
+connections. The Docker setup uses MinIO by default — see the Docker section.
 
 The `keygen` command only works in local mode. For S3, set
 `ENCRYPTION_KEY` as an environment variable — **the encryption
