@@ -7,3 +7,6 @@
 # Terraform variable files (may contain secrets)
 *.tfvars
 terraform.tfvars
+
+# Backend config (contains account identifiers)
+backend.tf

@@ -1,0 +1,11 @@
+# S3 backend configuration — copy this file to backend.tf and fill in your bucket name.
+# The bucket must already exist with versioning enabled.
+
+terraform {
+  backend "s3" {
+    bucket       = "<your-s3-bucket-name>"
+    key          = "investment-portfolio-dashboard/terraform.tfstate"
+    region       = "eu-west-1"
+    use_lockfile = true
+  }
+}

@@ -7,6 +7,8 @@
 #
 # Usage:
 #   cd terraform
+#   cp backend.tf.sample backend.tf   # first time only
+#   # Edit backend.tf — set bucket to your S3 state bucket name
 #   terraform init
 #   terraform plan
 #   terraform apply
@@ -44,6 +46,7 @@ variable "iam_user_name" {
 # ------------------------------------------------------------------------------
 
 terraform {
+  # Backend configuration is in backend.tf (gitignored) — copy from backend.tf.sample.
   required_providers {
     aws = {
       source  = "hashicorp/aws"

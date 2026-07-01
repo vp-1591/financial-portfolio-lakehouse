@@ -192,10 +192,16 @@ from GitHub Secrets. See `.github/workflows/pipeline.yml`.
 ### Infrastructure
 
 The `terraform/` directory contains Terraform configuration for the S3 bucket
-and IAM user:
+and IAM user.
+
+**First-time setup** — the S3 backend bucket name is not committed to the repo
+(it contains an account identifier). Copy the sample config and fill in your
+bucket name:
 
 ```bash
 cd terraform
+cp backend.tf.sample backend.tf
+# Edit backend.tf — set bucket to your S3 state bucket name
 terraform init
 terraform plan
 terraform apply
