@@ -7,8 +7,9 @@ Verifies that:
 - ``get_storage`` returns the active config
 - ``pipeline.paths`` module delegates to the active ``StorageConfig``
 - ``S3Backend`` generates correct URIs and has no-op ensure_parent
-- ``LocalBackend.ensure_parent`` cleans up orphaned parquet files
+- ``LocalBackend.ensure_parent`` rescues orphaned parquet files
   from failed writes (e.g. Docker volume mount rename failures)
+  to a ``.rescue/`` directory under the data directory
 """
 
 from __future__ import annotations
@@ -176,8 +177,8 @@ class TestLocalBackend:
         backend.ensure_parent(path)
         assert (tmp_path / "raw").is_dir()
 
-    def test_ensure_parent_cleans_orphaned_parquets(self, tmp_path: Path):
-        """Corrupted table dir (parquet files, no _delta_log) is cleaned up."""
+    def test_ensure_parent_rescues_orphaned_parquets(self, tmp_path: Path):
+        """Corrupted table dir (parquet files, no _delta_log) is moved to .rescue/."""
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "trading212_snapshot"
         table_dir.mkdir(parents=True)
@@ -187,10 +188,16 @@ class TestLocalBackend:
 
         backend.ensure_parent(str(table_dir))
 
-        # Orphaned parquet files should be removed
-        assert list(table_dir.glob("*.parquet")) == []
-        # The directory itself should be removed so write_deltalake starts fresh
+        # Original table directory should be removed so write_deltalake starts fresh
         assert not table_dir.exists()
+        # Orphaned files should be rescued to .rescue/ under data_dir
+        rescue_dir = tmp_path / ".rescue"
+        assert rescue_dir.is_dir()
+        rescued = list(rescue_dir.iterdir())
+        assert len(rescued) == 1
+        assert rescued[0].name.startswith("trading212_snapshot_")
+        # The rescued directory should contain the orphaned parquet files
+        assert len(list(rescued[0].glob("*.parquet"))) == 2
 
     def test_ensure_parent_preserves_valid_table(self, tmp_path: Path):
         """A valid Delta table (with _delta_log) is left intact."""
@@ -208,18 +215,24 @@ class TestLocalBackend:
         assert (table_dir / "_delta_log").is_dir()
         assert (table_dir / "part-00000-abc.snappy.parquet").exists()
 
-    def test_ensure_parent_noop_for_empty_dir(self, tmp_path: Path):
-        """An empty table directory is removed to let write_deltalake start fresh."""
+    def test_ensure_parent_rescues_empty_dir(self, tmp_path: Path):
+        """An empty table directory is moved to .rescue/ so write_deltalake starts fresh."""
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "ibkr_snapshot"
         table_dir.mkdir(parents=True)
 
         backend.ensure_parent(str(table_dir))
 
-        # Empty dir removed
+        # Empty dir moved to rescue
         assert not table_dir.exists()
         # But parent dir created
         assert (tmp_path / "raw").is_dir()
+        # Rescue dir contains the moved empty directory
+        rescue_dir = tmp_path / ".rescue"
+        assert rescue_dir.is_dir()
+        rescued = list(rescue_dir.iterdir())
+        assert len(rescued) == 1
+        assert rescued[0].name.startswith("ibkr_snapshot_")
 
     def test_ensure_parent_noop_for_nonexistent_path(self, tmp_path: Path):
         """A path that doesn't exist yet is simply prepared (parent created)."""

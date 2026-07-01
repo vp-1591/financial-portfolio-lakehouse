@@ -22,10 +22,15 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -73,25 +78,31 @@ class LocalBackend:
         return str(self.data_dir / layer / table_name)
 
     def ensure_parent(self, table_path: str) -> None:
-        """Create parent directory and clean up orphaned files from failed writes.
+        """Create parent directory and rescue orphaned files from failed writes.
 
         If the table directory exists but contains parquet files without a
         ``_delta_log/`` sub-directory, the table is in a corrupted state from
         a previous failed write (e.g. Docker volume mount rename failure).
-        Remove the orphaned files so ``write_deltalake`` can start fresh.
+        Move the orphaned directory to ``.rescue/<table_name>_<timestamp>/``
+        under the data directory so ``write_deltalake`` can start fresh
+        and the data remains recoverable.
         """
         table_dir = Path(table_path)
         table_dir.parent.mkdir(parents=True, exist_ok=True)
 
         if table_dir.exists() and not (table_dir / "_delta_log").exists():
-            for parquet in table_dir.glob("*.parquet"):
-                parquet.unlink()
-            # Remove empty dir to let write_deltalake create it cleanly
-            try:
-                table_dir.rmdir()
-            except OSError:
-                # Directory not empty (e.g. unexpected files) — leave it
-                pass
+            rescue_dir = (
+                self.data_dir
+                / ".rescue"
+                / f"{table_dir.name}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+            )
+            rescue_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(table_dir), str(rescue_dir))
+            logger.warning(
+                "Rescued orphaned table %s → %s",
+                table_dir,
+                rescue_dir,
+            )
 
     @property
     def storage_options(self) -> dict[str, str]:

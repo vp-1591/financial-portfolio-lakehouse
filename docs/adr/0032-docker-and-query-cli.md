@@ -74,10 +74,11 @@ Add `S3_ENDPOINT_URL` and `S3_ALLOW_HTTP` environment variables to
 
 - `LocalBackend.storage_options` returns `{"allow_unsafe_rename": "true"}` for
   filesystems that don't support atomic renames (safe for single-writer usage)
-- `LocalBackend.ensure_parent` cleans up orphaned parquet files from failed
+- `LocalBackend.ensure_parent` rescues orphaned parquet files from failed
   writes: if a table directory has parquet files but no `_delta_log/`, the
-  orphaned files are removed and the directory is deleted so the next
-  `write_deltalake` starts fresh
+  entire directory is moved to `.rescue/<table_name>_<timestamp>/` under the
+  data directory so the next `write_deltalake` starts fresh, while keeping
+  the orphaned data recoverable
 
 ### query subcommand
 
@@ -112,8 +113,8 @@ Add a `docker` job to ci.yml that builds the image and verifies `--help`,
 - Docker build requires `pipeline/` and `pyproject.toml` in the build context
 - The `PYTHONPATH=/app` env var is necessary so that `PROJECT_ROOT` resolves
   correctly for `.env` loading and data directory defaults
-- `LocalBackend` changes (allow_unsafe_rename, orphan cleanup) remain for local
-  development on Windows without Docker
+- `LocalBackend` changes (allow_unsafe_rename, orphan rescue to `.rescue/`) remain
+  for local development on Windows without Docker
 
 ## Validation
 
