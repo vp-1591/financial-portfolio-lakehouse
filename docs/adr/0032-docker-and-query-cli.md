@@ -34,7 +34,7 @@ and build artifacts. No secrets or local data enter the image.
 
 Single `pipeline` service:
 
-- `env_file: .env` injects secrets at runtime
+- `env_file: .env` (with `required: false`) injects secrets at runtime; `.env` is optional so `keygen` works before secrets are configured
 - `PIPELINE_DATA_DIR=/app/data` for explicit path resolution
 - Volume mounts: `./data:/app/data`, `./.secrets:/app/.secrets`
 - No command override — subcommands specified via `docker compose run --rm pipeline <command>`
@@ -50,15 +50,16 @@ Add `pipeline query <SQL> [--decrypt] [--format table|csv|json]`:
 
 ### CI smoke test
 
-Add a `docker` job to ci.yml that builds the image and verifies `--help`
-and `query --help` work.
+Add a `docker` job to ci.yml that builds the image and verifies `--help`,
+`query --help`, and `keygen` work.
 
 ## Consequences
 
 - Image size ~400–500MB (deltalake + pyarrow + duckdb native libraries)
 - XTB `--xtb-file` paths must be container-relative (mount reports directory)
 - Encryption key can come from `ENCRYPTION_KEY` env var (recommended in Docker)
-  or `.secrets/encryption.key` file (via volume mount)
+  or `.secrets/encryption.key` file (via volume mount); `keygen` works without
+  `.env` because `env_file` uses `required: false`
 - Container runs as non-root user (UID 1000)
 - `refresh()` call before every query ensures table discovery is current
 - `.dockerignore` ensures no secrets or local data enter the image
@@ -70,6 +71,7 @@ and `query --help` work.
 
 - Docker build succeeds: `docker build -t pipeline .`
 - Container starts: `docker run --rm pipeline --help`
+- keygen runs: `docker run --rm pipeline keygen`
 - Query subcommand works: `docker run --rm pipeline query --help`
 - All existing tests pass (231 tests)
 - Query subcommand tests pass (7 tests)

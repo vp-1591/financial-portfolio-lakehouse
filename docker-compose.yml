@@ -3,7 +3,8 @@ services:
     build: .
     image: investment-portfolio-pipeline
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - PIPELINE_DATA_DIR=/app/data
     volumes:
