@@ -43,6 +43,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0030 | Require IBKR Flex Query ID and Rename PORTFOLIO_ENCRYPTION_KEY | 2026-07-01 | active | — |
 | 0031 | Make decrypt_df Auto-Detect Encrypted Columns | 2026-07-01 | active | — |
 | 0032 | ADR Index and Optimize-adrs Workflow | 2026-07-01 | active | — |
+| 0033 | Migrate Terraform State from Local to S3 Backend | 2026-07-01 | active | — |
+| 0034 | Add required_version Constraint for Terraform 1.11+ | 2026-07-01 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
