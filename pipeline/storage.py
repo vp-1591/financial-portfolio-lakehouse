@@ -57,7 +57,10 @@ class LocalBackend:
 
     ``table_path()`` returns absolute filesystem paths.
     ``ensure_parent()`` creates parent directories as needed.
-    ``storage_options`` returns ``None`` — no cloud config needed.
+    ``storage_options`` returns ``{"allow_unsafe_rename": "true"}`` because
+    Docker volume mounts on Windows (NTFS) and some network filesystems do not
+    support the atomic renames that Delta Lake's commit protocol requires.
+    This is safe for single-writer usage (the pipeline runs sequentially).
     """
 
     def __init__(self, data_dir: Path) -> None:
@@ -70,8 +73,8 @@ class LocalBackend:
         Path(table_path).parent.mkdir(parents=True, exist_ok=True)
 
     @property
-    def storage_options(self) -> dict[str, str] | None:
-        return None
+    def storage_options(self) -> dict[str, str]:
+        return {"allow_unsafe_rename": "true"}
 
 
 class S3Backend:

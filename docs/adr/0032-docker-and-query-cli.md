@@ -61,6 +61,10 @@ Add a `docker` job to ci.yml that builds the image and verifies `--help`,
   or `.secrets/encryption.key` file (via volume mount); `keygen` works without
   `.env` because `env_file` uses `required: false`
 - Container runs as non-root user (UID 1000)
+- `LocalBackend.storage_options` returns `{"allow_unsafe_rename": "true"}` because
+  Docker volume mounts on Windows (NTFS) and network filesystems do not support
+  the atomic renames that Delta Lake's commit protocol requires; safe for
+  single-writer usage (the pipeline runs sequentially)
 - `refresh()` call before every query ensures table discovery is current
 - `.dockerignore` ensures no secrets or local data enter the image
 - Docker build requires `pipeline/` and `pyproject.toml` in the build context
