@@ -102,8 +102,9 @@ They come from environment variables, set by one of two sources:
    startup via `python-dotenv`:
 
    ```bash
-   # .env (never committed)
+   # .env (never committed — copy from .env.example)
    IBKR_FLEX_TOKEN=your_token_here
+   IBKR_FLEX_QUERY_ID=your_query_id_here
    T212_API_KEY=your_key_here
    T212_API_SECRET=your_secret_here
    ENCRYPTION_KEY=your_fernet_key_here
