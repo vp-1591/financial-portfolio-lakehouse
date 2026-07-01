@@ -24,7 +24,7 @@ Usage::
     # Query using native DuckDB API
     db.sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5").pl()
 
-    # Decrypt encrypted columns
+    # Decrypt encrypted columns (auto-detects binary columns)
     df = db.sql("SELECT * FROM ibkr_snapshot_raw").pl()
     decrypt_df(df)
 
@@ -45,9 +45,6 @@ from pipeline.crypto import decrypt_float, decrypt_string, load_key
 from pipeline.storage import S3Backend, get_storage
 
 logger = logging.getLogger(__name__)
-
-# Columns that contain Fernet-encrypted binary data in normalized tables.
-_ENCRYPTED_COLUMNS = frozenset({"value", "quantity", "amount"})
 
 # Medallion layers to scan for Delta tables.
 LAYERS = ("raw", "normalized", "analytics")
@@ -337,51 +334,92 @@ def decrypt_df(
 ) -> pl.DataFrame:
     """Decrypt Fernet-encrypted columns in a Polars DataFrame.
 
+    When *columns* is *None* (the default), all ``Binary`` columns are
+    auto-detected and decrypted.  This works for both normalized tables
+    (float columns like ``value``, ``quantity``, ``amount``) and raw
+    tables (string columns like ``payload``).
+
     Parameters
     ----------
     df:
         Polars DataFrame with encrypted binary columns.
     columns:
-        Column names to decrypt.  Defaults to
-        ``["value", "quantity", "amount"]``.
+        Column names to decrypt.  When *None*, all ``Binary`` columns
+        are detected and decrypted automatically.
     key:
         Fernet key.  When *None*, loaded from the default location.
 
     Returns
     -------
     pl.DataFrame
-        DataFrame with encrypted columns decrypted and rounded to
-        2 decimal places.
+        DataFrame with encrypted columns decrypted.  Float columns are
+        rounded to 2 decimal places.
 
     Example
     -------
     >>> db = get_connection()
     >>> df = db.sql("SELECT * FROM ibkr_snapshot_raw").pl()
-    >>> decrypt_df(df)
+    >>> decrypt_df(df)  # auto-detects and decrypts the 'payload' column
+
+    >>> df = db.sql("SELECT * FROM ibkr_snapshot_normalized").pl()
+    >>> decrypt_df(df)  # auto-detects value/quantity/amount
     """
-    encrypted_cols = columns if columns is not None else list(_ENCRYPTED_COLUMNS)
     decrypt_key = key if key is not None else load_key()
 
+    # Auto-detect binary columns when no explicit list is given.
+    if columns is None:
+        columns = [c for c in df.columns if df[c].dtype == pl.Binary]
+        if not columns:
+            return df
+
     result = df
-    for col in encrypted_cols:
-        if col in result.columns:
-            result = result.with_columns(
-                pl.col(col).map_elements(
-                    lambda v: _decrypt_value(v, decrypt_key),
-                    return_dtype=pl.Float64,
-                )
+    float_cols: list[str] = []
+
+    for col in columns:
+        if col not in result.columns:
+            continue
+
+        # Infer return type by sampling the first non-null value.
+        sample = _first_non_null(result[col])
+        if sample is not None:
+            decrypted_sample = _decrypt_value(sample, decrypt_key)
+            is_float = isinstance(decrypted_sample, float)
+        else:
+            # All-null column — default to String as a safe fallback.
+            is_float = False
+
+        dtype = pl.Float64 if is_float else pl.String
+        if is_float:
+            float_cols.append(col)
+
+        result = result.with_columns(
+            pl.col(col).map_elements(
+                lambda v, _k=decrypt_key: _decrypt_value(v, _k),
+                return_dtype=dtype,
             )
+        )
 
     # Round decrypted float columns to 2 decimal places.
-    for col in encrypted_cols:
-        if col in result.columns:
-            result = result.with_columns(pl.col(col).round(2))
+    for col in float_cols:
+        result = result.with_columns(pl.col(col).round(2))
 
     return result
 
 
+def _first_non_null(series: pl.Series):
+    """Return the first non-null value in a Polars Series, or None."""
+    for val in series:
+        if val is not None:
+            return val
+    return None
+
+
 def _decrypt_value(v, key: bytes):
-    """Decrypt a single Fernet-encrypted value; return None for nulls."""
+    """Decrypt a single Fernet-encrypted value; return None for nulls.
+
+    Tries float decryption first, then string decryption.  Returns the
+    original value if neither succeeds (i.e. the value is not encrypted).
+    """
     if v is None:
         return None
     if isinstance(v, (bytes, bytearray, memoryview)):
