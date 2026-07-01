@@ -17,16 +17,16 @@ def generate_key() -> bytes:
 
 
 def load_key(path: Path | None = None) -> bytes:
-    """Load a Fernet key from disk or the ``PORTFOLIO_ENCRYPTION_KEY`` env var.
+    """Load a Fernet key from disk or the ``ENCRYPTION_KEY`` env var.
 
     Parameters
     ----------
     path:
         Explicit path to the key file.  When *None*, falls back to
-        ``PORTFOLIO_ENCRYPTION_KEY`` env var, then to
+        ``ENCRYPTION_KEY`` env var, then to
         ``.secrets/encryption.key`` relative to the project root.
     """
-    env_key = os.environ.get("PORTFOLIO_ENCRYPTION_KEY")
+    env_key = os.environ.get("ENCRYPTION_KEY")
     if env_key:
         return env_key.encode("utf-8") if isinstance(env_key, str) else env_key
 
@@ -39,7 +39,7 @@ def load_key(path: Path | None = None) -> bytes:
         raise FileNotFoundError(
             f"Encryption key not found at {path}. "
             "Run 'python -m pipeline.keygen' to create one, "
-            "or set the PORTFOLIO_ENCRYPTION_KEY environment variable."
+            "or set the ENCRYPTION_KEY environment variable."
         )
     return path.read_bytes().strip()
 

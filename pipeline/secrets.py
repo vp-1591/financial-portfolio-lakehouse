@@ -22,7 +22,6 @@ Usage::
 
     inject_secrets()           # call once at startup (loads .env, validates)
     token = get_secret("IBKR_FLEX_TOKEN")  # returns str | None
-    base_url = get_config("IBKR_BASE_URL")  # returns str | None
     if is_enabled("IBKR_ENABLED"):          # True unless set to 0/false/no
         ...
 """
@@ -43,9 +42,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # These are set via GitHub Secrets (CI) or .env / manual exports (local dev).
 REQUIRED_SECRETS: list[str] = [
     "IBKR_FLEX_TOKEN",
+    "IBKR_FLEX_QUERY_ID",
     "T212_API_KEY",
     "T212_API_SECRET",
-    "PORTFOLIO_ENCRYPTION_KEY",
+    "ENCRYPTION_KEY",
 ]
 
 

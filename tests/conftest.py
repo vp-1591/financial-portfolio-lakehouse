@@ -69,9 +69,9 @@ def secrets_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def env_key(fernet_key: bytes):
-    """Set PORTFOLIO_ENCRYPTION_KEY env var for the duration of a test."""
-    os.environ["PORTFOLIO_ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
+    """Set ENCRYPTION_KEY env var for the duration of a test."""
+    os.environ["ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
     try:
         yield
     finally:
-        os.environ.pop("PORTFOLIO_ENCRYPTION_KEY", None)
+        os.environ.pop("ENCRYPTION_KEY", None)

@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from pipeline.crypto import encrypt_float, generate_key
+from pipeline.crypto import encrypt_float, encrypt_string, generate_key
 from pipeline.query import (
     LAYERS,
     _decrypt_value,
@@ -393,17 +393,39 @@ class TestDecryptDf:
         assert result["value"][0] == pytest.approx(42.5)
         assert result["value"][1] == pytest.approx(10.0)
 
-    def test_default_columns(self):
-        """decrypt_df defaults to _ENCRYPTED_COLUMNS when columns is None."""
+    def test_auto_detect_binary_columns(self):
+        """decrypt_df auto-detects binary columns when columns is None."""
         key = generate_key()
-        encrypted = encrypt_float(100.0, key)
+        enc_float = encrypt_float(100.0, key)
+        enc_str = encrypt_string("hello", key)
         df = pl.DataFrame(
-            {"value": [encrypted], "quantity": [encrypted], "amount": [encrypted]}
+            {
+                "value": [enc_float],
+                "payload": [enc_str],
+                "label": ["US0378331007"],  # plain string — not encrypted
+            }
         )
         result = decrypt_df(df, key=key)
         assert result["value"][0] == pytest.approx(100.0)
-        assert result["quantity"][0] == pytest.approx(100.0)
-        assert result["amount"][0] == pytest.approx(100.0)
+        assert result["payload"][0] == "hello"
+        assert result["label"][0] == "US0378331007"
+
+    def test_auto_detect_no_binary_columns(self):
+        """decrypt_df returns the DataFrame unchanged when no binary columns exist."""
+        key = generate_key()
+        df = pl.DataFrame({"col1": [1, 2], "col2": ["a", "b"]})
+        result = decrypt_df(df, key=key)
+        assert result.shape == (2, 2)
+        assert result["col1"].to_list() == [1, 2]
+
+    def test_decrypt_string_column(self):
+        """decrypt_df correctly decrypts string (payload) columns."""
+        key = generate_key()
+        enc_str = encrypt_string("<FlexStatement>...</FlexStatement>", key)
+        df = pl.DataFrame({"payload": [enc_str]})
+        result = decrypt_df(df, key=key)
+        assert result["payload"][0] == "<FlexStatement>...</FlexStatement>"
+        assert result["payload"].dtype == pl.String
 
     def test_custom_columns(self):
         """decrypt_df respects the columns parameter."""
@@ -418,7 +440,7 @@ class TestDecryptDf:
         """decrypt_df ignores columns that don't exist in the DataFrame."""
         key = generate_key()
         df = pl.DataFrame({"col1": [1, 2]})
-        result = decrypt_df(df, key=key)
+        result = decrypt_df(df, columns=["nonexistent"], key=key)
         assert result.shape == (2, 1)
 
     def test_null_values(self):
@@ -431,12 +453,22 @@ class TestDecryptDf:
         assert result["value"][1] is None
 
     def test_rounding(self):
-        """decrypt_df rounds decrypted values to 2 decimal places."""
+        """decrypt_df rounds decrypted float values to 2 decimal places."""
         key = generate_key()
         encrypted = encrypt_float(42.123456, key)
         df = pl.DataFrame({"value": [encrypted]})
         result = decrypt_df(df, key=key)
         assert result["value"][0] == pytest.approx(42.12)
+
+    def test_no_rounding_on_string_columns(self):
+        """decrypt_df does not round genuinely string-valued columns."""
+        key = generate_key()
+        enc_str = encrypt_string("<FlexStatement>data</FlexStatement>", key)
+        df = pl.DataFrame({"payload": [enc_str]})
+        result = decrypt_df(df, key=key)
+        # String columns should come back as String dtype, not rounded.
+        assert result["payload"].dtype == pl.String
+        assert result["payload"][0] == "<FlexStatement>data</FlexStatement>"
 
 
 # ---------------------------------------------------------------------------

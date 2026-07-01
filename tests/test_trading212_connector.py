@@ -162,7 +162,7 @@ class TestClientParsing:
             "<html><h1>Access denied</h1></html>",
         )
         assert "access denied by Trading 212" in str(error)
-        assert "--user-agent" in str(error) or "user-agent" in str(error).lower()
+        assert "Verify your API credentials" in str(error)
 
     def test_unauthorized_error_is_not_padded_with_guesses(self) -> None:
         error = Trading212HttpError(

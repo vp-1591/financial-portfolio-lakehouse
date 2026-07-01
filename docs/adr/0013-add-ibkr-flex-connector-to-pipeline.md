@@ -36,7 +36,7 @@ Implementation details:
   when `source="flex"` is detected in the raw table.
 
 - **`pipeline/run.py`**: Three new arguments under the IBKR group:
-  `--ibkr-flex-token`, `--ibkr-flex-query-id` (default `1554188`),
+  `--ibkr-flex-token`, `--ibkr-flex-query-id`,
   `--ibkr-flex-base-url`. When `--ibkr-flex-token` is provided, `cmd_fetch`
   passes Flex-specific kwargs to the connector.
 

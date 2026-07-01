@@ -1,6 +1,6 @@
-"""Trading 212 API client — moved from scripts/trading212_net_worth.py.
+"""Trading 212 API client.
 
-This module preserves the original client logic and adds raw response
+This module provides the Trading 212 API client with raw response
 interception for pipeline ingestion, plus CDC endpoint methods.
 """
 
@@ -35,8 +35,7 @@ class Trading212HttpError(Trading212Error):
         if is_access_denied_html(details):
             message = (
                 f"{method} {url} failed: HTTP {code} access denied by Trading 212. "
-                "Try again with a different --user-agent value, and verify your "
-                "network/IP is allowed by Trading 212."
+                "Verify your API credentials and network access."
             )
         else:
             reason = concise_details(details)
@@ -59,8 +58,6 @@ class Trading212Client:
         Trading 212 API secret (used for HTTP Basic Authentication).
     timeout:
         HTTP request timeout in seconds.
-    user_agent:
-        HTTP User-Agent header.
     capture_raw:
         When *True*, every successful ``request()`` call appends the
         raw response bytes to :attr:`captured_responses`.
@@ -72,14 +69,12 @@ class Trading212Client:
         api_key: str,
         api_secret: str = "",
         timeout: float = 20.0,
-        user_agent: str = DEFAULT_USER_AGENT,
         capture_raw: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
         self.api_secret = api_secret.strip() if api_secret else ""
         self.timeout = timeout
-        self.user_agent = user_agent
         self.capture_raw = capture_raw
         self.captured_responses: list[tuple[str, bytes]] = []
 
@@ -91,7 +86,7 @@ class Trading212Client:
             headers={
                 "Accept": "application/json",
                 "Authorization": basic_auth_header(self.api_key, self.api_secret),
-                "User-Agent": self.user_agent,
+                "User-Agent": DEFAULT_USER_AGENT,
             },
             method=method,
         )
@@ -116,8 +111,7 @@ class Trading212Client:
             if is_access_denied_html(raw):
                 raise Trading212Error(
                     f"{method} {url} returned an access denied page from Trading 212. "
-                    "Try again with a different --user-agent value, and verify your "
-                    "network/IP is allowed by Trading 212."
+                    "Verify your API credentials and network access."
                 ) from exc
             raise Trading212Error(
                 f"{method} {url} returned non-JSON response: {raw[:200]}"
@@ -174,7 +168,7 @@ class Trading212Client:
         return result
 
 
-# --- Parsing helpers (preserved from scripts/trading212_net_worth.py) ---
+# --- Parsing helpers ---
 
 
 def as_float(value: Any, default: float = 0.0) -> float:

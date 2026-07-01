@@ -16,21 +16,16 @@ from pipeline.connectors.xtb.parser import (
 from pipeline.raw.models import RAW_SCHEMA
 
 
-def fetch_snapshot(
-    file_path: str | Path,
-    account_id: str | None = None,
-) -> pa.Table:
+def fetch_snapshot(file_path: str | Path) -> pa.Table:
     """Fetch XTB positions and cash from an Excel report.
 
     Parameters
     ----------
     file_path:
         Absolute path to the XTB .xlsx report.
-    account_id:
-        Optional account ID override.
     """
     report_path = Path(file_path)
-    positions, net_worth = load_positions(report_path, account_id_override=account_id)
+    positions, net_worth = load_positions(report_path)
 
     now = datetime.now(timezone.utc)
     filename = report_path.name
@@ -64,32 +59,23 @@ def fetch_snapshot(
             "source": ["OPEN POSITION"],
             "payload": [payload],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "account_id": [
-                positions[0].account_id if positions else (account_id or "XTB")
-            ],
+            "account_id": [positions[0].account_id if positions else "XTB"],
             "source_file": [filename],
         },
         schema=RAW_SCHEMA,
     )
 
 
-def fetch_cdc(
-    file_path: str | Path,
-    account_id: str | None = None,
-) -> pa.Table:
+def fetch_cdc(file_path: str | Path) -> pa.Table:
     """Fetch XTB cash operations (CDC) from an Excel report.
 
     Parameters
     ----------
     file_path:
         Absolute path to the XTB .xlsx report.
-    account_id:
-        Optional account ID override.
     """
     report_path = Path(file_path)
-    operations = load_cash_operations_from_report(
-        report_path, account_id_override=account_id
-    )
+    operations = load_cash_operations_from_report(report_path)
 
     now = datetime.now(timezone.utc)
     filename = report_path.name
@@ -111,7 +97,7 @@ def fetch_cdc(
     payload = json.dumps(ops_data).encode("utf-8")
 
     if not operations:
-        acct_id = account_id or "XTB"
+        acct_id = "XTB"
     else:
         acct_id = operations[0].account_id
 

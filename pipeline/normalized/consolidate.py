@@ -1,9 +1,7 @@
 """Consolidate normalized snapshots into a unified holdings table.
 
-This module replaces the logic in ``scripts/portfolio_connectors.py``
-for currency conversion, ticker normalization, ISIN override, and
-percentage aggregation, operating on normalized Delta tables instead
-of live API calls.
+Provides currency conversion, ticker normalization, ISIN override, and
+percentage aggregation, operating on normalized Delta tables.
 """
 
 from __future__ import annotations
