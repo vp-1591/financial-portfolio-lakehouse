@@ -62,4 +62,15 @@ Removed the empty-table filter that opened a `DeltaTable` for each discovered ta
 - All 280 tests pass (1 skipped — live FX test)
 - `test_storage_config.py`: 2 new tests for lowercase `storage_options` keys
 - `test_query_list_tables.py`: completely rewritten for auto-discovery, alias parsing, Result/DecryptedResult chaining, and table caching
+- `test_query_s3.py`: 6 tests including empty-credential skip tests
 - `ruff check` and `ruff format` pass cleanly
+
+## Post-merge fixes
+
+Three issues were identified in code review and fixed before merge:
+
+1. **Empty credentials block IAM fallback** — `_configure_s3()` always created a DuckDB SECRET even when `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` were empty, preventing `delta_scan()` from falling back to IAM instance metadata. Fixed by skipping `CREATE SECRET` when credentials are absent or empty, mirroring the `S3Backend.storage_options` logic.
+
+2. **SQL injection in `_setup_connection()`** — Table aliases were interpolated as bare SQL identifiers and paths as unescaped string literals. Fixed by double-quoting the alias identifier (`"{alias}"`) and escaping single quotes in the path.
+
+3. **Broad `except Exception` hides auth errors** — `_discover_tables_s3()` used bare `except Exception: continue` / `pass`, silently swallowing authentication failures and returning an empty table list. Fixed by catching only `(OSError, pyarrow.ArrowInvalid)` and logging a warning for the outer loop.

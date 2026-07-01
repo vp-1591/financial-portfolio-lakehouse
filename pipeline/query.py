@@ -34,6 +34,7 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -42,6 +43,8 @@ import polars as pl
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
 from pipeline.storage import S3Backend, get_storage
+
+logger = logging.getLogger(__name__)
 
 # Columns that contain Fernet-encrypted binary data in normalized tables.
 _ENCRYPTED_COLUMNS = frozenset({"value", "quantity", "amount"})
@@ -88,10 +91,16 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
     Uses PyArrow's S3FileSystem to list directories under each layer
     prefix and checks for ``_delta_log/`` objects to identify Delta tables.
     """
+    import pyarrow as pa
     import pyarrow.fs as pafs
 
     region = os.environ.get("AWS_REGION", "eu-west-1")
     fs = pafs.S3FileSystem(region=region)
+
+    # Exceptions raised by PyArrow S3 operations.  We catch these
+    # specifically so that programming errors (e.g. TypeError, ValueError)
+    # are not silently swallowed.
+    _s3_errors: tuple[type[Exception], ...] = (OSError, pa.ArrowInvalid)
 
     tables: list[tuple[str, str]] = []
     for layer in LAYERS:
@@ -99,7 +108,8 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
         try:
             selector = pafs.FileSelector(base, recursive=False)
             entries = fs.get_file_info(selector)
-        except Exception:
+        except _s3_errors as exc:
+            logger.warning("S3 discovery failed for %s: %s", base, exc)
             continue
 
         for entry in entries:
@@ -121,9 +131,9 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
                         log_entries = fs.get_file_info(log_selector)
                         if log_entries:
                             tables.append((layer, name))
-                    except Exception:
+                    except _s3_errors:
                         pass
-            except Exception:
+            except _s3_errors:
                 pass
 
     return tables
@@ -254,8 +264,11 @@ def _setup_connection(conn: duckdb.DuckDBPyConnection) -> None:
             continue
         name, layer = parsed
         path = config.backend.table_path(layer, name)
+        # Escape single quotes in path to prevent SQL injection via delta_scan().
+        escaped_path = path.replace("'", "''")
+        # Double-quote the alias so DuckDB treats it as a delimited identifier.
         conn.execute(
-            f"CREATE OR REPLACE VIEW {alias} AS SELECT * FROM delta_scan('{path}')"
+            f"CREATE OR REPLACE VIEW \"{alias}\" AS SELECT * FROM delta_scan('{escaped_path}')"
         )
 
 
@@ -284,14 +297,32 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
 
     Uses DuckDB's SECRET mechanism (v0.10+) which propagates credentials
     to all extensions including ``delta_scan()``.
+
+    When explicit credentials (``AWS_ACCESS_KEY_ID`` and
+    ``AWS_SECRET_ACCESS_KEY``) are present, they are registered as a
+    DuckDB SECRET.  When they are absent, no SECRET is created so that
+    DuckDB / Delta Kernel can fall back to IAM instance metadata or
+    other credential providers — mirroring the empty-credential logic
+    in ``S3Backend.storage_options``.
     """
     key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
     secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
     region = os.environ.get("AWS_REGION", "eu-west-1")
 
-    conn.execute(
-        f"CREATE SECRET (TYPE S3, KEY_ID '{key_id}', SECRET '{secret}', REGION '{region}')"
-    )
+    if key_id and secret:
+        # Escape single quotes to prevent SQL injection via env vars.
+        safe_key_id = key_id.replace("'", "''")
+        safe_secret = secret.replace("'", "''")
+        conn.execute(
+            f"CREATE SECRET (TYPE S3, KEY_ID '{safe_key_id}', "
+            f"SECRET '{safe_secret}', REGION '{region}')"
+        )
+    else:
+        # No explicit credentials — rely on IAM role / instance metadata.
+        logger.debug(
+            "No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY set; "
+            "skipping DuckDB S3 SECRET (expecting IAM role fallback)"
+        )
 
 
 # ---------------------------------------------------------------------------
