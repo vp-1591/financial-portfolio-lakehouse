@@ -17,8 +17,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0003 | Medallion Architecture Pipeline | 2026-06-19 | active | — |
 | 0004 | Pipeline End-to-End Bugfixes | 2026-06-21 | active | — |
 | 0005 | Pipeline End-to-End Bugfixes (Round 2) | 2026-06-21 | active | — |
-| 0006 | Replace IBKR Client Portal Gateway with Flex Web Service | 2026-06-25 | active | — |
-| 0007 | Make Trading 212 Account IDs Optional and Update Documentation | 2026-06-25 | active | — |
+| 0006 | Replace IBKR Client Portal Gateway with Flex Web Service | 2026-06-25 | superseded | 0029 |
+| 0007 | Make Trading 212 Account IDs Optional and Update Documentation | 2026-06-25 | superseded | 0029 |
 | 0010 | Fix Trading 212 Authentication Method | 2026-06-25 | active | — |
 | 0011 | Standardize Trading 212 CLI Args to t212 Prefix | 2026-06-25 | superseded | 0018 |
 | 0012 | Add Pipeline Data Flow Diagram to README | 2026-06-26 | active | — |

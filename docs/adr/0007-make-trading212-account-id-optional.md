@@ -1,5 +1,7 @@
 # 0007: Make Trading 212 Account IDs Optional and Update Documentation
 
+> **Superseded by [ADR 0029](./0029-remove-redundant-env-vars-and-ibkr-gateway-dead-code.md)** — ADR 0007 made T212 account-id optional; ADR 0029 removed T212_ACCOUNT_ID entirely (hardcoded empty string) and ADR 0028 removed the standalone scripts this ADR modified.
+
 ## Context
 
 The Trading 212 scripts (`trading212_net_worth.py` and `portfolio_percentages.py`) required `--account-id` / `--trading212-account-id` arguments even though the underlying implementation already had a default empty string value. This created an unnecessary requirement for users who might not need to specify an account ID. Additionally, the README was out of date — it only mentioned `--api-key` but the script also requires `--api-secret` (now required for Basic auth), and it showed `--account-id` as required in examples.
