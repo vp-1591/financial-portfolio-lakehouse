@@ -17,7 +17,7 @@ Replace the Client Portal Gateway integration in `scripts/ibkr_net_worth.py` wit
 IBKR Flex Web Service API. The standalone script now:
 
 - Uses `IbkrFlexClient` (two-step HTTP flow: SendRequest → GetStatement)
-- Accepts `--ibkr-flex-token` (required) and `--ibkr-flex-query-id` (default 1554188)
+- Accepts `--ibkr-flex-token` (required) and `--ibkr-flex-query-id` (required)
 - Parses XML `<OpenPosition>`, `<AccountInformation>`, and optionally `<CashReport>` elements
   for positions, cash, net liquidation value, and FX rates
 - Removed: `--base-url`, `--account`, `--verify-tls`, `--skip-auth-check`,

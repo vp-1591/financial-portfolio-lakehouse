@@ -63,7 +63,7 @@ pipeline code.
 - Raw layer: entire `payload` column is Fernet-encrypted
 - Normalized layer: only `value`/`amount`/`quantity` columns are encrypted
 - Analytics layer: no encryption
-- Key stored in `.secrets/encryption.key` (gitignored) or `PORTFOLIO_ENCRYPTION_KEY` env var
+- Key stored in `.secrets/encryption.key` (gitignored) or `ENCRYPTION_KEY` env var
 
 ### What was removed
 

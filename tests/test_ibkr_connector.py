@@ -149,7 +149,7 @@ class TestClientParsing:
   <ReferenceCode>98765432</ReferenceCode>
 </FlexStatementResponse>
 """
-        client = IbkrFlexClient(token="test-token", query_id="1554188")
+        client = IbkrFlexClient(token="test-token", query_id="999999")
         client._request = lambda path, params: response_xml  # type: ignore[assignment]
 
         ref_code = client.request_report()
@@ -165,7 +165,7 @@ class TestClientParsing:
 """
         from pipeline.connectors.ibkr.client import IbkrError
 
-        client = IbkrFlexClient(token="bad-token", query_id="1554188")
+        client = IbkrFlexClient(token="bad-token", query_id="999999")
         client._request = lambda path, params: response_xml  # type: ignore[assignment]
 
         try:

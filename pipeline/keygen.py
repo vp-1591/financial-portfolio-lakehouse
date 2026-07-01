@@ -16,9 +16,9 @@ from pipeline.storage import S3Backend, get_storage
 def main() -> None:
     config = get_storage()
     if isinstance(config.backend, S3Backend):
-        print("In S3 mode, set the PORTFOLIO_ENCRYPTION_KEY environment variable.")
+        print("In S3 mode, set the ENCRYPTION_KEY environment variable.")
         print(
-            "Example: export PORTFOLIO_ENCRYPTION_KEY=$(python -c "
+            "Example: export ENCRYPTION_KEY=$(python -c "
             "'from pipeline.crypto import generate_key; print(generate_key().decode())')"
         )
         return

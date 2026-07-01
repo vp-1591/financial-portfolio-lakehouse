@@ -49,7 +49,7 @@ jobs:
       IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
       T212_API_KEY: ${{ secrets.T212_API_KEY }}
       T212_API_SECRET: ${{ secrets.T212_API_SECRET }}
-      PORTFOLIO_ENCRYPTION_KEY: ${{ secrets.PORTFOLIO_ENCRYPTION_KEY }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
       IBKR_ENABLED: ${{ inputs.ibkr-enabled }}
       T212_ENABLED: ${{ inputs.t212-enabled }}
       XTB_ENABLED: ${{ inputs.xtb-enabled }}

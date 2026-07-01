@@ -71,8 +71,7 @@ to real-time positions.
    Cash Balance, Currency.
 6. Set **Format** to XML, **Period** to Last Business Day, and
    **Include Currency Rates** to Yes.
-7. Click **Continue → Create** and note the **Query ID** (a number like
-   `1554188`).
+7. Click **Continue → Create** and note the **Query ID** (a numeric ID).
 8. On the same page, click the **gear icon ⚙️** next to **Flex Web Service
    Configuration**, toggle it to **Enable**, and click **Generate A New Token**.
    Copy the token immediately — it is shown only once.
@@ -107,7 +106,7 @@ They come from environment variables, set by one of two sources:
    IBKR_FLEX_TOKEN=your_token_here
    T212_API_KEY=your_key_here
    T212_API_SECRET=your_secret_here
-   PORTFOLIO_ENCRYPTION_KEY=your_fernet_key_here
+   ENCRYPTION_KEY=your_fernet_key_here
    ```
 
 2. **GitHub Secrets (CI)** — set in your repository settings. The pipeline
@@ -118,7 +117,7 @@ Environment variables always take priority over `.env` file values.
 | Variable | Purpose |
 |----------|---------|
 | `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token *(required)* |
-| `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID (default: `1554188`) |
+| `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID *(required)* |
 | `IBKR_FLEX_BASE_URL` | IBKR Flex Web Service base URL (default: `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService`) |
 | `IBKR_ENABLED` | Enable/disable IBKR connector (default: enabled) |
 | `T212_API_KEY` | Trading 212 API key *(required)* |
@@ -127,7 +126,7 @@ Environment variables always take priority over `.env` file values.
 | `T212_BASE_URL` | Trading 212 API base URL (auto-derived from `T212_DEMO`) |
 | `T212_ENABLED` | Enable/disable Trading 212 connector (default: enabled) |
 | `XTB_ENABLED` | Enable/disable XTB connector (default: enabled) |
-| `PORTFOLIO_ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
+| `ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
 | `S3_BUCKET` | S3 bucket for cloud storage (enables S3Backend) |
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
@@ -145,7 +144,7 @@ are needed — `deltalake` handles S3 natively via its Rust `object_store`
 crate.
 
 The `keygen` command only works in local mode. For S3, set
-`PORTFOLIO_ENCRYPTION_KEY` as an environment variable — **the encryption
+`ENCRYPTION_KEY` as an environment variable — **the encryption
 key is never stored in S3.**
 
 ### Configuration
@@ -180,7 +179,7 @@ $env:PIPELINE_DATA_DIR = "C:\path\to\data"
 $env:S3_BUCKET = "your-bucket"
 $env:AWS_ACCESS_KEY_ID = "..."
 $env:AWS_SECRET_ACCESS_KEY = "..."
-$env:PORTFOLIO_ENCRYPTION_KEY = "..."
+$env:ENCRYPTION_KEY = "..."
 .venv\Scripts\python -m pipeline.run full
 ```
 
@@ -191,11 +190,11 @@ from GitHub Secrets. See `.github/workflows/pipeline.yml`.
 
 ### Infrastructure
 
-The `infra/` directory contains Terraform configuration for the S3 bucket
+The `terraform/` directory contains Terraform configuration for the S3 bucket
 and IAM user:
 
 ```bash
-cd infra
+cd terraform
 terraform init
 terraform plan
 terraform apply
@@ -207,8 +206,10 @@ After applying, store the outputs in GitHub:
 - `access_key_id` → GitHub Secret `AWS_ACCESS_KEY_ID`
 - `access_key_secret` → GitHub Secret `AWS_SECRET_ACCESS_KEY`
 
-### Tests
+### Tests & Linting
 
 ```powershell
 .venv\Scripts\python -m pytest
+.venv\Scripts\python -m ruff check .
+.venv\Scripts\python -m ruff format --check .
 ```

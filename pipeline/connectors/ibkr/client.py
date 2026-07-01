@@ -24,7 +24,6 @@ _IS_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 DEFAULT_FLEX_BASE_URL = (
     "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 )
-DEFAULT_QUERY_ID = "1554188"
 
 
 class IbkrError(RuntimeError):
@@ -51,7 +50,7 @@ class IbkrFlexClient:
     def __init__(
         self,
         token: str,
-        query_id: str = DEFAULT_QUERY_ID,
+        query_id: str,
         base_url: str = DEFAULT_FLEX_BASE_URL,
         timeout: float = 30.0,
     ) -> None:

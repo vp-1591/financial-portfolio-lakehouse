@@ -95,7 +95,7 @@ class TestLoadKey:
         # Clear any env var to force file lookup
         import os
 
-        os.environ.pop("PORTFOLIO_ENCRYPTION_KEY", None)
+        os.environ.pop("ENCRYPTION_KEY", None)
         with pytest.raises(FileNotFoundError):
             load_key(tmp_path / "nonexistent.key")
 
@@ -104,8 +104,8 @@ class TestLoadKey:
     ) -> None:
         import os
 
-        os.environ["PORTFOLIO_ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
+        os.environ["ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
         # Even though file doesn't exist, env var should work
         loaded = load_key(tmp_path / "nonexistent.key")
         assert loaded == fernet_key
-        os.environ.pop("PORTFOLIO_ENCRYPTION_KEY", None)
+        os.environ.pop("ENCRYPTION_KEY", None)

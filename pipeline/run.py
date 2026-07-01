@@ -98,9 +98,16 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                     "Skipping %s: IBKR_FLEX_TOKEN not set", connector.display_name
                 )
                 continue
+            ibkr_flex_query_id = os.environ.get("IBKR_FLEX_QUERY_ID")
+            if not ibkr_flex_query_id:
+                logger.debug(
+                    "Skipping %s: IBKR_FLEX_QUERY_ID not set",
+                    connector.display_name,
+                )
+                continue
             snapshot_kwargs = {
                 "flex_token": ibkr_flex_token,
-                "flex_query_id": get_config("IBKR_FLEX_QUERY_ID", "1554188"),
+                "flex_query_id": ibkr_flex_query_id,
                 "flex_base_url": get_config(
                     "IBKR_FLEX_BASE_URL",
                     "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",

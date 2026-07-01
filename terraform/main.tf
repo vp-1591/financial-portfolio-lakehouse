@@ -6,7 +6,7 @@
 #   - IAM access key (store key ID and secret in GitHub Secrets)
 #
 # Usage:
-#   cd infra
+#   cd terraform
 #   terraform init
 #   terraform plan
 #   terraform apply

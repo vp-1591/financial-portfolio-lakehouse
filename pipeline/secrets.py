@@ -42,9 +42,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # These are set via GitHub Secrets (CI) or .env / manual exports (local dev).
 REQUIRED_SECRETS: list[str] = [
     "IBKR_FLEX_TOKEN",
+    "IBKR_FLEX_QUERY_ID",
     "T212_API_KEY",
     "T212_API_SECRET",
-    "PORTFOLIO_ENCRYPTION_KEY",
+    "ENCRYPTION_KEY",
 ]
 
 

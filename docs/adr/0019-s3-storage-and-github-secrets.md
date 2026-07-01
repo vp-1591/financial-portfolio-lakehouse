@@ -13,7 +13,7 @@ filesystem for data storage. Two problems drove this change:
    the local filesystem, so S3 is needed for production runs.
 
 The user also noted that secrets should never be stored in S3 — the encryption
-key comes from `PORTFOLIO_ENCRYPTION_KEY` env var, not from the S3 bucket.
+key comes from `ENCRYPTION_KEY` env var, not from the S3 bucket.
 
 ## Decision
 
@@ -51,7 +51,7 @@ key comes from `PORTFOLIO_ENCRYPTION_KEY` env var, not from the S3 bucket.
    `SET s3_access_key_id=...` etc. when the table path starts with `s3://`.
 
 8. **`keygen` command is local-only** — in S3 mode, it prints a message
-   telling the user to set `PORTFOLIO_ENCRYPTION_KEY` env var. The encryption
+   telling the user to set `ENCRYPTION_KEY` env var. The encryption
    key is never stored in S3.
 
 9. **Local dev still works** — `LocalBackend` is the default when `S3_BUCKET`
@@ -73,7 +73,7 @@ key comes from `PORTFOLIO_ENCRYPTION_KEY` env var, not from the S3 bucket.
   sources.
 - **`.env` file is gitignored.** Local developers create it manually with
   their API keys and encryption key.
-- **Secrets are never in S3.** The encryption key (`PORTFOLIO_ENCRYPTION_KEY`)
+- **Secrets are never in S3.** The encryption key (`ENCRYPTION_KEY`)
   comes from GitHub Secrets or `.env`, never from the S3 bucket. Delta table
   values are Fernet-encrypted at rest, and the key to decrypt them is not
   stored alongside the data.

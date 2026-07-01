@@ -18,7 +18,7 @@ class IbkrConnector:
     def fetch_snapshot(self, **kwargs: Any) -> pa.Table:
         return fetch.fetch_snapshot_via_flex(
             token=kwargs["flex_token"],
-            query_id=kwargs.get("flex_query_id", "1554188"),
+            query_id=kwargs["flex_query_id"],
             base_url=kwargs.get(
                 "flex_base_url",
                 "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",

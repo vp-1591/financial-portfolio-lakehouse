@@ -14,7 +14,7 @@ from pipeline.raw.models import RAW_SCHEMA
 
 def fetch_snapshot_via_flex(
     token: str,
-    query_id: str = "1554188",
+    query_id: str,
     base_url: str = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
     timeout: float = 30.0,
     retries: int = 6,
