@@ -1,5 +1,7 @@
 # 0018: Bitwarden Secrets and YAML Config
 
+> **Superseded by [ADR 0019](./0019-s3-storage-and-github-secrets.md) and [ADR 0020](./0020-remove-yaml-config-use-env-vars.md)** — ADR 0018 introduced Bitwarden secrets and YAML config; ADR 0019 replaced Bitwarden with GitHub Secrets/env vars, and ADR 0020 removed YAML config in favor of environment variables.
+
 ## Context
 
 The pipeline had two problems:

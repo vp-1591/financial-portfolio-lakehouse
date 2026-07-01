@@ -1,5 +1,7 @@
 # 0006: Replace IBKR Client Portal Gateway with Flex Web Service
 
+> **Superseded by [ADR 0029](./0029-remove-redundant-env-vars-and-ibkr-gateway-dead-code.md)** — ADR 0006 introduced Flex as an alternative alongside the Client Portal Gateway; ADR 0029 removed the gateway entirely, making Flex the only IBKR access method.
+
 ## Context
 
 The IBKR Client Portal Gateway requires a local Java process, browser SSO authentication,
