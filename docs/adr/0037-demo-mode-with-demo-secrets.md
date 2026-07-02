@@ -18,7 +18,7 @@ Replace `T212_DEMO` with a general `DEMO` boolean flag. When `DEMO=true`:
 1. **Secrets**: Use `_DEMO`-suffixed secrets exclusively (e.g., `T212_API_KEY_DEMO` instead of `T212_API_KEY`). No fallback to production secrets — missing demo credentials are a hard error.
 
 2. **Storage**: Write to a separate demo bucket/ducket directory:
-   - S3: `{S3_BUCKET}_demo` bucket with `pipeline_demo` prefix (or `S3_BUCKET_DEMO`/`S3_PREFIX_DEMO` if set)
+   - S3: `{S3_BUCKET}-demo` bucket with `pipeline_demo` prefix (or `S3_BUCKET_DEMO`/`S3_PREFIX_DEMO` if set)
    - Local: `{data_dir}_demo` (or `PIPELINE_DATA_DIR_DEMO` if set)
 
 3. **AWS credentials**: Use `AWS_ACCESS_KEY_ID_DEMO`/`AWS_SECRET_ACCESS_KEY_DEMO` exclusively. No fallback to base keys.

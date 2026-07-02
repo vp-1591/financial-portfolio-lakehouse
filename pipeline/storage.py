@@ -261,7 +261,7 @@ def resolve_storage() -> StorageConfig:
 
     In demo mode (``DEMO=true``), storage paths are isolated:
 
-    - **S3 mode**: uses ``S3_BUCKET_DEMO`` (or ``{S3_BUCKET}_demo``)
+    - **S3 mode**: uses ``S3_BUCKET_DEMO`` (or ``{S3_BUCKET}-demo``)
       and ``S3_PREFIX_DEMO`` (or ``"pipeline_demo"``).
     - **Local mode**: uses ``PIPELINE_DATA_DIR_DEMO`` (or
       ``{data_dir}_demo``).
@@ -291,7 +291,7 @@ def resolve_storage() -> StorageConfig:
                 )
 
         if demo:
-            bucket = os.environ.get("S3_BUCKET_DEMO") or f"{s3_bucket}_demo"
+            bucket = os.environ.get("S3_BUCKET_DEMO") or f"{s3_bucket}-demo"
             prefix = os.environ.get("S3_PREFIX_DEMO", "pipeline_demo")
         else:
             bucket = s3_bucket
