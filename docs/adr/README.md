@@ -44,8 +44,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0032 | ADR Index and Optimize-adrs Workflow | 2026-07-01 | active | — |
 | 0033 | Migrate Terraform State from Local to S3 Backend | 2026-07-01 | active | — |
 | 0034 | Add required_version Constraint for Terraform 1.11+ | 2026-07-01 | active | — |
-| 0035 | Remove dead cashBalance fallback from IBKR transform | 2026-07-01 | active | — |
-| 0036 | Remove conid and side from IBKR pipeline | 2026-07-01 | active | — |
+| 0035 | Remove dead cashBalance and startingCash fallbacks from IBKR transform | 2026-07-02 | active | — |
+| 0036 | Remove conid and side from IBKR pipeline | 2026-07-02 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

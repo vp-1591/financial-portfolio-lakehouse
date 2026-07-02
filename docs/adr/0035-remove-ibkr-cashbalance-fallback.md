@@ -1,4 +1,4 @@
-# 0035 — Remove dead `cashBalance` fallback from IBKR transform
+# 0035 — Remove dead `cashBalance` and `startingCash` fallbacks from IBKR transform
 
 ## Context
 
@@ -23,6 +23,14 @@ the test fixture at `tests/fixtures/ibkr.py` and three assertions in
 `tests/test_ibkr_connector.py` all injected a synthetic `cashBalance` value.
 The tests were passing against a value that real XML would never carry.
 
+Additionally, the Cash Report parser had a `startingCash` fallback: when
+`endingCash` was 0, it would substitute `startingCash` from the same
+`<CashReportCurrency>` entry. This fallback is methodologically incorrect —
+starting cash is not a valid substitute for ending cash (it represents the
+balance at the beginning of the period, not the end). When `endingCash` is
+genuinely 0, the entry should be skipped rather than replaced with an unrelated
+value.
+
 The companion user-facing doc `docs/ibkr/flex-query-required-fields.md` had
 been written assuming `cashBalance` was real; the field was removed from that
 doc first, which surfaced the dead-code inconsistency this ADR resolves.
@@ -31,17 +39,21 @@ doc first, which surfaced the dead-code inconsistency this ADR resolves.
 
 Delete the tier-2 `cashBalance` fallback in
 `pipeline/connectors/ibkr/transform.py` and remove the synthetic `cashBalance`
-attribute from the tests and the shared fixture. Update ADR 0006 to reflect
-the actually-implemented two-tier behaviour (Cash Report only, with silent
-1:1 FX fallback). The NLV-derived tier (tier 3) and the missing-FX-rate warning
-remain unimplemented and out of scope for this change.
+attribute from the tests and the shared fixture. Also remove the
+`startingCash` fallback from the Cash Report parser — when `endingCash` is 0,
+the entry is now skipped entirely rather than replaced with `startingCash`.
+Update ADR 0006 to reflect the actually-implemented two-tier behaviour (Cash
+Report only, with silent 1:1 FX fallback). The NLV-derived tier (tier 3) and
+the missing-FX-rate warning remain unimplemented and out of scope for this
+change.
 
 Specifically:
 
 - **`pipeline/connectors/ibkr/transform.py`**: delete the entire
   `if not cash_from_report and account_infos:` block and the
   `cash_from_report` flag (init at line 166, set at line 206, read in the
-  deleted block).
+  deleted block). Also delete the `startingCash` fallback (`if ending_cash == 0:
+  ending_cash = as_float(entry.get("startingCash"))`).
 - **`tests/test_ibkr_connector.py`**: drop the `cashBalance="5000.00"`
   attribute and the `accounts[0]["cashBalance"]` assertion in
   `test_parse_account_info_extracts_attributes`; drop the
@@ -58,7 +70,9 @@ Specifically:
 
 - Cash rows are produced only when the **Cash Report** section of the
   Activity Flex Query is enabled and returns at least one `<CashReportCurrency>`
-  row with a non-zero `endingCash`.
+  row with a non-zero `endingCash`. Entries where `endingCash` is 0 are now
+  skipped rather than falling back to `startingCash` — starting cash is not a
+  valid substitute for ending cash.
 - If the Flex Query is misconfigured (Cash Report section off, or all cash
   balances are zero), the pipeline produces **no cash rows** for that
   account. The dashboard will show zero cash — a clear signal that the
