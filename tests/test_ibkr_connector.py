@@ -80,9 +80,9 @@ class TestClientParsing:
             '<FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">'
             "<CashReport>"
             '<CashReportCurrency accountId="U123" currency="USD"'
-            ' endingCash="5000.00" startingCash="4800.00"/>'
+            ' endingCash="5000.00"/>'
             '<CashReportCurrency accountId="U123" currency="EUR"'
-            ' endingCash="2000.00" startingCash="1800.00"/>'
+            ' endingCash="2000.00"/>'
             "</CashReport>"
             "</FlexStatement>"
             "</FlexStatements>"

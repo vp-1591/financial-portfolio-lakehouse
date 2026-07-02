@@ -165,8 +165,6 @@ def transform_snapshot(
                 acct_id = str(entry.get("accountId", ""))
                 currency = str(entry.get("currency", "") or "").upper()
                 ending_cash = as_float(entry.get("endingCash"))
-                if ending_cash == 0:
-                    ending_cash = as_float(entry.get("startingCash"))
                 if not currency or ending_cash == 0:
                     continue
 

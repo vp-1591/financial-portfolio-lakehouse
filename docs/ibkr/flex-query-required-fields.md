@@ -69,7 +69,6 @@ is missing, no cash rows will be produced for any account.
 | Account ID       | `accountId`     | Required | Identifies which account the cash belongs to.                       |
 | Currency         | `currency`      | Required | The cash currency (3-letter ISO 4217 code).                          |
 | Ending Cash      | `endingCash`    | Required | End-of-period cash balance. Primary value source.                    |
-| Starting Cash    | `startingCash`  | Optional | Only used as a fallback if `endingCash` is 0 or missing.             |
 
 > Cash Report rows whose `currency` is not a 3-letter ISO 4217 code (e.g.
 > `BASE SUMMARY`, `Total`) are summary lines and are intentionally skipped by
