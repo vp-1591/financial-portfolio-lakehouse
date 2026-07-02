@@ -23,7 +23,6 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
@@ -33,6 +32,7 @@ from typing import Protocol, runtime_checkable
 from pipeline.secrets import (
     STORAGE_TYPE_CLOUD,
     STORAGE_TYPE_MINIO,
+    get_env,
     get_storage_type,
     is_demo,
 )
@@ -276,14 +276,14 @@ def resolve_storage() -> StorageConfig:
     demo = is_demo()
 
     if storage_type in (STORAGE_TYPE_CLOUD, STORAGE_TYPE_MINIO):
-        s3_bucket = os.environ.get("S3_BUCKET")
+        s3_bucket = get_env("S3_BUCKET")
         if not s3_bucket:
             raise ValueError(
                 f"STORAGE_TYPE is '{storage_type}' but S3_BUCKET is not set"
             )
 
         if storage_type == STORAGE_TYPE_MINIO:
-            endpoint_url = os.environ.get("S3_ENDPOINT_URL")
+            endpoint_url = get_env("S3_ENDPOINT_URL")
             if not endpoint_url:
                 logger.warning(
                     "STORAGE_TYPE is 'minio' but S3_ENDPOINT_URL is not set; "
@@ -291,11 +291,11 @@ def resolve_storage() -> StorageConfig:
                 )
 
         if demo:
-            bucket = os.environ.get("S3_BUCKET_DEMO") or f"{s3_bucket}-demo"
-            prefix = os.environ.get("S3_PREFIX_DEMO", "pipeline_demo")
+            bucket = get_env("S3_BUCKET_DEMO") or f"{s3_bucket}-demo"
+            prefix = get_env("S3_PREFIX_DEMO", "pipeline_demo")
         else:
             bucket = s3_bucket
-            prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
+            prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
         backend = S3Backend(bucket=bucket, prefix=prefix)
         base = f"s3://{backend.bucket}/{prefix}"
         config = StorageConfig(
@@ -308,14 +308,14 @@ def resolve_storage() -> StorageConfig:
             backend=backend,
         )
     else:
-        data_dir_str = os.environ.get("PIPELINE_DATA_DIR")
+        data_dir_str = get_env("PIPELINE_DATA_DIR")
         if data_dir_str:
             data_dir = Path(data_dir_str)
         else:
             data_dir = PROJECT_ROOT / "data"
 
         if demo:
-            demo_dir_str = os.environ.get("PIPELINE_DATA_DIR_DEMO")
+            demo_dir_str = get_env("PIPELINE_DATA_DIR_DEMO")
             if demo_dir_str:
                 data_dir = Path(demo_dir_str)
             else:

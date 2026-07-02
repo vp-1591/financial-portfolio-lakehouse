@@ -28,7 +28,7 @@ a connector.
 Usage::
 
     from pipeline.secrets import (
-        inject_secrets, get_secret, get_config, is_enabled,
+        inject_secrets, get_secret, get_env, is_enabled,
         parse_bool, is_demo, resolve_secret,
     )
 
@@ -172,12 +172,20 @@ def get_secret(name: str) -> str | None:
     return os.environ.get(name)
 
 
-def get_config(name: str, default: str | None = None) -> str | None:
-    """Get a config value from environment variables with an optional default.
+def get_env(name: str, default: str | None = None) -> str | None:
+    """Get an environment variable, treating empty strings as unset.
 
-    Returns the env var value if set, otherwise *default*.
+    Unlike ``os.environ.get``, this returns *default* when the variable
+    is set to an empty string.  CI systems (GitHub Actions) often set
+    empty strings for undefined variables, which would silently bypass
+    ``os.environ.get`` defaults.
+
+    Returns the env var value if set and non-empty, otherwise *default*.
     """
-    return os.environ.get(name, default)
+    value = os.environ.get(name)
+    if value:  # non-empty string
+        return value
+    return default
 
 
 def is_enabled(name: str) -> bool:
@@ -235,7 +243,7 @@ def get_storage_type() -> str:
         return explicit
     # Backward compatibility: if S3_BUCKET is set and no STORAGE_TYPE,
     # default to cloud.
-    if os.environ.get("S3_BUCKET"):
+    if get_env("S3_BUCKET"):
         return STORAGE_TYPE_CLOUD
     return STORAGE_TYPE_LOCAL
 
@@ -407,8 +415,8 @@ def resolve_aws_credentials() -> AwsCredentials:
     """
     key_id = resolve_secret("AWS_ACCESS_KEY_ID") or None
     secret_key = resolve_secret("AWS_SECRET_ACCESS_KEY") or None
-    region = os.environ.get("AWS_REGION", "eu-west-1")
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or None
+    region = get_env("AWS_REGION", "eu-west-1")
+    endpoint_url = get_env("S3_ENDPOINT_URL")
     allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in ("1", "true", "yes")
 
     return AwsCredentials(

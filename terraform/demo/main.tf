@@ -117,19 +117,30 @@ resource "aws_iam_access_key" "pipeline_demo" {
 
 data "aws_iam_policy_document" "pipeline_demo" {
   statement {
-    sid    = "ReadWritePipelineDataDemo"
+    sid    = "ListBucket"
+    effect = "Allow"
+
+    actions = [
+      "s3:ListBucket",
+    ]
+
+    resources = [
+      aws_s3_bucket.pipeline_demo.arn,
+    ]
+  }
+
+  statement {
+    sid    = "ReadWriteObjects"
     effect = "Allow"
 
     actions = [
       "s3:GetObject",
       "s3:PutObject",
       "s3:DeleteObject",
-      "s3:ListBucket",
     ]
 
     resources = [
-      aws_s3_bucket.pipeline_demo.arn,
-      "${aws_s3_bucket.pipeline_demo.arn}/${var.s3_prefix}/*",
+      "${aws_s3_bucket.pipeline_demo.arn}/*",
     ]
   }
 }
