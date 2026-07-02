@@ -109,3 +109,42 @@ class TestLoadKey:
         loaded = load_key(tmp_path / "nonexistent.key")
         assert loaded == fernet_key
         os.environ.pop("ENCRYPTION_KEY", None)
+
+    def test_demo_mode_raises_when_demo_key_missing(self, monkeypatch, tmp_path):
+        """In demo mode, missing ENCRYPTION_KEY_DEMO raises EnvironmentError.
+
+        load_key() must NOT fall through to the file-based key because
+        .secrets/encryption.key contains the production key, which would
+        violate demo/production isolation.
+        """
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.delenv("ENCRYPTION_KEY_DEMO", raising=False)
+        monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+
+        with pytest.raises(EnvironmentError, match="ENCRYPTION_KEY_DEMO"):
+            load_key()
+
+    def test_demo_mode_uses_demo_key_when_set(self, monkeypatch, tmp_path):
+        """In demo mode, ENCRYPTION_KEY_DEMO is used exclusively."""
+        from pipeline.crypto import generate_key
+
+        demo_key = generate_key()
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.setenv("ENCRYPTION_KEY_DEMO", demo_key.decode("utf-8"))
+        # Production key is set but must NOT be used
+        monkeypatch.setenv("ENCRYPTION_KEY", "prod-key-value")
+
+        result = load_key()
+        assert result == demo_key
+
+    def test_production_mode_falls_back_to_file(self, monkeypatch, tmp_path):
+        """In production mode, load_key() still falls back to file-based key."""
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+
+        key = generate_key()
+        key_file = tmp_path / "encryption.key"
+        key_file.write_bytes(key)
+
+        result = load_key(key_file)
+        assert result == key

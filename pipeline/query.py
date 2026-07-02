@@ -35,14 +35,13 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 import duckdb
 import polars as pl
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
-from pipeline.secrets import resolve_secret
+from pipeline.secrets import resolve_aws_credentials
 from pipeline.storage import S3Backend, get_storage
 
 logger = logging.getLogger(__name__)
@@ -89,42 +88,14 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
     Uses PyArrow's S3FileSystem to list directories under each layer
     prefix and checks for ``_delta_log/`` objects to identify Delta tables.
 
-    For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
-    ``S3_ALLOW_HTTP`` environment variables.
+    Uses :func:`pipeline.secrets.resolve_aws_credentials` for AWS
+    credentials so that demo mode uses ``_DEMO`` variants exclusively.
     """
     import pyarrow as pa
     import pyarrow.fs as pafs
 
-    region = os.environ.get("AWS_REGION", "eu-west-1")
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
-    allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
-    fs_kwargs: dict = {"region": region}
-    key_id = resolve_secret("AWS_ACCESS_KEY_ID") or ""
-    secret = resolve_secret("AWS_SECRET_ACCESS_KEY") or ""
-    if key_id:
-        fs_kwargs["access_key"] = key_id
-    if secret:
-        fs_kwargs["secret_key"] = secret
-    if endpoint_url:
-        # Parse scheme+host from endpoint_url for PyArrow.
-        # e.g. "http://minio:9000" -> scheme="http", endpoint_override="minio:9000"
-        from urllib.parse import urlparse
-
-        parsed = urlparse(endpoint_url)
-        host = parsed.hostname
-        port = parsed.port
-        if host:
-            endpoint_override = f"{host}:{port}" if port else host
-            fs_kwargs["endpoint_override"] = endpoint_override
-        if parsed.scheme == "http":
-            fs_kwargs["scheme"] = "http"
-    if allow_http:
-        fs_kwargs["scheme"] = "http"
+    creds = resolve_aws_credentials()
+    fs_kwargs = creds.to_pyarrow_kwargs()
 
     fs = pafs.S3FileSystem(**fs_kwargs)
 
@@ -329,54 +300,26 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     Uses DuckDB's SECRET mechanism (v0.10+) which propagates credentials
     to all extensions including ``delta_scan()``.
 
-    Uses :func:`pipeline.secrets.resolve_secret` for AWS credentials
-    so that demo mode uses ``_DEMO`` variants exclusively — no fallback
-    to base credentials.
+    Uses :func:`pipeline.secrets.resolve_aws_credentials` for AWS
+    credentials so that demo mode uses ``_DEMO`` variants exclusively
+    — no fallback to base credentials.
 
     When explicit credentials are present, they are registered as a
     DuckDB SECRET.  When they are absent, no SECRET is created so that
     DuckDB / Delta Kernel can fall back to IAM instance metadata or
-    other credential providers — mirroring the empty-credential logic
-    in ``S3Backend.storage_options``.
+    other credential providers.
 
     For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` to the
     server URL and ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
     DuckDB's ``ENDPOINT`` parameter expects ``host:port`` (without scheme),
     so the URL scheme is stripped automatically.
     """
-    key_id = resolve_secret("AWS_ACCESS_KEY_ID") or ""
-    secret = resolve_secret("AWS_SECRET_ACCESS_KEY") or ""
-    region = os.environ.get("AWS_REGION", "eu-west-1")
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
-    allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in ("1", "true", "yes")
+    creds = resolve_aws_credentials()
+    parts = creds.to_duckdb_secret_parts()
 
-    if key_id and secret:
-        # Escape single quotes to prevent SQL injection via env vars.
-        safe_key_id = key_id.replace("'", "''")
-        safe_secret = secret.replace("'", "''")
-        safe_region = region.replace("'", "''")
-        parts = [
-            f"KEY_ID '{safe_key_id}'",
-            f"SECRET '{safe_secret}'",
-            f"REGION '{safe_region}'",
-        ]
-        if endpoint_url:
-            # DuckDB ENDPOINT expects host:port, not a full URL.
-            # Strip the scheme if present (e.g. "http://minio:9000" -> "minio:9000").
-            from urllib.parse import urlparse
-
-            parsed = urlparse(endpoint_url)
-            host = parsed.hostname or ""
-            port = parsed.port
-            endpoint_host = f"{host}:{port}" if port else host
-            safe_endpoint = endpoint_host.replace("'", "''")
-            parts.append(f"ENDPOINT '{safe_endpoint}'")
-        if allow_http:
-            parts.append("USE_SSL false")
-            parts.append("URL_STYLE path")
+    if parts:
         conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
     else:
-        # No explicit credentials — rely on IAM role / instance metadata.
         logger.debug(
             "No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY set; "
             "skipping DuckDB S3 SECRET (expecting IAM role fallback)"

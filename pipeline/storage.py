@@ -35,7 +35,6 @@ from pipeline.secrets import (
     STORAGE_TYPE_MINIO,
     get_storage_type,
     is_demo,
-    resolve_secret,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,11 +160,11 @@ class S3Backend:
     def storage_options(self) -> dict[str, str]:
         """AWS credentials for deltalake S3 operations.
 
-        Uses :func:`pipeline.secrets.resolve_secret` for AWS credentials
-        so that demo mode uses ``AWS_ACCESS_KEY_ID_DEMO`` and
-        ``AWS_SECRET_ACCESS_KEY_DEMO`` exclusively — no fallback to
-        base credentials.  In production mode, uses base credentials
-        only — no fallback to demo credentials.
+        Uses :func:`pipeline.secrets.resolve_aws_credentials` for AWS
+        credentials so that demo mode uses ``_DEMO`` variants
+        exclusively — no fallback to base credentials.  In production
+        mode, uses base credentials only — no fallback to demo
+        credentials.
 
         Keys use lowercase convention required by the ``object_store``
         Rust crate (e.g. ``aws_access_key_id``).  Uppercase keys like
@@ -173,29 +172,18 @@ class S3Backend:
         causing S3 authentication to fall back to EC2 instance metadata
         and fail on non-EC2 machines.
 
-        Empty credentials are omitted so that ``object_store`` can fall
-        back to its own credential chain (environment variables, IAM
-        role, etc.) rather than overriding with an empty string.
+        When credentials are ``None`` (missing for the active mode),
+        they are omitted entirely so that ``object_store`` does not
+        fall back to environment variables that may contain production
+        credentials.
 
         For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
         ``S3_ALLOW_HTTP`` environment variables.
         """
-        key_id = resolve_secret("AWS_ACCESS_KEY_ID") or ""
-        secret = resolve_secret("AWS_SECRET_ACCESS_KEY") or ""
-        region = os.environ.get("AWS_REGION", "eu-west-1")
-        opts: dict[str, str] = {}
-        if key_id:
-            opts["aws_access_key_id"] = key_id
-        if secret:
-            opts["aws_secret_access_key"] = secret
-        opts["aws_region"] = region
-        endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
-        if endpoint_url:
-            opts["aws_endpoint_url"] = endpoint_url
-        allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower()
-        if allow_http in ("1", "true", "yes"):
-            opts["aws_allow_http"] = "true"
-        return opts
+        from pipeline.secrets import resolve_aws_credentials
+
+        creds = resolve_aws_credentials()
+        return creds.to_storage_options()
 
 
 # ---------------------------------------------------------------------------

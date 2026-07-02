@@ -16,24 +16,44 @@ def generate_key() -> bytes:
 
 
 def load_key(path: Path | None = None) -> bytes:
-    """Load a Fernet key from disk or the ``ENCRYPTION_KEY`` env var.
+    """Load a Fernet key from the ``ENCRYPTION_KEY`` env var or a key file.
 
-    In demo mode, checks ``ENCRYPTION_KEY_DEMO`` first via
+    In demo mode, checks ``ENCRYPTION_KEY_DEMO`` via
     :func:`pipeline.secrets.resolve_secret`.  There is no cross-mode
-    fallback — missing the key for the active mode is a hard error.
+    fallback — if the key for the active mode is missing, a hard error
+    is raised.  In demo mode, the file-based fallback is **disabled**
+    because ``.secrets/encryption.key`` is shared between modes and
+    would contain the production key.
 
     Parameters
     ----------
     path:
-        Explicit path to the key file.  When *None*, falls back to
-        ``ENCRYPTION_KEY`` env var, then to
-        ``.secrets/encryption.key`` relative to the project root.
+        Explicit path to the key file.  When *None* and the env var
+        is not set, falls back to ``.secrets/encryption.key`` relative
+        to the project root (production mode only; raises in demo mode).
+
+    Raises
+    ------
+    EnvironmentError
+        If demo mode is active and ``ENCRYPTION_KEY_DEMO`` is not set.
+    FileNotFoundError
+        If the key file does not exist at the resolved path.
     """
-    from pipeline.secrets import resolve_secret
+    from pipeline.secrets import is_demo, resolve_secret
 
     env_key = resolve_secret("ENCRYPTION_KEY")
     if env_key:
         return env_key.encode("utf-8") if isinstance(env_key, str) else env_key
+
+    # resolve_secret returned None — in demo mode, this means
+    # ENCRYPTION_KEY_DEMO was not set.  Falling through to the
+    # file-based key would use the production key, violating isolation.
+    if is_demo():
+        raise EnvironmentError(
+            "ENCRYPTION_KEY_DEMO is not set.  In demo mode, the encryption "
+            "key must be provided via the ENCRYPTION_KEY_DEMO environment "
+            "variable — there is no fallback to the file-based key."
+        )
 
     if path is None:
         from pipeline.storage import get_storage

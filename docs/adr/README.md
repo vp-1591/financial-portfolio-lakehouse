@@ -49,6 +49,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0037 | Demo Mode with _DEMO Secrets and Isolated Storage | 2026-07-02 | active | — |
 | 0038 | Demo Terraform Infrastructure in Separate Directory | 2026-07-02 | active | — |
 | 0039 | STORAGE_TYPE Env Var and resolve_secret Credential Isolation | 2026-07-02 | active | — |
+| 0040 | Consolidate AWS Credentials and Fix Demo Isolation Bugs | 2026-07-02 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

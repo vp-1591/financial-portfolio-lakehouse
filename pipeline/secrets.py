@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -76,9 +77,6 @@ DEMO_SECRET_MAP: dict[str, str] = {
     "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY_DEMO",
 }
 
-# The _DEMO variants listed for inject_secrets() validation in demo mode.
-REQUIRED_SECRETS_DEMO: list[str] = list(DEMO_SECRET_MAP.values())
-
 # S3-specific secrets — only required when STORAGE_TYPE is cloud.
 REQUIRED_SECRETS_S3: list[str] = [
     "AWS_ACCESS_KEY_ID",
@@ -87,6 +85,16 @@ REQUIRED_SECRETS_S3: list[str] = [
 REQUIRED_SECRETS_S3_DEMO: list[str] = [
     "AWS_ACCESS_KEY_ID_DEMO",
     "AWS_SECRET_ACCESS_KEY_DEMO",
+]
+
+# The _DEMO variants listed for inject_secrets() validation in demo mode.
+REQUIRED_SECRETS_DEMO: list[str] = list(DEMO_SECRET_MAP.values())
+
+# Non-AWS demo secrets — validated in the general demo loop of
+# inject_secrets().  AWS demo secrets are validated only when
+# STORAGE_TYPE is cloud, matching the production path.
+REQUIRED_SECRETS_DEMO_NON_AWS: list[str] = [
+    name for name in REQUIRED_SECRETS_DEMO if name not in REQUIRED_SECRETS_S3_DEMO
 ]
 
 # Storage type constants.
@@ -123,7 +131,7 @@ def inject_secrets() -> dict[str, str]:
     secrets: dict[str, str] = {}
 
     if is_demo():
-        for name in REQUIRED_SECRETS_DEMO:
+        for name in REQUIRED_SECRETS_DEMO_NON_AWS:
             value = os.environ.get(name)
             if value:
                 secrets[name] = value
@@ -270,3 +278,138 @@ def resolve_secret(name: str) -> str | None:
     else:
         logger.debug("Secret %s is not set", name)
     return value
+
+
+# ---------------------------------------------------------------------------
+# AWS credential consolidation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AwsCredentials:
+    """Resolved AWS credentials for S3 operations.
+
+    Returned by :func:`resolve_aws_credentials`.  Credential fields
+    are ``str | None`` — ``None`` means the credential is not available
+    for the active mode and the SDK should not attempt to use any
+    fallback.  Empty strings are never used; a credential that is
+    present but empty is treated as absent (``None``).
+
+    This prevents the SDK from silently falling back to environment
+    variables that may contain production credentials when running in
+    demo mode.
+    """
+
+    key_id: str | None
+    secret_key: str | None
+    region: str
+    endpoint_url: str | None
+    allow_http: bool
+
+    def to_storage_options(self) -> dict[str, str]:
+        """Return deltalake/object_store-compatible storage options dict.
+
+        Keys use the lowercase convention required by the
+        ``object_store`` Rust crate (e.g. ``aws_access_key_id``).
+        Credential keys are omitted when ``None`` so that
+        ``object_store`` does not fall back to environment variables.
+        """
+        opts: dict[str, str] = {}
+        if self.key_id is not None:
+            opts["aws_access_key_id"] = self.key_id
+        if self.secret_key is not None:
+            opts["aws_secret_access_key"] = self.secret_key
+        opts["aws_region"] = self.region
+        if self.endpoint_url:
+            opts["aws_endpoint_url"] = self.endpoint_url
+        if self.allow_http:
+            opts["aws_allow_http"] = "true"
+        return opts
+
+    def to_pyarrow_kwargs(self) -> dict:
+        """Return PyArrow S3FileSystem-compatible keyword arguments.
+
+        Keys use PyArrow convention (``access_key``, ``secret_key``,
+        ``region``, ``endpoint_override``, ``scheme``).
+        Credential keys are omitted when ``None``.
+        """
+        kwargs: dict = {"region": self.region}
+        if self.key_id is not None:
+            kwargs["access_key"] = self.key_id
+        if self.secret_key is not None:
+            kwargs["secret_key"] = self.secret_key
+        if self.endpoint_url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.endpoint_url)
+            host = parsed.hostname or ""
+            port = parsed.port
+            endpoint_override = f"{host}:{port}" if port else host
+            kwargs["endpoint_override"] = endpoint_override
+            if parsed.scheme == "http":
+                kwargs["scheme"] = "http"
+        if self.allow_http and "scheme" not in kwargs:
+            kwargs["scheme"] = "http"
+        return kwargs
+
+    def to_duckdb_secret_parts(self) -> list[str]:
+        """Return DuckDB CREATE SECRET SQL parts for S3 credentials.
+
+        Returns a list of SQL fragments like ``KEY_ID 'value'``
+        suitable for ``CREATE SECRET (TYPE S3, ...)``.  Returns an
+        empty list when explicit credentials are absent, signalling
+        that no SECRET should be created (allowing IAM role fallback).
+        """
+        if self.key_id is None or self.secret_key is None:
+            return []
+        # Escape single quotes to prevent SQL injection via env vars.
+        safe_key_id = self.key_id.replace("'", "''")
+        safe_secret = self.secret_key.replace("'", "''")
+        safe_region = self.region.replace("'", "''")
+        parts = [
+            f"KEY_ID '{safe_key_id}'",
+            f"SECRET '{safe_secret}'",
+            f"REGION '{safe_region}'",
+        ]
+        if self.endpoint_url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.endpoint_url)
+            host = parsed.hostname or ""
+            port = parsed.port
+            endpoint_host = f"{host}:{port}" if port else host
+            safe_endpoint = endpoint_host.replace("'", "''")
+            parts.append(f"ENDPOINT '{safe_endpoint}'")
+        if self.allow_http:
+            parts.append("USE_SSL false")
+            parts.append("URL_STYLE path")
+        return parts
+
+
+def resolve_aws_credentials() -> AwsCredentials:
+    """Resolve AWS credentials from environment variables.
+
+    Uses :func:`resolve_secret` for ``AWS_ACCESS_KEY_ID`` and
+    ``AWS_SECRET_ACCESS_KEY`` so that demo mode uses ``_DEMO``
+    variants exclusively.  When a credential is not set or set to an
+    empty string, it is normalized to ``None`` (not an empty string),
+    which prevents the SDK from falling back to environment variables
+    that may contain production credentials.
+
+    ``AWS_REGION``, ``S3_ENDPOINT_URL``, and ``S3_ALLOW_HTTP`` are
+    configuration (not secrets) and are read directly from the
+    environment.
+    """
+    key_id = resolve_secret("AWS_ACCESS_KEY_ID") or None
+    secret_key = resolve_secret("AWS_SECRET_ACCESS_KEY") or None
+    region = os.environ.get("AWS_REGION", "eu-west-1")
+    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or None
+    allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in ("1", "true", "yes")
+
+    return AwsCredentials(
+        key_id=key_id,
+        secret_key=secret_key,
+        region=region,
+        endpoint_url=endpoint_url,
+        allow_http=allow_http,
+    )
