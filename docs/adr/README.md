@@ -47,6 +47,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0035 | Remove dead cashBalance and startingCash fallbacks from IBKR transform | 2026-07-02 | active | — |
 | 0036 | Remove conid and side from IBKR pipeline | 2026-07-02 | active | — |
 | 0037 | Demo Mode with _DEMO Secrets and Isolated Storage | 2026-07-02 | active | — |
+| 0038 | Demo Terraform Infrastructure in Separate Directory | 2026-07-02 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

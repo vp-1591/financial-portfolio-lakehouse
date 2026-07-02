@@ -283,15 +283,30 @@ columns appear as binary data.
 
 ### Infrastructure
 
-The `terraform/` directory contains Terraform configuration for the S3 bucket
-and IAM user.
+The `terraform/` directory contains separate Terraform configurations for
+production and demo environments:
 
-**First-time setup** — the S3 backend bucket name is not committed to the repo
-(it contains an account identifier). Copy the sample config and fill in your
-bucket name:
+- **`terraform/prod/`** — production S3 bucket and IAM user
+- **`terraform/demo/`** — demo S3 bucket and IAM user (isolated credentials)
+
+The S3 backend bucket name is not committed to the repo (it contains an
+account identifier). Copy the sample config and fill in your bucket name:
+
+**Production:**
 
 ```bash
-cd terraform
+cd terraform/prod
+cp backend.tf.sample backend.tf
+# Edit backend.tf — set bucket to your S3 state bucket name
+terraform init
+terraform plan
+terraform apply
+```
+
+**Demo:**
+
+```bash
+cd terraform/demo
 cp backend.tf.sample backend.tf
 # Edit backend.tf — set bucket to your S3 state bucket name
 terraform init
@@ -301,9 +316,12 @@ terraform apply
 
 After applying, store the outputs in GitHub:
 
-- `s3_bucket` → GitHub Secret `S3_BUCKET`
-- `access_key_id` → GitHub Secret `AWS_ACCESS_KEY_ID`
-- `access_key_secret` → GitHub Secret `AWS_SECRET_ACCESS_KEY`
+| Output | GitHub type | Production | Demo |
+|--------|-------------|------------|------|
+| `s3_bucket` | Variable | `S3_BUCKET` | `S3_BUCKET_DEMO` |
+| `s3_prefix` | Variable | `S3_PREFIX` | `S3_PREFIX_DEMO` |
+| `access_key_id` | Secret | `AWS_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID_DEMO` |
+| `access_key_secret` | Secret | `AWS_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY_DEMO` |
 
 ### Tests & Linting
 
