@@ -36,7 +36,7 @@ def ibkr_raw_positions(
         f'<FlexStatement accountId="{account_id}" fromDate="20260101" toDate="20260625">'
         "<AccountInformation>"
         f'<AccountInformation accountId="{account_id}" currency="EUR"'
-        ' netLiquidationValue="10000.00" cashBalance="2000.00"/>'
+        ' netLiquidationValue="10000.00"/>'
         "</AccountInformation>"
         "<OpenPositions>"
         f'<OpenPosition accountId="{account_id}" currency="EUR" fxRateToBase="1.0"'

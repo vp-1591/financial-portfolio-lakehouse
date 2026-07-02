@@ -163,7 +163,6 @@ def transform_snapshot(
             security_currencies.append(currency if currency else base_currency)
 
         # Process cash entries
-        cash_from_report = False
         if cash_report_entries:
             for entry in cash_report_entries:
                 acct_id = str(entry.get("accountId", ""))
@@ -189,42 +188,6 @@ def transform_snapshot(
                     base_value = ending_cash * fx_rate
                 else:
                     base_value = ending_cash
-
-                if base_value != 0:
-                    fetched_ats.append(fetched_at)
-                    account_ids.append(acct_id)
-                    position_types.append("CASH")
-                    labels.append(f"CASH {currency}")
-                    asset_classes.append("CASH")
-                    currencies.append(base_currency)
-                    values.append(encrypt_float(base_value, fernet_key))
-                    value_currencies.append(currency)
-                    conids.append("")
-                    isins.append("")
-                    descriptions.append(f"Cash {currency}")
-                    security_currencies.append(currency)
-                    cash_from_report = True
-
-        # Fallback: AccountInformation.cashBalance
-        if not cash_from_report and account_infos:
-            for info in account_infos:
-                acct_id = str(info.get("accountId", ""))
-                cash_balance = as_float(info.get("cashBalance"))
-                if not cash_balance:
-                    continue
-                currency = str(info.get("currency", "") or "").upper()
-                if not currency or currency == "BASE":
-                    currency = base_currency_by_account.get(acct_id, "USD")
-                base_currency = base_currency_by_account.get(acct_id, currency)
-                if base_currency_override:
-                    base_currency = base_currency_override.upper()
-
-                fx_rate = fx_rate_lookup.get((acct_id, currency), 1.0)
-                base_value = (
-                    cash_balance * fx_rate
-                    if currency != base_currency
-                    else cash_balance
-                )
 
                 if base_value != 0:
                     fetched_ats.append(fetched_at)

@@ -62,7 +62,7 @@ class TestClientParsing:
             '<FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">'
             "<AccountInformation>"
             '<AccountInformation accountId="U123" currency="USD"'
-            ' netLiquidationValue="78000.00" cashBalance="5000.00"/>'
+            ' netLiquidationValue="78000.00"/>'
             "</AccountInformation>"
             "</FlexStatement>"
             "</FlexStatements>"
@@ -73,7 +73,6 @@ class TestClientParsing:
         assert len(accounts) == 1
         assert accounts[0]["accountId"] == "U123"
         assert accounts[0]["netLiquidationValue"] == "78000.00"
-        assert accounts[0]["cashBalance"] == "5000.00"
 
     def test_parse_cash_report_extracts_ending_cash_per_currency(self) -> None:
         xml_str = (
@@ -228,7 +227,7 @@ class TestFlexTransformSnapshot:
             '<FlexQueryResponse queryName="test" type="AF">'
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
-            '<AccountInformation accountId="U123" currency="USD" cashBalance="500.0"/>'
+            '<AccountInformation accountId="U123" currency="USD"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000.0" '
             'assetClass="STK" conid="265598" isin="US0378331005" '

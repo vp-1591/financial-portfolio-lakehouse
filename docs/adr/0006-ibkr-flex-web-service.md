@@ -38,18 +38,17 @@ and will be migrated separately.
 - Data has 15–30 minute delay (acceptable for portfolio snapshots)
 - Simpler CLI: `python scripts/ibkr_net_worth.py --ibkr-flex-token TOKEN`
 - `--ibkr-base-currency` no longer needed (Flex provides `fxRateToBase`)
-- Cash balances resolved through 3-source priority:
-  1. **Cash Report** (per-currency `endingCash`) — most precise, requires Cash Report section in Flex Query
-     - Summary rows (e.g. `currency="BASE SUMMARY"`) are filtered out to prevent double-counting
-  2. **AccountInformation `cashBalance`** — single-currency field from Account Information section
-  3. **Derived from NLV minus positions** — fallback when neither source is present; produces single CASH entry in base currency
-- FX rates for cash conversion: `fxRateToBase` from OpenPositions → `<ConversionRate>` elements → warning on missing rate
+- Cash balances come from a single source: the **Cash Report** section
+  (`<CashReportCurrency>` rows with `endingCash` per currency). The
+  Activity Flex Query does not expose `cashBalance` on `<AccountInformation>`,
+  so if the Cash Report section is missing or all its `endingCash` values are
+  zero, no cash rows are produced. Summary rows (e.g. `currency="BASE SUMMARY"`)
+  are filtered out to prevent double-counting.
+- FX rates for cash conversion: `fxRateToBase` from OpenPositions → `<ConversionRate>` elements. When a non-base-currency cash entry has no available FX rate, the conversion falls back to a 1:1 rate silently (see [ADR 0035](./0035-remove-ibkr-cashbalance-fallback.md) for the history).
 - Pipeline connector migration is a separate follow-up task
 
 ## Validation
 
 All 147 tests pass (1 skipped). Flex XML parsing verified with fixture data covering positions,
-cash (Cash Report, cashBalance, and NLV-derived), FX conversion, net worth calculation,
-and error handling. Cash Report filtering excludes summary rows (BASE SUMMARY) that would
-double-count per-currency entries. A warning is emitted to stderr when a non-base-currency
-cash entry has no available FX rate (previously defaulted silently to 1.0).
+cash (Cash Report), FX conversion, net worth calculation, and error handling. Cash Report
+filtering excludes summary rows (BASE SUMMARY) that would double-count per-currency entries.
