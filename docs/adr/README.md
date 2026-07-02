@@ -5,7 +5,6 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | Field | Value |
 |-------|-------|
 | last-indexed | 2026-07-01T17:00:00+02:00 |
-| total | 32 |
 
 ## Index
 

@@ -41,12 +41,12 @@ def ibkr_raw_positions(
         "<OpenPositions>"
         f'<OpenPosition accountId="{account_id}" currency="EUR" fxRateToBase="1.0"'
         ' assetClass="STK" symbol="VWCE" description="Vanguard FTSE All-World UCITS ETF"'
-        ' conid="12345678" isin="IE00BK5BQT80"'
-        ' quantity="100" markPrice="50.0" positionValue="5000.0" side="Long"/>'
+        ' isin="IE00BK5BQT80"'
+        ' quantity="100" markPrice="50.0" positionValue="5000.0"/>'
         f'<OpenPosition accountId="{account_id}" currency="USD" fxRateToBase="0.9"'
         ' assetClass="STK" symbol="AAPL" description="Apple Inc"'
-        ' conid="265598" isin="US0378331005"'
-        ' quantity="50" markPrice="60.0" positionValue="3000.0" side="Long"/>'
+        ' isin="US0378331005"'
+        ' quantity="50" markPrice="60.0" positionValue="3000.0"/>'
         "</OpenPositions>"
         "<CashReport>"
         f'<CashReportCurrency accountId="{account_id}" currency="EUR"'
@@ -101,7 +101,6 @@ def ibkr_normalized_snapshot(
                 encrypt_float(2000.0, fernet_key),
             ],
             "value_currency": ["EUR", "USD", "EUR"],
-            "conid": ["12345678", "265598", ""],
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
             "description": ["Vanguard FTSE All-World", "Apple Inc", "Cash EUR"],
             "security_currency": ["EUR", "USD", "EUR"],

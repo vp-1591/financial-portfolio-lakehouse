@@ -16,7 +16,6 @@ ibkr_snapshot_normalized_schema = pa.schema(
         pa.field("currency", pa.string()),
         pa.field("value", pa.binary()),  # Fernet-encrypted
         pa.field("value_currency", pa.string()),
-        pa.field("conid", pa.string()),
         pa.field("isin", pa.string()),
         pa.field("description", pa.string()),
         pa.field("security_currency", pa.string()),

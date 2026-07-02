@@ -38,11 +38,11 @@ class TestClientParsing:
             "<OpenPositions>"
             '<OpenPosition accountId="U123" currency="EUR" fxRateToBase="1.2"'
             ' assetClass="STK" symbol="EUR ETF" description="iShares Core MSCI World"'
-            ' conid="1234567" isin="IE00BK5BQT80" listingExchange="XETRA"'
+            ' isin="IE00BK5BQT80" listingExchange="XETRA"'
             ' reportDate="20260625" quantity="100" markPrice="50.0"'
             ' positionValue="5000.0" costBasisPrice="40.0"'
             ' costBasisMoney="4000.0" percentOfNAV="5.0"'
-            ' unrealizedPnl="1000.0" side="Long"/>'
+            ' unrealizedPnl="1000.0"/>'
             "</OpenPositions>"
             "</FlexStatement>"
             "</FlexStatements>"
@@ -53,7 +53,6 @@ class TestClientParsing:
         assert len(positions) == 1
         assert positions[0]["symbol"] == "EUR ETF"
         assert positions[0]["isin"] == "IE00BK5BQT80"
-        assert positions[0]["conid"] == "1234567"
 
     def test_parse_account_info_extracts_attributes(self) -> None:
         xml_str = (
@@ -230,7 +229,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U123" currency="USD"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000.0" '
-            'assetClass="STK" conid="265598" isin="US0378331005" '
+            'assetClass="STK" isin="US0378331005" '
             'description="Apple Inc" fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "<CashReport>"
@@ -257,7 +256,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U456" currency="EUR"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="SAP" currency="EUR" positionValue="5000.0" '
-            'assetClass="STK" conid="12345" isin="DE0007164600" '
+            'assetClass="STK" isin="DE0007164600" '
             'description="SAP SE" fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "</FlexStatement>"

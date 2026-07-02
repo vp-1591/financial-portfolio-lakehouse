@@ -41,7 +41,6 @@ def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
                 encrypt_float(2000.0, fernet_key),
             ],
             "value_currency": ["EUR", "USD", "EUR"],
-            "conid": ["12345678", "265598", ""],
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
             "description": ["Vanguard FTSE All-World", "Apple Inc", "Cash EUR"],
             "security_currency": ["EUR", "USD", "EUR"],
