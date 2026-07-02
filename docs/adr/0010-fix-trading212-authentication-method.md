@@ -2,7 +2,7 @@
 
 ## Context
 
-The Trading 212 API v0 requires HTTP Basic Authentication (`Authorization: Basic <base64(API_KEY:API_SECRET)>`) as documented in the official API spec (`docs/docs.trading212.com/api/section/general-information/api.json`) under the `authWithSecretKey` security scheme.
+The Trading 212 API v0 requires HTTP Basic Authentication (`Authorization: Basic <base64(API_KEY:API_SECRET)>`) as documented in the official API spec (`docs/_vendor/trading212/api/section/general-information/api.json`) under the `authWithSecretKey` security scheme.
 
 ### Timeline of the regression
 
@@ -23,7 +23,7 @@ The regression was caused by **testing auth changes against an IP-restricted key
 ### How to prevent future regressions
 
 - The auth format is now **pinned by a regression test** (`test_auth_method_is_basic_with_key_and_secret`) that asserts the exact header format and rejects any change to Bearer or raw-key auth.
-- The local API spec (`docs/docs.trading212.com/api/section/general-information/api.json`) contains the authoritative security scheme definition (`authWithSecretKey: { scheme: basic }`).
+- The local API spec (`docs/_vendor/trading212/api/section/general-information/api.json`) contains the authoritative security scheme definition (`authWithSecretKey: { scheme: basic }`).
 - 401 errors should be investigated for credential issues (IP restrictions, expired keys, wrong environment) before changing the auth method.
 
 ## Decision

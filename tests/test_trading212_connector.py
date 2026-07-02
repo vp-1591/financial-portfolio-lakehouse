@@ -59,7 +59,7 @@ class TestClientParsing:
 
         Commit f7c3674 changed Basic → Bearer based on a misdiagnosed 401
         (the real cause was an IP-restricted API key). The local API spec
-        at docs/docs.trading212.com/api/section/general-information/api.json
+        at docs/_vendor/trading212/api/section/general-information/api.json
         defines authWithSecretKey as { scheme: basic }. This test prevents
         a silent downgrade to Bearer or any other auth method.
         """

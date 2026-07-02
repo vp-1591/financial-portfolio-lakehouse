@@ -210,9 +210,9 @@ def parse_cash_report(root: ET.Element) -> list[dict[str, Any]]:
     """Parse cash report entries from a Flex XML response.
 
     IBKR uses <CashReportCurrency> elements inside the <CashReport> section.
-    Each element represents a currency row with fields like endingCash,
-    startingCash, and currency. The Cash Report section must be included
-    in the Flex Query configuration for these elements to appear.
+    Each element represents a currency row with fields like endingCash and
+    currency. The Cash Report section must be included in the Flex Query
+    configuration for these elements to appear.
 
     Summary rows (e.g. currency="BASE SUMMARY") are excluded — they are
     subtotals that would double-count per-currency entries.

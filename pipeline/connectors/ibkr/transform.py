@@ -47,7 +47,6 @@ def transform_snapshot(
     currencies: list[str] = []
     values: list[bytes] = []
     value_currencies: list[str] = []
-    conids: list[str] = []
     isins: list[str] = []
     descriptions: list[str] = []
     security_currencies: list[str] = []
@@ -144,7 +143,6 @@ def transform_snapshot(
             label = _flex_position_label(pos)
             asset_class = str(pos.get("assetClass", "") or "STK").upper()
             isin = str(pos.get("isin", "") or "").strip().upper()
-            conid = str(pos.get("conid", "") or "")
             description = str(
                 pos.get("description", "") or pos.get("symbol", "") or label
             )
@@ -157,20 +155,16 @@ def transform_snapshot(
             currencies.append(base_currency)
             values.append(encrypt_float(base_value, fernet_key))
             value_currencies.append(currency if currency else base_currency)
-            conids.append(conid)
             isins.append(isin)
             descriptions.append(description)
             security_currencies.append(currency if currency else base_currency)
 
         # Process cash entries
-        cash_from_report = False
         if cash_report_entries:
             for entry in cash_report_entries:
                 acct_id = str(entry.get("accountId", ""))
                 currency = str(entry.get("currency", "") or "").upper()
                 ending_cash = as_float(entry.get("endingCash"))
-                if ending_cash == 0:
-                    ending_cash = as_float(entry.get("startingCash"))
                 if not currency or ending_cash == 0:
                     continue
 
@@ -199,43 +193,6 @@ def transform_snapshot(
                     currencies.append(base_currency)
                     values.append(encrypt_float(base_value, fernet_key))
                     value_currencies.append(currency)
-                    conids.append("")
-                    isins.append("")
-                    descriptions.append(f"Cash {currency}")
-                    security_currencies.append(currency)
-                    cash_from_report = True
-
-        # Fallback: AccountInformation.cashBalance
-        if not cash_from_report and account_infos:
-            for info in account_infos:
-                acct_id = str(info.get("accountId", ""))
-                cash_balance = as_float(info.get("cashBalance"))
-                if not cash_balance:
-                    continue
-                currency = str(info.get("currency", "") or "").upper()
-                if not currency or currency == "BASE":
-                    currency = base_currency_by_account.get(acct_id, "USD")
-                base_currency = base_currency_by_account.get(acct_id, currency)
-                if base_currency_override:
-                    base_currency = base_currency_override.upper()
-
-                fx_rate = fx_rate_lookup.get((acct_id, currency), 1.0)
-                base_value = (
-                    cash_balance * fx_rate
-                    if currency != base_currency
-                    else cash_balance
-                )
-
-                if base_value != 0:
-                    fetched_ats.append(fetched_at)
-                    account_ids.append(acct_id)
-                    position_types.append("CASH")
-                    labels.append(f"CASH {currency}")
-                    asset_classes.append("CASH")
-                    currencies.append(base_currency)
-                    values.append(encrypt_float(base_value, fernet_key))
-                    value_currencies.append(currency)
-                    conids.append("")
                     isins.append("")
                     descriptions.append(f"Cash {currency}")
                     security_currencies.append(currency)
@@ -250,7 +207,6 @@ def transform_snapshot(
             "currency": currencies,
             "value": values,
             "value_currency": value_currencies,
-            "conid": conids,
             "isin": isins,
             "description": descriptions,
             "security_currency": security_currencies,
@@ -266,7 +222,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
 def _flex_position_label(position: dict) -> str:
     """Extract a display label from a Flex OpenPosition element."""
-    for key in ("symbol", "description", "conid"):
+    for key in ("symbol", "description"):
         value = position.get(key)
         if value not in (None, ""):
             return str(value)

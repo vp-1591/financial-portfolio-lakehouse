@@ -27,8 +27,17 @@ When implementing a feature or making a decision that warrants an ADR:
 2. **Identify relevant ADRs** — Find ADRs whose topic overlaps with the change you're about to make. Read those ADRs for context.
 3. **Respect active ADRs** — If an active ADR conflicts with the planned change, stop and ask the user how to proceed. Do not silently deviate from an active ADR.
 4. **Skip superseded ADRs** — ADRs marked as superseded (they have a `> **Superseded by ADR XXXX**` notice at the top) are historical context only. Do not treat them as current guidance.
-5. **Write a new ADR** — After implementing the change, create a new numbered ADR file in `docs/adr/`. Use the next available number. Include `## Context`, `## Decision`, `## Consequences`, and `## Validation` sections.
-6. **Do NOT mark old ADRs as superseded** — Supersession detection is handled by the `/optimize-adrs` skill. Your job is to write the new ADR; the optimize workflow determines what it supersedes and updates the index accordingly.
+5. **Write a new ADR** — Create a new numbered ADR file in `docs/adr/`. Use the
+   next available number. Include `## Context`, `## Decision`, `## Consequences`,
+   and `## Validation` sections.
+
+6. **Append one row to the index** — In `docs/adr/README.md`, add exactly one
+   new row to the `## Index` table for this ADR: number, title, today's date,
+   `active`, `—`. This is the ONLY edit you make to README.md. Do not touch
+   `last-indexed`, do not touch any other row, do not touch the duplicate-number
+   comment block.
+
+7. **Do NOT run supersession logic** — that's `/optimize-adrs`'s job.
 
 ## Environment
 

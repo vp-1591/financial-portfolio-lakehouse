@@ -133,7 +133,7 @@ class TestT212BasicAuth:
     This was changed back from Bearer token after discovering that the Bearer
     change (commit f7c3674) was based on a misdiagnosed 401 — the real cause
     was an IP-restricted API key. The local API spec at
-    docs/docs.trading212.com/api/section/general-information/api.json defines
+    docs/_vendor/trading212/api/section/general-information/api.json defines
     authWithSecretKey as { scheme: basic }.
     """
 

@@ -78,9 +78,6 @@ def extract_holdings(
             value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
-            conid = str(row.get("conid", "") or "").strip()
-            if not identifier and conid:
-                identifier = f"CONID:{conid}"
             holdings.append(
                 Holding(
                     broker="IBKR",
