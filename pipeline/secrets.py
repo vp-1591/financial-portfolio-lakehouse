@@ -232,6 +232,10 @@ def get_storage_type() -> str:
     defaults to ``"cloud"`` when ``S3_BUCKET`` is set, and ``"local"``
     otherwise.
 
+    In demo mode, ``S3_BUCKET_DEMO`` alone (without ``S3_BUCKET``) is
+    sufficient to trigger cloud storage — this allows demo notebooks and
+    scripts to configure S3 using only ``_DEMO`` environment variables.
+
     Raises :exc:`ValueError` for invalid values.
     """
     explicit = os.environ.get("STORAGE_TYPE", "").lower()
@@ -244,6 +248,9 @@ def get_storage_type() -> str:
     # Backward compatibility: if S3_BUCKET is set and no STORAGE_TYPE,
     # default to cloud.
     if get_env("S3_BUCKET"):
+        return STORAGE_TYPE_CLOUD
+    # In demo mode, S3_BUCKET_DEMO alone triggers cloud storage.
+    if is_demo() and get_env("S3_BUCKET_DEMO"):
         return STORAGE_TYPE_CLOUD
     return STORAGE_TYPE_LOCAL
 

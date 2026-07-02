@@ -457,6 +457,31 @@ class TestGetStorageType:
         monkeypatch.setenv("STORAGE_TYPE", "Cloud")
         assert get_storage_type() == "cloud"
 
+    def test_default_cloud_when_s3_bucket_demo_set_in_demo_mode(self, monkeypatch):
+        """In demo mode, S3_BUCKET_DEMO alone triggers cloud storage."""
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.setenv("S3_BUCKET_DEMO", "demo-bucket")
+        assert get_storage_type() == "cloud"
+
+    def test_default_local_when_s3_bucket_demo_set_but_not_demo(self, monkeypatch):
+        """Without DEMO, S3_BUCKET_DEMO does NOT trigger cloud storage."""
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.setenv("S3_BUCKET_DEMO", "demo-bucket")
+        assert get_storage_type() == "local"
+
+    def test_s3_bucket_demo_empty_string_does_not_trigger_cloud(self, monkeypatch):
+        """Empty S3_BUCKET_DEMO should not trigger cloud (empty string is
+        not a real bucket)."""
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.setenv("S3_BUCKET_DEMO", "")
+        assert get_storage_type() == "local"
+
 
 class TestAWSSecretsInDemoMap:
     """Test that AWS credentials are in DEMO_SECRET_MAP."""

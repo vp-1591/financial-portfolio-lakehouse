@@ -654,6 +654,27 @@ class TestDemoStorage:
         config = resolve_storage()
         assert config.backend.bucket == "my-bucket-demo"
 
+    def test_s3_bucket_demo_standalone_without_s3_bucket(self, monkeypatch):
+        """S3_BUCKET_DEMO alone (without S3_BUCKET) triggers S3Backend in demo mode."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "explicit-demo-bucket"
+        assert config.backend.prefix == "pipeline_demo"
+
+    def test_s3_bucket_demo_missing_without_s3_bucket_raises(self, monkeypatch):
+        """In demo mode, missing both S3_BUCKET and S3_BUCKET_DEMO raises ValueError."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        monkeypatch.setenv("DEMO", "true")
+        with pytest.raises(ValueError, match="S3_BUCKET_DEMO"):
+            resolve_storage()
+
     def test_pipeline_data_dir_demo_empty_string_falls_back(
         self, monkeypatch, tmp_path
     ):
@@ -726,6 +747,17 @@ class TestStorageType:
         monkeypatch.setattr("pipeline.storage.PROJECT_ROOT", tmp_path)
         config = resolve_storage()
         assert isinstance(config.backend, LocalBackend)
+
+    def test_cloud_with_s3_bucket_demo_in_demo_mode(self, monkeypatch):
+        """STORAGE_TYPE=cloud with S3_BUCKET_DEMO (no S3_BUCKET) works in demo mode."""
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("S3_BUCKET_DEMO", "demo-bucket")
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "demo-bucket"
 
     def test_minio_warns_without_endpoint_url(self, monkeypatch, caplog):
         """STORAGE_TYPE=minio without S3_ENDPOINT_URL logs a warning."""

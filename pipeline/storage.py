@@ -277,10 +277,6 @@ def resolve_storage() -> StorageConfig:
 
     if storage_type in (STORAGE_TYPE_CLOUD, STORAGE_TYPE_MINIO):
         s3_bucket = get_env("S3_BUCKET")
-        if not s3_bucket:
-            raise ValueError(
-                f"STORAGE_TYPE is '{storage_type}' but S3_BUCKET is not set"
-            )
 
         if storage_type == STORAGE_TYPE_MINIO:
             endpoint_url = get_env("S3_ENDPOINT_URL")
@@ -291,9 +287,23 @@ def resolve_storage() -> StorageConfig:
                 )
 
         if demo:
-            bucket = get_env("S3_BUCKET_DEMO") or f"{s3_bucket}-demo"
+            # In demo mode, S3_BUCKET_DEMO alone is sufficient — S3_BUCKET
+            # is not required.  When S3_BUCKET_DEMO is set, use it directly.
+            # When it's not set but S3_BUCKET is, derive the demo bucket name.
+            bucket = get_env("S3_BUCKET_DEMO") or (
+                f"{s3_bucket}-demo" if s3_bucket else None
+            )
+            if not bucket:
+                raise ValueError(
+                    "Demo mode requires S3_BUCKET_DEMO or S3_BUCKET "
+                    "to determine the S3 bucket"
+                )
             prefix = get_env("S3_PREFIX_DEMO", "pipeline_demo")
         else:
+            if not s3_bucket:
+                raise ValueError(
+                    f"STORAGE_TYPE is '{storage_type}' but S3_BUCKET is not set"
+                )
             bucket = s3_bucket
             prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
         backend = S3Backend(bucket=bucket, prefix=prefix)
