@@ -53,6 +53,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0041 | Step-Level CI Secrets and Explicit Empty Credentials | 2026-07-02 | active | — |
 | 0042 | Fix Demo Bucket Naming — Use Hyphen Instead of Underscore | 2026-07-02 | active | — |
 | 0043 | Fix Empty-String Env Var Fallback and Broaden Demo IAM Policy | 2026-07-02 | active | — |
+| 0044 | Replace List-Append Pattern with Polars build_normalized_table | 2026-07-02 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

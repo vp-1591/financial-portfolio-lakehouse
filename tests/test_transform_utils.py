@@ -9,12 +9,13 @@ import pyarrow as pa
 import pytest
 
 from pipeline.connectors.transform_utils import (
+    build_normalized_table,
     coerce_fetched_at,
     decode_payload,
     iter_raw_payloads,
     parse_json,
 )
-from pipeline.crypto import encrypt, generate_key
+from pipeline.crypto import decrypt_float, encrypt, generate_key
 
 
 class TestDecodePayload:
@@ -260,3 +261,125 @@ class TestIterRawPayloads:
 
         rows = list(iter_raw_payloads(table, fernet_key))
         assert len(rows) == 0
+
+
+class TestBuildNormalizedTable:
+    """Tests for build_normalized_table."""
+
+    @pytest.fixture
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    def test_empty_records_returns_empty_table_with_correct_schema(
+        self, fernet_key: bytes
+    ) -> None:
+        from pipeline.normalized.models import xtb_snapshot_normalized_schema
+
+        result = build_normalized_table(
+            [], xtb_snapshot_normalized_schema, fernet_key, encrypt_columns=["value"]
+        )
+        assert result.num_rows == 0
+        assert result.schema.equals(xtb_snapshot_normalized_schema)
+
+    def test_single_record_with_encrypted_column(self, fernet_key: bytes) -> None:
+        from pipeline.normalized.models import xtb_snapshot_normalized_schema
+
+        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        records = [
+            {
+                "fetched_at": now,
+                "account_id": "XTB-123",
+                "position_type": "EQUITY",
+                "label": "VWCE.DE",
+                "name": "Vanguard FTSE All-World",
+                "asset_class": "EQUITY",
+                "currency": "EUR",
+                "value": 1000.0,
+                "value_currency": "EUR",
+                "isin": "IE00BK5BQT80",
+            }
+        ]
+        result = build_normalized_table(
+            records,
+            xtb_snapshot_normalized_schema,
+            fernet_key,
+            encrypt_columns=["value"],
+        )
+        assert result.num_rows == 1
+        assert result.column("label")[0].as_py() == "VWCE.DE"
+        assert result.column("isin")[0].as_py() == "IE00BK5BQT80"
+        # Verify encryption round-trip
+        encrypted_value = result.column("value")[0].as_py()
+        assert decrypt_float(encrypted_value, fernet_key) == 1000.0
+
+    def test_multiple_encrypt_columns(self, fernet_key: bytes) -> None:
+        from pipeline.normalized.models import trading212_cdc_normalized_schema
+
+        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        records = [
+            {
+                "fetched_at": now,
+                "account_id": "T212-ABC",
+                "event_type": "ORDER",
+                "event_id": "1",
+                "ticker": "AAPL",
+                "isin": "US0378331005",
+                "currency": "USD",
+                "value": 1800.0,
+                "quantity": 10.0,
+                "event_date": "2024-01-01",
+            }
+        ]
+        result = build_normalized_table(
+            records,
+            trading212_cdc_normalized_schema,
+            fernet_key,
+            encrypt_columns=["value", "quantity"],
+        )
+        assert result.num_rows == 1
+        assert decrypt_float(result.column("value")[0].as_py(), fernet_key) == 1800.0
+        assert decrypt_float(result.column("quantity")[0].as_py(), fernet_key) == 10.0
+
+    def test_no_encrypt_columns(self, fernet_key: bytes) -> None:
+        schema = pa.schema(
+            [
+                pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+                pa.field("account_id", pa.string()),
+                pa.field("label", pa.string()),
+            ]
+        )
+        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        records = [{"fetched_at": now, "account_id": "A1", "label": "X"}]
+        result = build_normalized_table(records, schema, fernet_key)
+        assert result.num_rows == 1
+        assert result.column("account_id")[0].as_py() == "A1"
+        assert result.column("label")[0].as_py() == "X"
+
+    def test_schema_column_ordering_preserved(self, fernet_key: bytes) -> None:
+        from pipeline.normalized.models import trading212_snapshot_normalized_schema
+
+        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        records = [
+            {
+                "fetched_at": now,
+                "account_id": "T212-1",
+                "position_type": "EQUITY",
+                "label": "AAPL",
+                "name": "Apple Inc",
+                "asset_class": "EQUITY",
+                "currency": "USD",
+                "value": 500.0,
+                "value_currency": "USD",
+                "isin": "US0378331005",
+                "security_currency": "USD",
+            }
+        ]
+        result = build_normalized_table(
+            records,
+            trading212_snapshot_normalized_schema,
+            fernet_key,
+            encrypt_columns=["value"],
+        )
+        assert list(result.schema.names) == list(
+            trading212_snapshot_normalized_schema.names
+        )

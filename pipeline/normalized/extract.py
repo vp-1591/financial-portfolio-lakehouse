@@ -71,11 +71,20 @@ def extract_holdings(
 
     df = pl.from_arrow(table)
 
+    # Decrypt value column using Polars map_elements (batch operation)
+    df = df.with_columns(
+        pl.col("value")
+        .map_elements(
+            lambda v: decrypt_float(v, fernet_key),
+            return_dtype=pl.Float64,
+        )
+        .alias("value_decrypted")
+    )
+
     holdings: list[Holding] = []
 
     if broker == "ibkr":
         for row in df.iter_rows(named=True):
-            value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
             holdings.append(
@@ -83,7 +92,7 @@ def extract_holdings(
                     broker="IBKR",
                     ticker=str(row["label"]),
                     currency=str(row.get("value_currency", row.get("currency", ""))),
-                    value=value,
+                    value=row["value_decrypted"],
                     identifier=identifier,
                     security_currency=str(row.get("security_currency", "")),
                     description=str(row.get("description", "")),
@@ -92,7 +101,6 @@ def extract_holdings(
 
     elif broker == "trading212":
         for row in df.iter_rows(named=True):
-            value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
             holdings.append(
@@ -100,7 +108,7 @@ def extract_holdings(
                     broker="Trading 212",
                     ticker=str(row["label"]),
                     currency=str(row.get("value_currency", row.get("currency", ""))),
-                    value=value,
+                    value=row["value_decrypted"],
                     identifier=identifier,
                     security_currency=str(row.get("security_currency", "")),
                     description=str(row.get("name", "")),
@@ -109,7 +117,6 @@ def extract_holdings(
 
     elif broker == "xtb":
         for row in df.iter_rows(named=True):
-            value = decrypt_float(row["value"], fernet_key)
             isin = str(row.get("isin", "") or "").strip()
             identifier = f"ISIN:{isin}" if isin else ""
             holdings.append(
@@ -117,7 +124,7 @@ def extract_holdings(
                     broker="XTB",
                     ticker=str(row["label"]),
                     currency=str(row.get("value_currency", row.get("currency", ""))),
-                    value=value,
+                    value=row["value_decrypted"],
                     identifier=identifier,
                     security_currency=str(
                         row.get("value_currency", row.get("currency", ""))
