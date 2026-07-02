@@ -709,8 +709,12 @@ class TestAwsCredentialsDataclass:
             "aws_region": "eu-west-1",
         }
 
-    def test_to_storage_options_none_credentials_omitted(self):
-        """When credentials are None, they are omitted (not empty strings)."""
+    def test_to_storage_options_none_credentials_set_empty(self):
+        """When credentials are None, they are set to empty strings (not omitted).
+
+        Empty strings prevent object_store from falling back to environment
+        variables that may contain production credentials.
+        """
         creds = AwsCredentials(
             key_id=None,
             secret_key=None,
@@ -719,9 +723,9 @@ class TestAwsCredentialsDataclass:
             allow_http=False,
         )
         opts = creds.to_storage_options()
-        assert "aws_access_key_id" not in opts
-        assert "aws_secret_access_key" not in opts
-        assert opts == {"aws_region": "eu-west-1"}
+        assert opts["aws_access_key_id"] == ""
+        assert opts["aws_secret_access_key"] == ""
+        assert opts["aws_region"] == "eu-west-1"
 
     def test_to_storage_options_with_endpoint(self):
         creds = AwsCredentials(
@@ -748,7 +752,12 @@ class TestAwsCredentialsDataclass:
         assert kwargs["secret_key"] == "secret"
         assert kwargs["region"] == "eu-west-1"
 
-    def test_to_pyarrow_kwargs_none_credentials_omitted(self):
+    def test_to_pyarrow_kwargs_none_credentials_set_empty(self):
+        """When credentials are None, they are set to empty strings (not omitted).
+
+        Empty strings prevent PyArrow from falling back to environment
+        variables that may contain production credentials.
+        """
         creds = AwsCredentials(
             key_id=None,
             secret_key=None,
@@ -757,8 +766,8 @@ class TestAwsCredentialsDataclass:
             allow_http=False,
         )
         kwargs = creds.to_pyarrow_kwargs()
-        assert "access_key" not in kwargs
-        assert "secret_key" not in kwargs
+        assert kwargs["access_key"] == ""
+        assert kwargs["secret_key"] == ""
         assert kwargs["region"] == "eu-west-1"
 
     def test_to_pyarrow_kwargs_endpoint_url(self):
@@ -797,8 +806,12 @@ class TestAwsCredentialsDataclass:
         assert "SECRET 'secret'" in parts
         assert "REGION 'eu-west-1'" in parts
 
-    def test_to_duckdb_secret_parts_none_credentials_empty(self):
-        """When credentials are None, no SECRET should be created."""
+    def test_to_duckdb_secret_parts_none_credentials_empty_strings(self):
+        """When credentials are None, they are included as empty strings.
+
+        Empty KEY_ID/SECRET prevent DuckDB from falling back to environment
+        variables that may contain production credentials.
+        """
         creds = AwsCredentials(
             key_id=None,
             secret_key=None,
@@ -807,10 +820,12 @@ class TestAwsCredentialsDataclass:
             allow_http=False,
         )
         parts = creds.to_duckdb_secret_parts()
-        assert parts == []
+        assert "KEY_ID ''" in parts
+        assert "SECRET ''" in parts
+        assert "REGION 'eu-west-1'" in parts
 
     def test_to_duckdb_secret_parts_only_key_id(self):
-        """Only key_id set (no secret_key) — still empty, need both."""
+        """Only key_id set (no secret_key) — secret_key is empty string."""
         creds = AwsCredentials(
             key_id="key",
             secret_key=None,
@@ -819,7 +834,8 @@ class TestAwsCredentialsDataclass:
             allow_http=False,
         )
         parts = creds.to_duckdb_secret_parts()
-        assert parts == []
+        assert "KEY_ID 'key'" in parts
+        assert "SECRET ''" in parts
 
     def test_to_duckdb_secret_parts_endpoint_url(self):
         creds = AwsCredentials(

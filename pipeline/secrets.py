@@ -291,13 +291,15 @@ class AwsCredentials:
 
     Returned by :func:`resolve_aws_credentials`.  Credential fields
     are ``str | None`` — ``None`` means the credential is not available
-    for the active mode and the SDK should not attempt to use any
-    fallback.  Empty strings are never used; a credential that is
-    present but empty is treated as absent (``None``).
+    for the active mode.  Empty strings are never stored; a credential
+    that is present but empty is treated as absent (``None``).
 
-    This prevents the SDK from silently falling back to environment
-    variables that may contain production credentials when running in
-    demo mode.
+    When a credential is ``None``, helper methods include it as an
+    empty string rather than omitting it.  This prevents the SDK from
+    silently falling back to environment variables that may contain
+    production credentials when running in demo mode.  Callers that
+    need IAM role fallback should not call these methods when both
+    credentials are ``None``.
     """
 
     key_id: str | None
@@ -311,15 +313,15 @@ class AwsCredentials:
 
         Keys use the lowercase convention required by the
         ``object_store`` Rust crate (e.g. ``aws_access_key_id``).
-        Credential keys are omitted when ``None`` so that
-        ``object_store`` does not fall back to environment variables.
+        Credential keys are always included — when ``None``, they are
+        set to empty strings to prevent ``object_store`` from falling
+        back to environment variables.
         """
-        opts: dict[str, str] = {}
-        if self.key_id is not None:
-            opts["aws_access_key_id"] = self.key_id
-        if self.secret_key is not None:
-            opts["aws_secret_access_key"] = self.secret_key
-        opts["aws_region"] = self.region
+        opts: dict[str, str] = {
+            "aws_access_key_id": self.key_id or "",
+            "aws_secret_access_key": self.secret_key or "",
+            "aws_region": self.region,
+        }
         if self.endpoint_url:
             opts["aws_endpoint_url"] = self.endpoint_url
         if self.allow_http:
@@ -331,13 +333,15 @@ class AwsCredentials:
 
         Keys use PyArrow convention (``access_key``, ``secret_key``,
         ``region``, ``endpoint_override``, ``scheme``).
-        Credential keys are omitted when ``None``.
+        Credential keys are always included — when ``None``, they are
+        set to empty strings to prevent PyArrow from falling back to
+        environment variables.
         """
-        kwargs: dict = {"region": self.region}
-        if self.key_id is not None:
-            kwargs["access_key"] = self.key_id
-        if self.secret_key is not None:
-            kwargs["secret_key"] = self.secret_key
+        kwargs: dict = {
+            "region": self.region,
+            "access_key": self.key_id or "",
+            "secret_key": self.secret_key or "",
+        }
         if self.endpoint_url:
             from urllib.parse import urlparse
 
@@ -356,15 +360,16 @@ class AwsCredentials:
         """Return DuckDB CREATE SECRET SQL parts for S3 credentials.
 
         Returns a list of SQL fragments like ``KEY_ID 'value'``
-        suitable for ``CREATE SECRET (TYPE S3, ...)``.  Returns an
-        empty list when explicit credentials are absent, signalling
-        that no SECRET should be created (allowing IAM role fallback).
+        suitable for ``CREATE SECRET (TYPE S3, ...)``.  When
+        credentials are ``None``, they are included as empty strings
+        to prevent DuckDB from falling back to environment variables.
+        Returns an empty list only when both credentials are ``None``
+        and no endpoint/SSL overrides are needed, signalling that no
+        SECRET should be created (allowing IAM role fallback).
         """
-        if self.key_id is None or self.secret_key is None:
-            return []
         # Escape single quotes to prevent SQL injection via env vars.
-        safe_key_id = self.key_id.replace("'", "''")
-        safe_secret = self.secret_key.replace("'", "''")
+        safe_key_id = (self.key_id or "").replace("'", "''")
+        safe_secret = (self.secret_key or "").replace("'", "''")
         safe_region = self.region.replace("'", "''")
         parts = [
             f"KEY_ID '{safe_key_id}'",

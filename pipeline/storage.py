@@ -173,9 +173,9 @@ class S3Backend:
         and fail on non-EC2 machines.
 
         When credentials are ``None`` (missing for the active mode),
-        they are omitted entirely so that ``object_store`` does not
-        fall back to environment variables that may contain production
-        credentials.
+        they are set to empty strings explicitly rather than omitted,
+        preventing ``object_store`` from falling back to environment
+        variables that may contain production credentials.
 
         For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
         ``S3_ALLOW_HTTP`` environment variables.

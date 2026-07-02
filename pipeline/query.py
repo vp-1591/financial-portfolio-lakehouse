@@ -41,7 +41,7 @@ import duckdb
 import polars as pl
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
-from pipeline.secrets import resolve_aws_credentials
+from pipeline.secrets import is_demo, resolve_aws_credentials
 from pipeline.storage import S3Backend, get_storage
 
 logger = logging.getLogger(__name__)
@@ -304,10 +304,13 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     credentials so that demo mode uses ``_DEMO`` variants exclusively
     — no fallback to base credentials.
 
-    When explicit credentials are present, they are registered as a
-    DuckDB SECRET.  When they are absent, no SECRET is created so that
-    DuckDB / Delta Kernel can fall back to IAM instance metadata or
-    other credential providers.
+    When credentials are available (even if empty strings for missing
+    demo credentials), they are registered as a DuckDB SECRET.  Empty
+    credentials prevent DuckDB from falling back to environment
+    variables that may contain production credentials.  When both
+    key_id and secret_key are ``None``, no SECRET is created so that
+    DuckDB can fall back to IAM instance metadata or other credential
+    providers.
 
     For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` to the
     server URL and ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
@@ -317,13 +320,25 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     creds = resolve_aws_credentials()
     parts = creds.to_duckdb_secret_parts()
 
-    if parts:
+    # When both key_id and secret_key are None, the caller has no explicit
+    # credentials.  In production mode this is expected on EC2 (IAM role
+    # fallback) — skip SECRET creation.  In demo mode this means _DEMO
+    # credentials are missing — create a SECRET with empty KEY_ID/SECRET
+    # so that DuckDB does not fall back to production credentials that may
+    # be present in environment variables.
+    if creds.key_id is None and creds.secret_key is None:
+        if is_demo():
+            # Empty credentials prevent fallback to production env vars.
+            # S3 operations will fail, which is correct — demo isolation
+            # must not silently use production credentials.
+            conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
+        else:
+            logger.debug(
+                "No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY set; "
+                "skipping DuckDB S3 SECRET (expecting IAM role fallback)"
+            )
+    elif parts:
         conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
-    else:
-        logger.debug(
-            "No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY set; "
-            "skipping DuckDB S3 SECRET (expecting IAM role fallback)"
-        )
 
 
 # ---------------------------------------------------------------------------

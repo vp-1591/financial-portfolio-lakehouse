@@ -317,8 +317,8 @@ class TestS3Backend:
         assert opts["aws_secret_access_key"] == "test-secret"
         assert opts["aws_region"] == "us-east-1"
 
-    def test_storage_options_omits_empty_credentials(self, monkeypatch):
-        """Empty credential strings are omitted so object_store can fall back."""
+    def test_storage_options_empty_credentials_set_explicitly(self, monkeypatch):
+        """Empty credential strings are set explicitly to prevent SDK fallback."""
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
         monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
@@ -327,9 +327,10 @@ class TestS3Backend:
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        # Empty credentials should be absent, not present with "".
-        assert "aws_access_key_id" not in opts
-        assert "aws_secret_access_key" not in opts
+        # Empty credentials are set explicitly as "" to prevent object_store
+        # from falling back to environment variables.
+        assert opts["aws_access_key_id"] == ""
+        assert opts["aws_secret_access_key"] == ""
         # Region is always present (has default).
         assert opts["aws_region"] == "eu-west-1"
 
@@ -383,7 +384,11 @@ class TestS3Backend:
         assert opts["aws_secret_access_key"] == "demo-secret"
 
     def test_storage_options_demo_mode_no_fallback(self, monkeypatch, caplog):
-        """In demo mode, missing _DEMO creds do NOT fall back to base creds."""
+        """In demo mode, missing _DEMO creds are set to empty strings, not omitted.
+
+        Empty strings prevent object_store from falling back to environment
+        variables that may contain production credentials.
+        """
         monkeypatch.setenv("DEMO", "true")
         monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
@@ -391,9 +396,9 @@ class TestS3Backend:
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "prod-secret")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        # Should NOT contain base credentials — only empty/missing
-        assert "aws_access_key_id" not in opts
-        assert "aws_secret_access_key" not in opts
+        # Should contain empty strings, not production credentials.
+        assert opts["aws_access_key_id"] == ""
+        assert opts["aws_secret_access_key"] == ""
 
 
 class TestPathsModule:

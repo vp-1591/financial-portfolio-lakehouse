@@ -189,8 +189,9 @@ class TestConfigureS3:
         conn.close()
 
     def test_demo_mode_no_fallback_to_prod(self):
-        """In demo mode with missing _DEMO creds, no SECRET is created
-        even when production creds are in env vars.
+        """In demo mode with missing _DEMO creds, a SECRET with empty
+        credentials is created to prevent DuckDB from falling back to
+        production credentials in environment variables.
 
         This tests the core isolation guarantee: if _DEMO AWS credentials
         are missing, the pipeline must NOT fall back to production
@@ -206,11 +207,17 @@ class TestConfigureS3:
             os.environ["AWS_SECRET_ACCESS_KEY"] = "prod-secret"
             _configure_s3(conn)
 
-        # No S3 secret should be created — no fallback to prod creds
+        # A SECRET should be created with empty credentials,
+        # preventing DuckDB from falling back to production env vars.
         secrets = conn.execute(
             "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
         ).fetchall()
-        assert len(secrets) == 0, (
-            f"Expected no S3 secret in demo mode without _DEMO creds, got: {secrets}"
+        assert len(secrets) >= 1, (
+            f"Expected at least one S3 secret with empty credentials, got: {secrets}"
+        )
+        # Verify the secret does NOT contain production credentials
+        secret_str = str(secrets[0])
+        assert "prod-key-id" not in secret_str, (
+            f"SECRET must not contain production credentials: {secret_str}"
         )
         conn.close()
