@@ -27,19 +27,20 @@ Replace `T212_DEMO` with a general `DEMO` boolean flag. When `DEMO=true`:
 
 5. **GitHub Actions**: Add a `demo` boolean workflow_dispatch input that sets `DEMO=true` and passes all `_DEMO` secrets.
 
-The `DEMO_SECRET_MAP` in `pipeline/secrets.py` maps each base secret name to its `_DEMO` variant. The `resolve_secret()` function enforces strict isolation: in demo mode, it raises `EnvironmentError` if a `_DEMO` secret is missing rather than falling back to the base secret.
+The `DEMO_SECRET_MAP` in `pipeline/secrets.py` maps each base secret name to its `_DEMO` variant. The `resolve_secret()` function enforces strict isolation: in demo mode, it returns `None` and logs a warning if a `_DEMO` secret is missing, never falling back to the base secret. This allows callers to gracefully skip connectors whose credentials are missing. See ADR 0039 for details.
 
 ## Consequences
 
 - **Complete isolation**: Demo runs cannot accidentally access production APIs or production data.
-- **Hard errors on misconfiguration**: If `DEMO=true` but a `_DEMO` secret is missing, the pipeline fails immediately rather than silently using production credentials.
+- **Graceful degradation**: If `DEMO=true` but a `_DEMO` secret is missing, `resolve_secret()` returns `None` and logs a warning, allowing the pipeline to skip that connector rather than crashing. See ADR 0039.
 - **Breaking change**: `T212_DEMO` is removed. Users currently using `T212_DEMO=true` must switch to `DEMO=true` and set `T212_API_KEY_DEMO` and `T212_API_SECRET_DEMO`.
 - **More env vars**: Each secret now has a `_DEMO` variant, doubling the number of env vars to configure. The `.env.example` and README document all variants.
 - **GitHub Secrets**: The user must add all `_DEMO` secrets to the repository's GitHub Secrets and `S3_BUCKET_DEMO`/`S3_PREFIX_DEMO` as GitHub Variables.
 
 ## Validation
 
-- `tests/test_secrets.py`: `TestIsDemo`, `TestResolveSecret` (including `EnvironmentError` on missing demo secret), `TestInjectSecretsDemoMode`
+- `tests/test_secrets.py`: `TestIsDemo`, `TestResolveSecret` (including `None` return on missing demo secret), `TestInjectSecretsDemoMode`
+- See ADR 0039 for `STORAGE_TYPE`, `resolve_secret` credential isolation, and AWS credential changes
 - `tests/test_storage_config.py`: `TestDemoStorage` (local demo suffix, custom demo dir, S3 demo bucket, explicit overrides, non-demo unchanged)
 - Manual: Set `DEMO=true` with `_DEMO` secrets and verify data lands in the demo bucket/directory
 - Manual: Verify GitHub Actions workflow shows the `demo` toggle in the UI

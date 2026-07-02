@@ -10,6 +10,7 @@ from pipeline.secrets import (
     REQUIRED_SECRETS_DEMO,
     get_config,
     get_secret,
+    get_storage_type,
     inject_secrets,
     is_demo,
     is_enabled,
@@ -220,14 +221,18 @@ class TestResolveSecret:
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "live-token")
         assert resolve_secret("IBKR_FLEX_TOKEN") == "demo-token"
 
-    def test_raises_error_when_demo_secret_missing(self, monkeypatch):
-        """In demo mode, missing _DEMO variant is a hard error."""
+    def test_returns_none_when_demo_secret_missing(self, monkeypatch, caplog):
+        """In demo mode, missing _DEMO variant returns None with a warning."""
         monkeypatch.setenv("DEMO", "true")
         monkeypatch.delenv("IBKR_FLEX_TOKEN_DEMO", raising=False)
         # Even if base secret is set, it must NOT be used in demo mode
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "live-token")
-        with pytest.raises(EnvironmentError, match="IBKR_FLEX_TOKEN_DEMO"):
-            resolve_secret("IBKR_FLEX_TOKEN")
+        result = resolve_secret("IBKR_FLEX_TOKEN")
+        assert result is None
+        # Warning should mention the missing demo secret
+        assert any("IBKR_FLEX_TOKEN_DEMO" in msg for msg in caplog.messages), (
+            "Expected warning about missing IBKR_FLEX_TOKEN_DEMO"
+        )
 
     def test_returns_none_when_base_secret_missing_in_non_demo(self, monkeypatch):
         monkeypatch.delenv("DEMO", raising=False)
@@ -322,3 +327,187 @@ class TestInjectSecretsDemoMode:
             assert not any(demo_name in msg for msg in caplog.messages), (
                 f"Unexpected warning for {demo_name} in non-demo mode"
             )
+
+
+class TestResolveSecretLogging:
+    """Test that resolve_secret logs which variant is used."""
+
+    def test_logs_demo_variant_when_resolved(self, monkeypatch, caplog):
+        """In demo mode, resolve_secret logs that it used the _DEMO variant."""
+        caplog.set_level("INFO")
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.setenv("IBKR_FLEX_TOKEN_DEMO", "demo-token")
+        result = resolve_secret("IBKR_FLEX_TOKEN")
+        assert result == "demo-token"
+        assert any(
+            "Resolved IBKR_FLEX_TOKEN from IBKR_FLEX_TOKEN_DEMO" in msg
+            for msg in caplog.messages
+        ), f"Expected info log about demo variant, got: {caplog.messages}"
+
+    def test_logs_base_variant_when_resolved(self, monkeypatch, caplog):
+        """In non-demo mode, resolve_secret logs that it used the base variant."""
+        caplog.set_level("INFO")
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "live-token")
+        result = resolve_secret("IBKR_FLEX_TOKEN")
+        assert result == "live-token"
+        assert any(
+            "Resolved IBKR_FLEX_TOKEN from IBKR_FLEX_TOKEN" in msg
+            for msg in caplog.messages
+        ), f"Expected info log about base variant, got: {caplog.messages}"
+
+    def test_logs_debug_when_secret_missing(self, monkeypatch, caplog):
+        """In non-demo mode, missing secrets are logged at debug level."""
+        caplog.set_level("DEBUG")
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+        result = resolve_secret("IBKR_FLEX_TOKEN")
+        assert result is None
+        assert any("IBKR_FLEX_TOKEN is not set" in msg for msg in caplog.messages), (
+            f"Expected debug log about missing secret, got: {caplog.messages}"
+        )
+
+
+class TestGetStorageType:
+    """Test get_storage_type() reads STORAGE_TYPE env var."""
+
+    def test_cloud_explicit(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        assert get_storage_type() == "cloud"
+
+    def test_minio_explicit(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_TYPE", "minio")
+        assert get_storage_type() == "minio"
+
+    def test_local_explicit(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_TYPE", "local")
+        assert get_storage_type() == "local"
+
+    def test_default_cloud_when_s3_bucket_set(self, monkeypatch):
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        assert get_storage_type() == "cloud"
+
+    def test_default_local_when_no_s3_bucket(self, monkeypatch):
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        assert get_storage_type() == "local"
+
+    def test_local_overrides_s3_bucket(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_TYPE", "local")
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        assert get_storage_type() == "local"
+
+    def test_cloud_requires_s3_bucket(self, monkeypatch):
+        """When STORAGE_TYPE=cloud but S3_BUCKET is not set, that's a
+        valid storage type — the error is raised in resolve_storage()."""
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        assert get_storage_type() == "cloud"
+
+    def test_invalid_raises_value_error(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_TYPE", "ftp")
+        with pytest.raises(ValueError, match="STORAGE_TYPE"):
+            get_storage_type()
+
+    def test_case_insensitive(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_TYPE", "Cloud")
+        assert get_storage_type() == "cloud"
+
+
+class TestAWSSecretsInDemoMap:
+    """Test that AWS credentials are in DEMO_SECRET_MAP."""
+
+    def test_aws_access_key_in_demo_map(self):
+        assert "AWS_ACCESS_KEY_ID" in DEMO_SECRET_MAP
+        assert DEMO_SECRET_MAP["AWS_ACCESS_KEY_ID"] == "AWS_ACCESS_KEY_ID_DEMO"
+
+    def test_aws_secret_key_in_demo_map(self):
+        assert "AWS_SECRET_ACCESS_KEY" in DEMO_SECRET_MAP
+        assert DEMO_SECRET_MAP["AWS_SECRET_ACCESS_KEY"] == "AWS_SECRET_ACCESS_KEY_DEMO"
+
+    def test_aws_creds_resolve_demo_variant(self, monkeypatch):
+        """In demo mode, AWS creds use _DEMO variants."""
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID_DEMO", "demo-key")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key")
+        assert resolve_secret("AWS_ACCESS_KEY_ID") == "demo-key"
+
+    def test_aws_creds_no_fallback_in_demo(self, monkeypatch):
+        """In demo mode, missing _DEMO AWS creds return None, not base creds."""
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key")
+        assert resolve_secret("AWS_ACCESS_KEY_ID") is None
+
+
+class TestInjectSecretsS3Validation:
+    """Test that inject_secrets validates S3 secrets only for cloud storage."""
+
+    def setup_method(self):
+        import pipeline.storage
+
+        pipeline.storage._config = None
+
+    def teardown_method(self):
+        import pipeline.storage
+
+        pipeline.storage._config = None
+
+    def test_s3_secrets_validated_for_cloud(self, monkeypatch, caplog):
+        """In cloud mode, missing AWS creds generate a warning."""
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        for name in REQUIRED_SECRETS:
+            monkeypatch.setenv(name, "value")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+        inject_secrets()
+        assert any(
+            "AWS_ACCESS_KEY_ID" in msg and "cloud storage" in msg
+            for msg in caplog.messages
+        ), f"Expected S3 warning, got: {caplog.messages}"
+
+    def test_s3_secrets_not_required_for_local(self, monkeypatch, caplog):
+        """In local mode, missing AWS creds do NOT generate S3 warnings."""
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.setenv("STORAGE_TYPE", "local")
+        for name in REQUIRED_SECRETS:
+            monkeypatch.setenv(name, "value")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+        inject_secrets()
+        assert not any("cloud storage" in msg for msg in caplog.messages), (
+            f"Unexpected S3 warning in local mode: {caplog.messages}"
+        )
+
+    def test_s3_secrets_not_required_for_minio(self, monkeypatch, caplog):
+        """In minio mode, missing AWS creds do NOT generate S3 warnings."""
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.setenv("STORAGE_TYPE", "minio")
+        for name in REQUIRED_SECRETS:
+            monkeypatch.setenv(name, "value")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+        inject_secrets()
+        assert not any("cloud storage" in msg for msg in caplog.messages), (
+            f"Unexpected S3 warning in minio mode: {caplog.messages}"
+        )
+
+    def test_demo_s3_secrets_validated_for_cloud(self, monkeypatch, caplog):
+        """In demo+cloud mode, missing _DEMO AWS creds generate a warning."""
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        for name in REQUIRED_SECRETS_DEMO:
+            monkeypatch.setenv(name, "demo-value")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
+
+        inject_secrets()
+        assert any(
+            "AWS_ACCESS_KEY_ID_DEMO" in msg and "cloud storage" in msg
+            for msg in caplog.messages
+        ), f"Expected demo S3 warning, got: {caplog.messages}"

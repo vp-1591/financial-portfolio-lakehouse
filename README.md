@@ -162,7 +162,8 @@ Environment variables always take priority over `.env` file values.
 | `XTB_ENABLED` | Enable/disable XTB connector (default: enabled) |
 | `ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
 | `DEMO` | Run in demo mode — uses `_DEMO` secrets and separate storage (default: `false`) |
-| `S3_BUCKET` | S3 bucket for cloud storage (enables S3Backend) |
+| `STORAGE_TYPE` | Storage backend: `cloud`, `minio`, or `local` (default: `cloud` if `S3_BUCKET` set, `local` otherwise) |
+| `S3_BUCKET` | S3 bucket for cloud storage (required when `STORAGE_TYPE=cloud`) |
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
 | `AWS_REGION` | AWS region (default: `eu-west-1`) |

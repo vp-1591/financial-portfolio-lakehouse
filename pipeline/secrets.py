@@ -17,7 +17,9 @@ like ``transform`` and ``allocate`` to run without any broker API keys.
 :func:`resolve_secret` returns ``_DEMO``-suffixed secrets instead of the
 base names, and :func:`inject_secrets` validates the ``_DEMO`` variants.
 There is **no cross-mode fallback** — missing credentials for the active
-mode are a hard error.
+mode are logged as warnings and :func:`resolve_secret` returns ``None``,
+allowing callers to gracefully skip connectors or operations that require
+the missing secret.
 
 Connector toggles (``IBKR_ENABLED``, ``T212_ENABLED``, ``XTB_ENABLED``)
 default to **enabled**.  Set them to ``0``, ``false``, or ``no`` to disable
@@ -70,10 +72,28 @@ DEMO_SECRET_MAP: dict[str, str] = {
     "T212_API_KEY": "T212_API_KEY_DEMO",
     "T212_API_SECRET": "T212_API_SECRET_DEMO",
     "ENCRYPTION_KEY": "ENCRYPTION_KEY_DEMO",
+    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID_DEMO",
+    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY_DEMO",
 }
 
 # The _DEMO variants listed for inject_secrets() validation in demo mode.
 REQUIRED_SECRETS_DEMO: list[str] = list(DEMO_SECRET_MAP.values())
+
+# S3-specific secrets — only required when STORAGE_TYPE is cloud.
+REQUIRED_SECRETS_S3: list[str] = [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+]
+REQUIRED_SECRETS_S3_DEMO: list[str] = [
+    "AWS_ACCESS_KEY_ID_DEMO",
+    "AWS_SECRET_ACCESS_KEY_DEMO",
+]
+
+# Storage type constants.
+STORAGE_TYPE_CLOUD = "cloud"
+STORAGE_TYPE_MINIO = "minio"
+STORAGE_TYPE_LOCAL = "local"
+VALID_STORAGE_TYPES = (STORAGE_TYPE_CLOUD, STORAGE_TYPE_MINIO, STORAGE_TYPE_LOCAL)
 
 
 def inject_secrets() -> dict[str, str]:
@@ -85,6 +105,11 @@ def inject_secrets() -> dict[str, str]:
 
     In demo mode (``DEMO=true``), validates ``_DEMO`` variants instead
     of base secrets.  There is no cross-mode fallback.
+
+    S3-specific secrets (``AWS_ACCESS_KEY_ID``,
+    ``AWS_SECRET_ACCESS_KEY``) are validated only when
+    ``STORAGE_TYPE`` is ``"cloud"``.  They are optional for
+    ``"minio"`` and ``"local"`` storage.
 
     Returns a dict of all available secrets for caller convenience.
     """
@@ -111,6 +136,20 @@ def inject_secrets() -> dict[str, str]:
                 secrets[name] = value
             else:
                 logger.warning("Required secret %s is not set", name)
+
+    # Validate S3 secrets only for cloud storage.
+    storage_type = get_storage_type()
+    if storage_type == STORAGE_TYPE_CLOUD:
+        s3_secrets = REQUIRED_SECRETS_S3_DEMO if is_demo() else REQUIRED_SECRETS_S3
+        label = "Demo S3" if is_demo() else "S3"
+        for name in s3_secrets:
+            value = os.environ.get(name)
+            if value:
+                secrets[name] = value
+            else:
+                logger.warning(
+                    "%s secret %s is not set (required for cloud storage)", label, name
+                )
 
     return secrets
 
@@ -169,28 +208,65 @@ def is_demo() -> bool:
     return parse_bool("DEMO", default=False)
 
 
+def get_storage_type() -> str:
+    """Return the storage type from the ``STORAGE_TYPE`` env var.
+
+    Valid values are ``"cloud"`` (S3), ``"minio"`` (S3-compatible),
+    and ``"local"`` (filesystem).  If ``STORAGE_TYPE`` is not set,
+    defaults to ``"cloud"`` when ``S3_BUCKET`` is set, and ``"local"``
+    otherwise.
+
+    Raises :exc:`ValueError` for invalid values.
+    """
+    explicit = os.environ.get("STORAGE_TYPE", "").lower()
+    if explicit:
+        if explicit not in VALID_STORAGE_TYPES:
+            raise ValueError(
+                f"STORAGE_TYPE must be one of {VALID_STORAGE_TYPES}, got {explicit!r}"
+            )
+        return explicit
+    # Backward compatibility: if S3_BUCKET is set and no STORAGE_TYPE,
+    # default to cloud.
+    if os.environ.get("S3_BUCKET"):
+        return STORAGE_TYPE_CLOUD
+    return STORAGE_TYPE_LOCAL
+
+
 def resolve_secret(name: str) -> str | None:
     """Get a secret, using the ``_DEMO`` variant when demo mode is active.
 
     **Strict isolation — no cross-mode fallback:**
 
     - When ``DEMO=true`` and *name* is in :data:`DEMO_SECRET_MAP`,
-      returns the ``_DEMO`` variant.  Raises :exc:`EnvironmentError`
-      if the ``_DEMO`` variant is not set — **never falls back to the
-      base secret**.
+      returns the ``_DEMO`` variant.  If the ``_DEMO`` variant is not
+      set, logs a warning and returns ``None`` — **never falls back to
+      the base secret**.
     - When ``DEMO=false`` (or unset), returns ``os.environ.get(name)``
       directly — **never reads ``_DEMO`` variants**.
     - For names not in :data:`DEMO_SECRET_MAP` (e.g., config vars
       like ``IBKR_FLEX_BASE_URL``), returns ``os.environ.get(name)``
       regardless of mode.
+
+    When a secret is found, logs the source (base or ``_DEMO`` variant)
+    at info level without logging the value.  When a secret is missing,
+    logs a warning with the expected variable name.
     """
     if is_demo() and name in DEMO_SECRET_MAP:
         demo_name = DEMO_SECRET_MAP[name]
         value = os.environ.get(demo_name)
         if value:
+            logger.info("Resolved %s from %s (demo mode)", name, demo_name)
             return value
-        raise EnvironmentError(
-            f"Demo mode is active but {demo_name} is not set. "
-            f"Set {demo_name} to provide demo credentials for {name}."
+        logger.warning(
+            "Demo mode is active but %s is not set — "
+            "returning None for %s (no fallback to base secret)",
+            demo_name,
+            name,
         )
-    return os.environ.get(name)
+        return None
+    value = os.environ.get(name)
+    if value:
+        logger.info("Resolved %s from %s", name, name)
+    else:
+        logger.debug("Secret %s is not set", name)
+    return value

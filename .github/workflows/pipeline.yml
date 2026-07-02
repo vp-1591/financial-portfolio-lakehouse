@@ -46,6 +46,7 @@ jobs:
 
     env:
       DEMO: ${{ inputs.demo && 'true' || '' }}
+      STORAGE_TYPE: ${{ vars.STORAGE_TYPE || 'cloud' }}
       S3_BUCKET: ${{ vars.S3_BUCKET }}
       S3_PREFIX: ${{ vars.S3_PREFIX || 'pipeline' }}
       S3_BUCKET_DEMO: ${{ vars.S3_BUCKET_DEMO }}

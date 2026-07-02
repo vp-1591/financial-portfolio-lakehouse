@@ -42,7 +42,7 @@ import duckdb
 import polars as pl
 
 from pipeline.crypto import decrypt_float, decrypt_string, load_key
-from pipeline.secrets import is_demo
+from pipeline.secrets import resolve_secret
 from pipeline.storage import S3Backend, get_storage
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,6 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
     import pyarrow as pa
     import pyarrow.fs as pafs
 
-    demo = is_demo()
     region = os.environ.get("AWS_REGION", "eu-west-1")
     endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
     allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in (
@@ -105,16 +104,8 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
     )
 
     fs_kwargs: dict = {"region": region}
-    key_id = (
-        os.environ.get("AWS_ACCESS_KEY_ID_DEMO", "")
-        if demo
-        else os.environ.get("AWS_ACCESS_KEY_ID", "")
-    )
-    secret = (
-        os.environ.get("AWS_SECRET_ACCESS_KEY_DEMO", "")
-        if demo
-        else os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-    )
+    key_id = resolve_secret("AWS_ACCESS_KEY_ID") or ""
+    secret = resolve_secret("AWS_SECRET_ACCESS_KEY") or ""
     if key_id:
         fs_kwargs["access_key"] = key_id
     if secret:
@@ -338,9 +329,9 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     Uses DuckDB's SECRET mechanism (v0.10+) which propagates credentials
     to all extensions including ``delta_scan()``.
 
-    In demo mode, uses ``AWS_ACCESS_KEY_ID_DEMO`` and
-    ``AWS_SECRET_ACCESS_KEY_DEMO`` exclusively — no fallback to base
-    credentials.  In production mode, uses base credentials only.
+    Uses :func:`pipeline.secrets.resolve_secret` for AWS credentials
+    so that demo mode uses ``_DEMO`` variants exclusively — no fallback
+    to base credentials.
 
     When explicit credentials are present, they are registered as a
     DuckDB SECRET.  When they are absent, no SECRET is created so that
@@ -353,17 +344,8 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     DuckDB's ``ENDPOINT`` parameter expects ``host:port`` (without scheme),
     so the URL scheme is stripped automatically.
     """
-    demo = is_demo()
-    key_id = (
-        os.environ.get("AWS_ACCESS_KEY_ID_DEMO", "")
-        if demo
-        else os.environ.get("AWS_ACCESS_KEY_ID", "")
-    )
-    secret = (
-        os.environ.get("AWS_SECRET_ACCESS_KEY_DEMO", "")
-        if demo
-        else os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-    )
+    key_id = resolve_secret("AWS_ACCESS_KEY_ID") or ""
+    secret = resolve_secret("AWS_SECRET_ACCESS_KEY") or ""
     region = os.environ.get("AWS_REGION", "eu-west-1")
     endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
     allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in ("1", "true", "yes")
