@@ -245,6 +245,9 @@ def get_storage_type() -> str:
     # default to cloud.
     if get_env("S3_BUCKET"):
         return STORAGE_TYPE_CLOUD
+    # In demo mode, S3_BUCKET_DEMO alone triggers cloud storage.
+    if is_demo() and get_env("S3_BUCKET_DEMO"):
+        return STORAGE_TYPE_CLOUD
     return STORAGE_TYPE_LOCAL
 
 

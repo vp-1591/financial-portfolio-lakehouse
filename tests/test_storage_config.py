@@ -667,6 +667,26 @@ class TestDemoStorage:
         assert isinstance(config.backend, LocalBackend)
         assert config.data_dir == str(tmp_path / "data_demo")
 
+    def test_s3_bucket_demo_standalone_without_s3_bucket(self, monkeypatch):
+        """S3_BUCKET_DEMO alone (without S3_BUCKET) creates S3Backend in demo mode."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "explicit-demo-bucket"
+        assert config.backend.prefix == "pipeline_demo"
+
+    def test_s3_bucket_demo_missing_without_s3_bucket_raises(self, monkeypatch):
+        """Demo cloud mode without S3_BUCKET or S3_BUCKET_DEMO raises ValueError."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        monkeypatch.setenv("DEMO", "true")
+        with pytest.raises(ValueError, match="S3_BUCKET_DEMO"):
+            resolve_storage()
+
 
 class TestStorageType:
     """Test resolve_storage() with STORAGE_TYPE env var."""
@@ -735,3 +755,13 @@ class TestStorageType:
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert any("S3_ENDPOINT_URL" in msg for msg in caplog.messages)
+
+    def test_cloud_with_s3_bucket_demo_in_demo_mode(self, monkeypatch):
+        """STORAGE_TYPE=cloud with S3_BUCKET_DEMO (no S3_BUCKET) works in demo mode."""
+        monkeypatch.setenv("STORAGE_TYPE", "cloud")
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("S3_BUCKET_DEMO", "demo-bucket")
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "demo-bucket"
