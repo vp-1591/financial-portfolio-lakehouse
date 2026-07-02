@@ -34,22 +34,24 @@ on:
         required: false
         default: true
         type: boolean
+      demo:
+        description: "Run in demo mode (uses _DEMO secrets and demo storage)"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   run:
     runs-on: ubuntu-latest
 
     env:
+      DEMO: ${{ inputs.demo && 'true' || '' }}
+      STORAGE_TYPE: ${{ vars.STORAGE_TYPE || 'cloud' }}
       S3_BUCKET: ${{ vars.S3_BUCKET }}
       S3_PREFIX: ${{ vars.S3_PREFIX || 'pipeline' }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      S3_BUCKET_DEMO: ${{ vars.S3_BUCKET_DEMO }}
+      S3_PREFIX_DEMO: ${{ vars.S3_PREFIX_DEMO }}
       AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
-      IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
-      IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
-      T212_API_KEY: ${{ secrets.T212_API_KEY }}
-      T212_API_SECRET: ${{ secrets.T212_API_SECRET }}
-      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
       IBKR_ENABLED: ${{ inputs.ibkr-enabled }}
       T212_ENABLED: ${{ inputs.t212-enabled }}
       XTB_ENABLED: ${{ inputs.xtb-enabled }}
@@ -67,5 +69,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[pipeline]"
 
-      - name: Run pipeline
+      - name: Run pipeline (production)
+        if: ${{ inputs.demo != true }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
+          IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
+          T212_API_KEY: ${{ secrets.T212_API_KEY }}
+          T212_API_SECRET: ${{ secrets.T212_API_SECRET }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+        run: python -m pipeline.run ${{ inputs.command }} --target-currency "${{ inputs.target-currency }}"
+
+      - name: Run pipeline (demo)
+        if: ${{ inputs.demo == true }}
+        env:
+          AWS_ACCESS_KEY_ID_DEMO: ${{ secrets.AWS_ACCESS_KEY_ID_DEMO }}
+          AWS_SECRET_ACCESS_KEY_DEMO: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEMO }}
+          IBKR_FLEX_TOKEN_DEMO: ${{ secrets.IBKR_FLEX_TOKEN_DEMO }}
+          IBKR_FLEX_QUERY_ID_DEMO: ${{ secrets.IBKR_FLEX_QUERY_ID_DEMO }}
+          T212_API_KEY_DEMO: ${{ secrets.T212_API_KEY_DEMO }}
+          T212_API_SECRET_DEMO: ${{ secrets.T212_API_SECRET_DEMO }}
+          ENCRYPTION_KEY_DEMO: ${{ secrets.ENCRYPTION_KEY_DEMO }}
         run: python -m pipeline.run ${{ inputs.command }} --target-currency "${{ inputs.target-currency }}"

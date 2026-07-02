@@ -25,13 +25,18 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 
 from pipeline.connectors.registry import all
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
-from pipeline.secrets import get_config, inject_secrets, is_enabled, parse_bool
+from pipeline.secrets import (
+    get_config,
+    inject_secrets,
+    is_demo,
+    is_enabled,
+    resolve_secret,
+)
 from pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -120,13 +125,13 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         cdc_kwargs: dict = {}
 
         if connector.name == "ibkr":
-            ibkr_flex_token = os.environ.get("IBKR_FLEX_TOKEN")
+            ibkr_flex_token = resolve_secret("IBKR_FLEX_TOKEN")
             if not ibkr_flex_token:
                 logger.debug(
                     "Skipping %s: IBKR_FLEX_TOKEN not set", connector.display_name
                 )
                 continue
-            ibkr_flex_query_id = os.environ.get("IBKR_FLEX_QUERY_ID")
+            ibkr_flex_query_id = resolve_secret("IBKR_FLEX_QUERY_ID")
             if not ibkr_flex_query_id:
                 logger.debug(
                     "Skipping %s: IBKR_FLEX_QUERY_ID not set",
@@ -144,17 +149,16 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             cdc_kwargs = {}
 
         elif connector.name == "trading212":
-            t212_api_key = os.environ.get("T212_API_KEY")
+            t212_api_key = resolve_secret("T212_API_KEY")
             if not t212_api_key:
                 logger.debug(
                     "Skipping %s: T212_API_KEY not set", connector.display_name
                 )
                 continue
-            t212_api_secret = os.environ.get("T212_API_SECRET", "")
-            demo = parse_bool("T212_DEMO")
+            t212_api_secret = resolve_secret("T212_API_SECRET") or ""
             default_base = (
                 "https://demo.trading212.com/api/v0"
-                if demo
+                if is_demo()
                 else "https://live.trading212.com/api/v0"
             )
             base_url = get_config("T212_BASE_URL") or default_base

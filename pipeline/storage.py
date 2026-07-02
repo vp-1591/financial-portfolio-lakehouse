@@ -30,6 +30,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from pipeline.secrets import (
+    STORAGE_TYPE_CLOUD,
+    STORAGE_TYPE_MINIO,
+    get_storage_type,
+    is_demo,
+)
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -153,35 +160,30 @@ class S3Backend:
     def storage_options(self) -> dict[str, str]:
         """AWS credentials for deltalake S3 operations.
 
+        Uses :func:`pipeline.secrets.resolve_aws_credentials` for AWS
+        credentials so that demo mode uses ``_DEMO`` variants
+        exclusively — no fallback to base credentials.  In production
+        mode, uses base credentials only — no fallback to demo
+        credentials.
+
         Keys use lowercase convention required by the ``object_store``
         Rust crate (e.g. ``aws_access_key_id``).  Uppercase keys like
         ``AWS_ACCESS_KEY_ID`` are silently ignored by ``object_store``,
         causing S3 authentication to fall back to EC2 instance metadata
         and fail on non-EC2 machines.
 
-        Empty credentials are omitted so that ``object_store`` can fall
-        back to its own credential chain (environment variables, IAM
-        role, etc.) rather than overriding with an empty string.
+        When credentials are ``None`` (missing for the active mode),
+        they are set to empty strings explicitly rather than omitted,
+        preventing ``object_store`` from falling back to environment
+        variables that may contain production credentials.
 
         For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
         ``S3_ALLOW_HTTP`` environment variables.
         """
-        opts: dict[str, str] = {}
-        key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
-        secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-        region = os.environ.get("AWS_REGION", "eu-west-1")
-        if key_id:
-            opts["aws_access_key_id"] = key_id
-        if secret:
-            opts["aws_secret_access_key"] = secret
-        opts["aws_region"] = region
-        endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
-        if endpoint_url:
-            opts["aws_endpoint_url"] = endpoint_url
-        allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower()
-        if allow_http in ("1", "true", "yes"):
-            opts["aws_allow_http"] = "true"
-        return opts
+        from pipeline.secrets import resolve_aws_credentials
+
+        creds = resolve_aws_credentials()
+        return creds.to_storage_options()
 
 
 # ---------------------------------------------------------------------------
@@ -248,12 +250,21 @@ _config: StorageConfig | None = None
 def resolve_storage() -> StorageConfig:
     """Resolve and activate a :class:`StorageConfig`.
 
-    Backend selection priority:
+    Backend selection is controlled by the ``STORAGE_TYPE`` env var:
 
-    1. If ``S3_BUCKET`` env var is set, use :class:`S3Backend` with
-       optional ``S3_PREFIX`` (default ``"pipeline"``).
-    2. Otherwise, use :class:`LocalBackend` with ``PIPELINE_DATA_DIR``
-       or the project default ``PROJECT_ROOT / "data"``.
+    - ``cloud`` (default when ``S3_BUCKET`` is set): use
+      :class:`S3Backend` with AWS S3.
+    - ``minio``: use :class:`S3Backend` with a MinIO-compatible
+      endpoint (requires ``S3_ENDPOINT_URL``).
+    - ``local`` (default when ``S3_BUCKET`` is not set): use
+      :class:`LocalBackend` with the local filesystem.
+
+    In demo mode (``DEMO=true``), storage paths are isolated:
+
+    - **S3 mode**: uses ``S3_BUCKET_DEMO`` (or ``{S3_BUCKET}_demo``)
+      and ``S3_PREFIX_DEMO`` (or ``"pipeline_demo"``).
+    - **Local mode**: uses ``PIPELINE_DATA_DIR_DEMO`` (or
+      ``{data_dir}_demo``).
 
     Tests must call :func:`use_storage` with a ``tmp_path``-based
     config to prevent accidental writes to the project's ``data/``
@@ -261,11 +272,31 @@ def resolve_storage() -> StorageConfig:
     """
     global _config
 
-    s3_bucket = os.environ.get("S3_BUCKET")
+    storage_type = get_storage_type()
+    demo = is_demo()
 
-    if s3_bucket:
-        prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
-        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
+    if storage_type in (STORAGE_TYPE_CLOUD, STORAGE_TYPE_MINIO):
+        s3_bucket = os.environ.get("S3_BUCKET")
+        if not s3_bucket:
+            raise ValueError(
+                f"STORAGE_TYPE is '{storage_type}' but S3_BUCKET is not set"
+            )
+
+        if storage_type == STORAGE_TYPE_MINIO:
+            endpoint_url = os.environ.get("S3_ENDPOINT_URL")
+            if not endpoint_url:
+                logger.warning(
+                    "STORAGE_TYPE is 'minio' but S3_ENDPOINT_URL is not set; "
+                    "MinIO typically requires an endpoint URL"
+                )
+
+        if demo:
+            bucket = os.environ.get("S3_BUCKET_DEMO") or f"{s3_bucket}_demo"
+            prefix = os.environ.get("S3_PREFIX_DEMO", "pipeline_demo")
+        else:
+            bucket = s3_bucket
+            prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
+        backend = S3Backend(bucket=bucket, prefix=prefix)
         base = f"s3://{backend.bucket}/{prefix}"
         config = StorageConfig(
             data_dir=base,
@@ -282,6 +313,13 @@ def resolve_storage() -> StorageConfig:
             data_dir = Path(data_dir_str)
         else:
             data_dir = PROJECT_ROOT / "data"
+
+        if demo:
+            demo_dir_str = os.environ.get("PIPELINE_DATA_DIR_DEMO")
+            if demo_dir_str:
+                data_dir = Path(demo_dir_str)
+            else:
+                data_dir = Path(f"{data_dir}_demo")
 
         config = StorageConfig(
             data_dir=str(data_dir),

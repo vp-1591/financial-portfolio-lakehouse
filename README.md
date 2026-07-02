@@ -157,17 +157,32 @@ Environment variables always take priority over `.env` file values.
 | `IBKR_ENABLED` | Enable/disable IBKR connector (default: enabled) |
 | `T212_API_KEY` | Trading 212 API key *(required)* |
 | `T212_API_SECRET` | Trading 212 API secret *(required)* |
-| `T212_DEMO` | Use Trading 212 demo API (default: `false`) |
-| `T212_BASE_URL` | Trading 212 API base URL (auto-derived from `T212_DEMO`) |
+| `T212_BASE_URL` | Trading 212 API base URL (auto-derived from `DEMO`) |
 | `T212_ENABLED` | Enable/disable Trading 212 connector (default: enabled) |
 | `XTB_ENABLED` | Enable/disable XTB connector (default: enabled) |
 | `ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
-| `S3_BUCKET` | S3 bucket for cloud storage (enables S3Backend) |
+| `DEMO` | Run in demo mode — uses `_DEMO` secrets and separate storage (default: `false`) |
+| `STORAGE_TYPE` | Storage backend: `cloud`, `minio`, or `local` (default: `cloud` if `S3_BUCKET` set, `local` otherwise) |
+| `S3_BUCKET` | S3 bucket for cloud storage (required when `STORAGE_TYPE=cloud`) |
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
 | `AWS_REGION` | AWS region (default: `eu-west-1`) |
 | `S3_ENDPOINT_URL` | Custom S3 endpoint (for MinIO or other S3-compatible stores) |
 | `S3_ALLOW_HTTP` | Allow non-HTTPS connections to S3 endpoint (set to `true` for MinIO) |
+
+**Demo mode variables** (used only when `DEMO=true`):
+
+| Variable | Purpose |
+|----------|---------|
+| `IBKR_FLEX_TOKEN_DEMO` | IBKR Flex token for demo mode |
+| `IBKR_FLEX_QUERY_ID_DEMO` | IBKR Flex Query ID for demo mode |
+| `T212_API_KEY_DEMO` | Trading 212 API key for demo mode |
+| `T212_API_SECRET_DEMO` | Trading 212 API secret for demo mode |
+| `ENCRYPTION_KEY_DEMO` | Fernet key for demo mode |
+| `S3_BUCKET_DEMO` | S3 bucket for demo data (defaults to `{S3_BUCKET}_demo`) |
+| `S3_PREFIX_DEMO` | S3 prefix for demo data (defaults to `pipeline_demo`) |
+| `AWS_ACCESS_KEY_ID_DEMO` | AWS credential for demo S3 |
+| `AWS_SECRET_ACCESS_KEY_DEMO` | AWS credential for demo S3 |
 
 All connectors are **enabled by default**. Set a toggle to `0`, `false`, or
 `no` to disable it.
@@ -269,15 +284,30 @@ columns appear as binary data.
 
 ### Infrastructure
 
-The `terraform/` directory contains Terraform configuration for the S3 bucket
-and IAM user.
+The `terraform/` directory contains separate Terraform configurations for
+production and demo environments:
 
-**First-time setup** — the S3 backend bucket name is not committed to the repo
-(it contains an account identifier). Copy the sample config and fill in your
-bucket name:
+- **`terraform/prod/`** — production S3 bucket and IAM user
+- **`terraform/demo/`** — demo S3 bucket and IAM user (isolated credentials)
+
+The S3 backend bucket name is not committed to the repo (it contains an
+account identifier). Copy the sample config and fill in your bucket name:
+
+**Production:**
 
 ```bash
-cd terraform
+cd terraform/prod
+cp backend.tf.sample backend.tf
+# Edit backend.tf — set bucket to your S3 state bucket name
+terraform init
+terraform plan
+terraform apply
+```
+
+**Demo:**
+
+```bash
+cd terraform/demo
 cp backend.tf.sample backend.tf
 # Edit backend.tf — set bucket to your S3 state bucket name
 terraform init
@@ -287,9 +317,12 @@ terraform apply
 
 After applying, store the outputs in GitHub:
 
-- `s3_bucket` → GitHub Secret `S3_BUCKET`
-- `access_key_id` → GitHub Secret `AWS_ACCESS_KEY_ID`
-- `access_key_secret` → GitHub Secret `AWS_SECRET_ACCESS_KEY`
+| Output | GitHub type | Production | Demo |
+|--------|-------------|------------|------|
+| `s3_bucket` | Variable | `S3_BUCKET` | `S3_BUCKET_DEMO` |
+| `s3_prefix` | Variable | `S3_PREFIX` | `S3_PREFIX_DEMO` |
+| `access_key_id` | Secret | `AWS_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID_DEMO` |
+| `access_key_secret` | Secret | `AWS_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY_DEMO` |
 
 ### Tests & Linting
 
