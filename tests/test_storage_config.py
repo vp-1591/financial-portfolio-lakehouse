@@ -569,7 +569,7 @@ class TestDemoStorage:
         assert config.data_dir == str(custom)
 
     def test_s3_demo_mode_default_bucket_suffix(self, monkeypatch):
-        """In demo mode, S3 bucket gets _demo suffix by default."""
+        """In demo mode, S3 bucket gets -demo suffix by default."""
         monkeypatch.setenv("S3_BUCKET", "my-bucket")
         monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
         monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
@@ -577,7 +577,7 @@ class TestDemoStorage:
         monkeypatch.setenv("DEMO", "true")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "my-bucket_demo"
+        assert config.backend.bucket == "my-bucket-demo"
         assert config.backend.prefix == "pipeline_demo"
 
     def test_s3_demo_mode_explicit_bucket(self, monkeypatch):
@@ -621,9 +621,9 @@ class TestDemoStorage:
         monkeypatch.delenv("STORAGE_TYPE", raising=False)
         monkeypatch.setenv("DEMO", "true")
         config = resolve_storage()
-        assert config.raw_dir == "s3://pipeline_demo/pipeline_demo/raw"
-        assert config.normalized_dir == "s3://pipeline_demo/pipeline_demo/normalized"
-        assert config.analytics_dir == "s3://pipeline_demo/pipeline_demo/analytics"
+        assert config.raw_dir == "s3://pipeline-demo/pipeline_demo/raw"
+        assert config.normalized_dir == "s3://pipeline-demo/pipeline_demo/normalized"
+        assert config.analytics_dir == "s3://pipeline-demo/pipeline_demo/analytics"
 
 
 class TestStorageType:

@@ -179,7 +179,7 @@ Environment variables always take priority over `.env` file values.
 | `T212_API_KEY_DEMO` | Trading 212 API key for demo mode |
 | `T212_API_SECRET_DEMO` | Trading 212 API secret for demo mode |
 | `ENCRYPTION_KEY_DEMO` | Fernet key for demo mode |
-| `S3_BUCKET_DEMO` | S3 bucket for demo data (defaults to `{S3_BUCKET}_demo`) |
+| `S3_BUCKET_DEMO` | S3 bucket for demo data (defaults to `{S3_BUCKET}-demo`) |
 | `S3_PREFIX_DEMO` | S3 prefix for demo data (defaults to `pipeline_demo`) |
 | `AWS_ACCESS_KEY_ID_DEMO` | AWS credential for demo S3 |
 | `AWS_SECRET_ACCESS_KEY_DEMO` | AWS credential for demo S3 |
