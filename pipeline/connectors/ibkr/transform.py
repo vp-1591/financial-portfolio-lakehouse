@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from typing import Any
 
 import pyarrow as pa
 
@@ -14,8 +15,7 @@ from pipeline.connectors.ibkr.client import (
     parse_conversion_rates,
     parse_positions,
 )
-from pipeline.connectors.transform_utils import decode_payload
-from pipeline.crypto import encrypt_float
+from pipeline.connectors.transform_utils import build_normalized_table, decode_payload
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 
 
@@ -39,17 +39,7 @@ def transform_snapshot(
         When the Flex response reports ``BASE`` instead of a real currency
         code, use this value as the base currency.
     """
-    fetched_ats: list[datetime] = []
-    account_ids: list[str] = []
-    position_types: list[str] = []
-    labels: list[str] = []
-    asset_classes: list[str] = []
-    currencies: list[str] = []
-    values: list[bytes] = []
-    value_currencies: list[str] = []
-    isins: list[str] = []
-    descriptions: list[str] = []
-    security_currencies: list[str] = []
+    records: list[dict[str, Any]] = []
 
     # Flex payloads are XML, not JSON — iterate raw table columns directly
     sources = raw.column("source").to_pylist()
@@ -147,17 +137,21 @@ def transform_snapshot(
                 pos.get("description", "") or pos.get("symbol", "") or label
             )
 
-            fetched_ats.append(fetched_at)
-            account_ids.append(acct_id)
-            position_types.append("EQUITY")
-            labels.append(label)
-            asset_classes.append(asset_class)
-            currencies.append(base_currency)
-            values.append(encrypt_float(base_value, fernet_key))
-            value_currencies.append(currency if currency else base_currency)
-            isins.append(isin)
-            descriptions.append(description)
-            security_currencies.append(currency if currency else base_currency)
+            records.append(
+                {
+                    "fetched_at": fetched_at,
+                    "account_id": acct_id,
+                    "position_type": "EQUITY",
+                    "label": label,
+                    "asset_class": asset_class,
+                    "currency": base_currency,
+                    "value": base_value,
+                    "value_currency": currency if currency else base_currency,
+                    "isin": isin,
+                    "description": description,
+                    "security_currency": currency if currency else base_currency,
+                }
+            )
 
         # Process cash entries
         if cash_report_entries:
@@ -185,33 +179,27 @@ def transform_snapshot(
                     base_value = ending_cash
 
                 if base_value != 0:
-                    fetched_ats.append(fetched_at)
-                    account_ids.append(acct_id)
-                    position_types.append("CASH")
-                    labels.append(f"CASH {currency}")
-                    asset_classes.append("CASH")
-                    currencies.append(base_currency)
-                    values.append(encrypt_float(base_value, fernet_key))
-                    value_currencies.append(currency)
-                    isins.append("")
-                    descriptions.append(f"Cash {currency}")
-                    security_currencies.append(currency)
+                    records.append(
+                        {
+                            "fetched_at": fetched_at,
+                            "account_id": acct_id,
+                            "position_type": "CASH",
+                            "label": f"CASH {currency}",
+                            "asset_class": "CASH",
+                            "currency": base_currency,
+                            "value": base_value,
+                            "value_currency": currency,
+                            "isin": "",
+                            "description": f"Cash {currency}",
+                            "security_currency": currency,
+                        }
+                    )
 
-    return pa.table(
-        {
-            "fetched_at": fetched_ats,
-            "account_id": account_ids,
-            "position_type": position_types,
-            "label": labels,
-            "asset_class": asset_classes,
-            "currency": currencies,
-            "value": values,
-            "value_currency": value_currencies,
-            "isin": isins,
-            "description": descriptions,
-            "security_currency": security_currencies,
-        },
-        schema=ibkr_snapshot_normalized_schema,
+    return build_normalized_table(
+        records,
+        ibkr_snapshot_normalized_schema,
+        fernet_key,
+        encrypt_columns=["value"],
     )
 
 

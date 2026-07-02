@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
 
 import pyarrow as pa
 
-from pipeline.connectors.transform_utils import DecodedRow, iter_raw_payloads
+from pipeline.connectors.transform_utils import (
+    DecodedRow,
+    build_normalized_table,
+    iter_raw_payloads,
+)
 from pipeline.connectors.trading212.client import (
     account_currency,
     as_float,
@@ -22,7 +25,6 @@ from pipeline.connectors.trading212.client import (
     position_security_currency,
     position_value,
 )
-from pipeline.crypto import encrypt_float
 from pipeline.normalized.models import (
     trading212_cdc_normalized_schema,
     trading212_snapshot_normalized_schema,
@@ -31,17 +33,7 @@ from pipeline.normalized.models import (
 
 def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """Transform raw Trading 212 snapshot data into the normalized schema."""
-    fetched_ats: list[datetime] = []
-    account_ids: list[str] = []
-    position_types: list[str] = []
-    labels: list[str] = []
-    names: list[str] = []
-    asset_classes: list[str] = []
-    currencies: list[str] = []
-    values: list[bytes] = []
-    value_currencies: list[str] = []
-    isins: list[str] = []
-    security_currencies: list[str] = []
+    records: list[dict] = []
 
     # Group decoded rows by account_id to reconstruct per-account data
     by_account: dict[str, list[DecodedRow]] = defaultdict(list)
@@ -77,70 +69,59 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             if value == 0:
                 continue
 
-            fetched_ats.append(fetched_at)
-            account_ids.append(str(acct_id))
-            position_types.append("EQUITY")
-            labels.append(position_label(position))
-            names.append(position_name(position, instrument_names))
-            asset_classes.append("EQUITY")
-            currencies.append(
-                position_currency(position, instrument_currencies, currency)
-            )
-            values.append(encrypt_float(value, fernet_key))
-            value_currencies.append(
-                position_currency(position, instrument_currencies, currency)
-            )
-            isins.append(position_isin(position, instrument_isins))
-            security_currencies.append(
-                position_security_currency(position, instrument_currencies, currency)
+            records.append(
+                {
+                    "fetched_at": fetched_at,
+                    "account_id": str(acct_id),
+                    "position_type": "EQUITY",
+                    "label": position_label(position),
+                    "name": position_name(position, instrument_names),
+                    "asset_class": "EQUITY",
+                    "currency": position_currency(
+                        position, instrument_currencies, currency
+                    ),
+                    "value": value,
+                    "value_currency": position_currency(
+                        position, instrument_currencies, currency
+                    ),
+                    "isin": position_isin(position, instrument_isins),
+                    "security_currency": position_security_currency(
+                        position, instrument_currencies, currency
+                    ),
+                }
             )
 
         cash_balance = (
             cash_value(summary_data) if isinstance(summary_data, dict) else 0.0
         )
         if cash_balance:
-            fetched_ats.append(fetched_at)
-            account_ids.append(str(acct_id))
-            position_types.append("CASH")
-            labels.append(f"CASH {currency}".rstrip())
-            names.append(f"Cash {currency}".rstrip())
-            asset_classes.append("CASH")
-            currencies.append(currency)
-            values.append(encrypt_float(cash_balance, fernet_key))
-            value_currencies.append(currency)
-            isins.append("")
-            security_currencies.append(currency)
+            records.append(
+                {
+                    "fetched_at": fetched_at,
+                    "account_id": str(acct_id),
+                    "position_type": "CASH",
+                    "label": f"CASH {currency}".rstrip(),
+                    "name": f"Cash {currency}".rstrip(),
+                    "asset_class": "CASH",
+                    "currency": currency,
+                    "value": cash_balance,
+                    "value_currency": currency,
+                    "isin": "",
+                    "security_currency": currency,
+                }
+            )
 
-    return pa.table(
-        {
-            "fetched_at": fetched_ats,
-            "account_id": account_ids,
-            "position_type": position_types,
-            "label": labels,
-            "name": names,
-            "asset_class": asset_classes,
-            "currency": currencies,
-            "value": values,
-            "value_currency": value_currencies,
-            "isin": isins,
-            "security_currency": security_currencies,
-        },
-        schema=trading212_snapshot_normalized_schema,
+    return build_normalized_table(
+        records,
+        trading212_snapshot_normalized_schema,
+        fernet_key,
+        encrypt_columns=["value"],
     )
 
 
 def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """Transform raw Trading 212 CDC data into the normalized CDC schema."""
-    fetched_ats: list[datetime] = []
-    account_ids: list[str] = []
-    event_types: list[str] = []
-    event_ids: list[str] = []
-    tickers: list[str] = []
-    isins: list[str] = []
-    currencies: list[str] = []
-    values: list[bytes] = []
-    quantities: list[bytes] = []
-    event_dates: list[str] = []
+    records: list[dict] = []
 
     for row in iter_raw_payloads(raw, fernet_key):
         events = row.payload_parsed
@@ -161,42 +142,28 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             if not isinstance(event, dict):
                 continue
 
-            fetched_ats.append(row.fetched_at)
-            account_ids.append(str(row.account_id))
-            event_types.append(event_type)
-            event_ids.append(str(event.get("id", event.get("orderId", ""))))
-            tickers.append(str(event.get("ticker", event.get("instrument", ""))))
-            isins.append(str(event.get("isin", "")))
-
-            # Value currency
             currency = event.get("currency", event.get("currencyCode", ""))
-            currencies.append(str(currency))
 
-            # Encrypt value
-            value = as_float(
-                event.get("price", event.get("amount", event.get("value", 0)))
+            records.append(
+                {
+                    "fetched_at": row.fetched_at,
+                    "account_id": str(row.account_id),
+                    "event_type": event_type,
+                    "event_id": str(event.get("id", event.get("orderId", ""))),
+                    "ticker": str(event.get("ticker", event.get("instrument", ""))),
+                    "isin": str(event.get("isin", "")),
+                    "currency": str(currency),
+                    "value": as_float(
+                        event.get("price", event.get("amount", event.get("value", 0)))
+                    ),
+                    "quantity": as_float(event.get("quantity", event.get("shares", 0))),
+                    "event_date": str(event.get("date", event.get("createdDate", ""))),
+                }
             )
-            values.append(encrypt_float(value, fernet_key))
 
-            # Encrypt quantity
-            quantity = as_float(event.get("quantity", event.get("shares", 0)))
-            quantities.append(encrypt_float(quantity, fernet_key))
-
-            # Event date
-            event_dates.append(str(event.get("date", event.get("createdDate", ""))))
-
-    return pa.table(
-        {
-            "fetched_at": fetched_ats,
-            "account_id": account_ids,
-            "event_type": event_types,
-            "event_id": event_ids,
-            "ticker": tickers,
-            "isin": isins,
-            "currency": currencies,
-            "value": values,
-            "quantity": quantities,
-            "event_date": event_dates,
-        },
-        schema=trading212_cdc_normalized_schema,
+    return build_normalized_table(
+        records,
+        trading212_cdc_normalized_schema,
+        fernet_key,
+        encrypt_columns=["value", "quantity"],
     )
