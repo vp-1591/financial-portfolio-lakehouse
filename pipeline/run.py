@@ -31,7 +31,7 @@ from pipeline.connectors.registry import all
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import (
-    get_config,
+    get_env,
     inject_secrets,
     is_demo,
     is_enabled,
@@ -141,7 +141,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             snapshot_kwargs = {
                 "flex_token": ibkr_flex_token,
                 "flex_query_id": ibkr_flex_query_id,
-                "flex_base_url": get_config(
+                "flex_base_url": get_env(
                     "IBKR_FLEX_BASE_URL",
                     "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
                 ),
@@ -161,7 +161,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 if is_demo()
                 else "https://live.trading212.com/api/v0"
             )
-            base_url = get_config("T212_BASE_URL") or default_base
+            base_url = get_env("T212_BASE_URL") or default_base
             snapshot_kwargs = {
                 "api_key": t212_api_key,
                 "api_secret": t212_api_secret,

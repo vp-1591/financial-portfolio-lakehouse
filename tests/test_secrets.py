@@ -11,7 +11,7 @@ from pipeline.secrets import (
     REQUIRED_SECRETS_DEMO_NON_AWS,
     REQUIRED_SECRETS_S3_DEMO,
     AwsCredentials,
-    get_config,
+    get_env,
     get_secret,
     get_storage_type,
     inject_secrets,
@@ -101,23 +101,33 @@ class TestGetSecret:
         assert get_secret("NONEXISTENT_SECRET_XYZ") is None
 
 
-class TestGetConfig:
-    """Test get_config() reads env vars with defaults."""
+class TestGetEnv:
+    """Test get_env() reads env vars, treating empty strings as unset."""
 
-    def test_get_config_with_value(self, monkeypatch):
+    def test_get_env_with_value(self, monkeypatch):
         monkeypatch.setenv("T212_BASE_URL", "https://custom.api")
-        assert get_config("T212_BASE_URL") == "https://custom.api"
+        assert get_env("T212_BASE_URL") == "https://custom.api"
 
-    def test_get_config_with_default(self, monkeypatch):
+    def test_get_env_with_default(self, monkeypatch):
         monkeypatch.delenv("T212_BASE_URL", raising=False)
         assert (
-            get_config("T212_BASE_URL", "https://live.trading212.com/api/v0")
+            get_env("T212_BASE_URL", "https://live.trading212.com/api/v0")
             == "https://live.trading212.com/api/v0"
         )
 
-    def test_get_config_no_default(self, monkeypatch):
+    def test_get_env_no_default(self, monkeypatch):
         monkeypatch.delenv("NONEXISTENT_CONFIG_XYZ", raising=False)
-        assert get_config("NONEXISTENT_CONFIG_XYZ") is None
+        assert get_env("NONEXISTENT_CONFIG_XYZ") is None
+
+    def test_get_env_empty_string_falls_back_to_default(self, monkeypatch):
+        """Empty string env var falls back to default, unlike os.environ.get."""
+        monkeypatch.setenv("S3_PREFIX", "")
+        assert get_env("S3_PREFIX", "pipeline") == "pipeline"
+
+    def test_get_env_empty_string_no_default_returns_none(self, monkeypatch):
+        """Empty string env var with no default returns None."""
+        monkeypatch.setenv("NONEXISTENT_CONFIG_XYZ", "")
+        assert get_env("NONEXISTENT_CONFIG_XYZ") is None
 
 
 class TestIsEnabled:

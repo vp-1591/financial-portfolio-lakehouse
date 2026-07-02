@@ -625,6 +625,48 @@ class TestDemoStorage:
         assert config.normalized_dir == "s3://pipeline-demo/pipeline_demo/normalized"
         assert config.analytics_dir == "s3://pipeline-demo/pipeline_demo/analytics"
 
+    def test_s3_prefix_demo_empty_string_falls_back(self, monkeypatch):
+        """Empty S3_PREFIX_DEMO env var falls back to 'pipeline_demo'."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_PREFIX_DEMO", "")
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert config.backend.prefix == "pipeline_demo"
+
+    def test_s3_prefix_empty_string_falls_back(self, monkeypatch):
+        """Empty S3_PREFIX env var falls back to 'pipeline'."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_PREFIX", "")
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        config = resolve_storage()
+        assert config.backend.prefix == "pipeline"
+
+    def test_s3_bucket_demo_empty_string_falls_back(self, monkeypatch):
+        """Empty S3_BUCKET_DEMO env var falls back to derived name."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_BUCKET_DEMO", "")
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert config.backend.bucket == "my-bucket-demo"
+
+    def test_pipeline_data_dir_demo_empty_string_falls_back(
+        self, monkeypatch, tmp_path
+    ):
+        """Empty PIPELINE_DATA_DIR_DEMO env var falls back to {data_dir}_demo."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("PIPELINE_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.setenv("PIPELINE_DATA_DIR_DEMO", "")
+        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, LocalBackend)
+        assert config.data_dir == str(tmp_path / "data_demo")
+
 
 class TestStorageType:
     """Test resolve_storage() with STORAGE_TYPE env var."""
