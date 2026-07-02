@@ -503,3 +503,96 @@ class TestStorageConfigHelpers:
         assert config.analytics_path("portfolio_allocation") == str(
             data / "analytics" / "portfolio_allocation"
         )
+
+
+class TestDemoStorage:
+    """Test resolve_storage() in demo mode.
+
+    When DEMO=true, storage paths are isolated from production.
+    No cross-mode fallback — demo mode uses demo paths exclusively.
+    """
+
+    def setup_method(self):
+        import pipeline.storage
+
+        pipeline.storage._config = None
+
+    def teardown_method(self):
+        import pipeline.storage
+
+        pipeline.storage._config = None
+
+    def test_local_demo_mode_appends_demo_suffix(self, monkeypatch, tmp_path):
+        """In demo mode with local storage, data dir gets _demo suffix."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
+        monkeypatch.delenv("PIPELINE_DATA_DIR_DEMO", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        monkeypatch.setattr("pipeline.storage.PROJECT_ROOT", tmp_path)
+        config = resolve_storage()
+        assert isinstance(config.backend, LocalBackend)
+        assert config.data_dir.endswith("_demo")
+        assert "data_demo" in config.data_dir
+
+    def test_local_demo_mode_custom_dir(self, monkeypatch, tmp_path):
+        """PIPELINE_DATA_DIR_DEMO overrides the default demo data dir."""
+        custom = tmp_path / "custom-demo-data"
+        custom.mkdir()
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("PIPELINE_DATA_DIR_DEMO", str(custom))
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, LocalBackend)
+        assert config.data_dir == str(custom)
+
+    def test_s3_demo_mode_default_bucket_suffix(self, monkeypatch):
+        """In demo mode, S3 bucket gets _demo suffix by default."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "my-bucket_demo"
+        assert config.backend.prefix == "pipeline_demo"
+
+    def test_s3_demo_mode_explicit_bucket(self, monkeypatch):
+        """S3_BUCKET_DEMO and S3_PREFIX_DEMO override defaults."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
+        monkeypatch.setenv("S3_PREFIX_DEMO", "custom-demo-prefix")
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "explicit-demo-bucket"
+        assert config.backend.prefix == "custom-demo-prefix"
+
+    def test_non_demo_unchanged(self, monkeypatch):
+        """Without DEMO, storage config is unchanged from production."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.delenv("DEMO", raising=False)
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "my-bucket"
+        assert config.backend.prefix == "pipeline"
+
+    def test_local_non_demo_unchanged(self, monkeypatch, tmp_path):
+        """Without DEMO, local storage uses the default data dir."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
+        monkeypatch.delenv("DEMO", raising=False)
+        monkeypatch.setattr("pipeline.storage.PROJECT_ROOT", tmp_path)
+        config = resolve_storage()
+        assert isinstance(config.backend, LocalBackend)
+        assert config.data_dir == str(tmp_path / "data")
+
+    def test_s3_demo_paths_include_prefix(self, monkeypatch):
+        """Demo S3 paths use pipeline_demo prefix by default."""
+        monkeypatch.setenv("S3_BUCKET", "pipeline")
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        monkeypatch.setenv("DEMO", "true")
+        config = resolve_storage()
+        assert config.raw_dir == "s3://pipeline_demo/pipeline_demo/raw"
+        assert config.normalized_dir == "s3://pipeline_demo/pipeline_demo/normalized"
+        assert config.analytics_dir == "s3://pipeline_demo/pipeline_demo/analytics"

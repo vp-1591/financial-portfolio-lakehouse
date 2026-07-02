@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from pipeline.secrets import is_demo
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -153,6 +155,11 @@ class S3Backend:
     def storage_options(self) -> dict[str, str]:
         """AWS credentials for deltalake S3 operations.
 
+        In demo mode, uses ``AWS_ACCESS_KEY_ID_DEMO`` and
+        ``AWS_SECRET_ACCESS_KEY_DEMO`` exclusively — no fallback to
+        base credentials.  In production mode, uses base credentials
+        only — no fallback to demo credentials.
+
         Keys use lowercase convention required by the ``object_store``
         Rust crate (e.g. ``aws_access_key_id``).  Uppercase keys like
         ``AWS_ACCESS_KEY_ID`` are silently ignored by ``object_store``,
@@ -166,10 +173,19 @@ class S3Backend:
         For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` and
         ``S3_ALLOW_HTTP`` environment variables.
         """
-        opts: dict[str, str] = {}
-        key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
-        secret = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        demo = is_demo()
+        key_id = (
+            os.environ.get("AWS_ACCESS_KEY_ID_DEMO", "")
+            if demo
+            else os.environ.get("AWS_ACCESS_KEY_ID", "")
+        )
+        secret = (
+            os.environ.get("AWS_SECRET_ACCESS_KEY_DEMO", "")
+            if demo
+            else os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        )
         region = os.environ.get("AWS_REGION", "eu-west-1")
+        opts: dict[str, str] = {}
         if key_id:
             opts["aws_access_key_id"] = key_id
         if secret:
@@ -255,6 +271,13 @@ def resolve_storage() -> StorageConfig:
     2. Otherwise, use :class:`LocalBackend` with ``PIPELINE_DATA_DIR``
        or the project default ``PROJECT_ROOT / "data"``.
 
+    In demo mode (``DEMO=true``), storage paths are isolated:
+
+    - **S3 mode**: uses ``S3_BUCKET_DEMO`` (or ``{S3_BUCKET}_demo``)
+      and ``S3_PREFIX_DEMO`` (or ``"pipeline_demo"``).
+    - **Local mode**: uses ``PIPELINE_DATA_DIR_DEMO`` (or
+      ``{data_dir}_demo``).
+
     Tests must call :func:`use_storage` with a ``tmp_path``-based
     config to prevent accidental writes to the project's ``data/``
     directory.
@@ -262,10 +285,16 @@ def resolve_storage() -> StorageConfig:
     global _config
 
     s3_bucket = os.environ.get("S3_BUCKET")
+    demo = is_demo()
 
     if s3_bucket:
-        prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
-        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
+        if demo:
+            bucket = os.environ.get("S3_BUCKET_DEMO") or f"{s3_bucket}_demo"
+            prefix = os.environ.get("S3_PREFIX_DEMO", "pipeline_demo")
+        else:
+            bucket = s3_bucket
+            prefix = os.environ.get("S3_PREFIX", S3_DEFAULT_PREFIX)
+        backend = S3Backend(bucket=bucket, prefix=prefix)
         base = f"s3://{backend.bucket}/{prefix}"
         config = StorageConfig(
             data_dir=base,
@@ -282,6 +311,13 @@ def resolve_storage() -> StorageConfig:
             data_dir = Path(data_dir_str)
         else:
             data_dir = PROJECT_ROOT / "data"
+
+        if demo:
+            demo_dir_str = os.environ.get("PIPELINE_DATA_DIR_DEMO")
+            if demo_dir_str:
+                data_dir = Path(demo_dir_str)
+            else:
+                data_dir = Path(f"{data_dir}_demo")
 
         config = StorageConfig(
             data_dir=str(data_dir),

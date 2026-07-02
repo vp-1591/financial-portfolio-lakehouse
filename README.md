@@ -157,17 +157,31 @@ Environment variables always take priority over `.env` file values.
 | `IBKR_ENABLED` | Enable/disable IBKR connector (default: enabled) |
 | `T212_API_KEY` | Trading 212 API key *(required)* |
 | `T212_API_SECRET` | Trading 212 API secret *(required)* |
-| `T212_DEMO` | Use Trading 212 demo API (default: `false`) |
-| `T212_BASE_URL` | Trading 212 API base URL (auto-derived from `T212_DEMO`) |
+| `T212_BASE_URL` | Trading 212 API base URL (auto-derived from `DEMO`) |
 | `T212_ENABLED` | Enable/disable Trading 212 connector (default: enabled) |
 | `XTB_ENABLED` | Enable/disable XTB connector (default: enabled) |
 | `ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
+| `DEMO` | Run in demo mode — uses `_DEMO` secrets and separate storage (default: `false`) |
 | `S3_BUCKET` | S3 bucket for cloud storage (enables S3Backend) |
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
 | `AWS_REGION` | AWS region (default: `eu-west-1`) |
 | `S3_ENDPOINT_URL` | Custom S3 endpoint (for MinIO or other S3-compatible stores) |
 | `S3_ALLOW_HTTP` | Allow non-HTTPS connections to S3 endpoint (set to `true` for MinIO) |
+
+**Demo mode variables** (used only when `DEMO=true`):
+
+| Variable | Purpose |
+|----------|---------|
+| `IBKR_FLEX_TOKEN_DEMO` | IBKR Flex token for demo mode |
+| `IBKR_FLEX_QUERY_ID_DEMO` | IBKR Flex Query ID for demo mode |
+| `T212_API_KEY_DEMO` | Trading 212 API key for demo mode |
+| `T212_API_SECRET_DEMO` | Trading 212 API secret for demo mode |
+| `ENCRYPTION_KEY_DEMO` | Fernet key for demo mode |
+| `S3_BUCKET_DEMO` | S3 bucket for demo data (defaults to `{S3_BUCKET}_demo`) |
+| `S3_PREFIX_DEMO` | S3 prefix for demo data (defaults to `pipeline_demo`) |
+| `AWS_ACCESS_KEY_ID_DEMO` | AWS credential for demo S3 |
+| `AWS_SECRET_ACCESS_KEY_DEMO` | AWS credential for demo S3 |
 
 All connectors are **enabled by default**. Set a toggle to `0`, `false`, or
 `no` to disable it.

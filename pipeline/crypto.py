@@ -5,7 +5,6 @@ This is the only module that imports from ``cryptography``.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -19,6 +18,10 @@ def generate_key() -> bytes:
 def load_key(path: Path | None = None) -> bytes:
     """Load a Fernet key from disk or the ``ENCRYPTION_KEY`` env var.
 
+    In demo mode, checks ``ENCRYPTION_KEY_DEMO`` first via
+    :func:`pipeline.secrets.resolve_secret`.  There is no cross-mode
+    fallback — missing the key for the active mode is a hard error.
+
     Parameters
     ----------
     path:
@@ -26,7 +29,9 @@ def load_key(path: Path | None = None) -> bytes:
         ``ENCRYPTION_KEY`` env var, then to
         ``.secrets/encryption.key`` relative to the project root.
     """
-    env_key = os.environ.get("ENCRYPTION_KEY")
+    from pipeline.secrets import resolve_secret
+
+    env_key = resolve_secret("ENCRYPTION_KEY")
     if env_key:
         return env_key.encode("utf-8") if isinstance(env_key, str) else env_key
 
