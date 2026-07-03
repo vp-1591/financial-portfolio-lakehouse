@@ -4,7 +4,7 @@
 terraform {
   backend "s3" {
     bucket       = "<your-s3-bucket-name>"
-    key          = "investment-portfolio-dashboard/terraform.tfstate"
+    key          = "financial-portfolio-lakehouse/terraform.tfstate"
     region       = "eu-west-1"
     use_lockfile = true
   }

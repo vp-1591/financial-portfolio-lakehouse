@@ -1,1 +1,1 @@
-"""Test suite for the investment portfolio dashboard pipeline."""
+"""Test suite for the financial portfolio lakehouse pipeline."""

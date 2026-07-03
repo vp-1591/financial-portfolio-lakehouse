@@ -23,7 +23,7 @@ from pipeline.normalized.models import consolidated_holdings_schema
 
 FRANKFURTER_BASE_URL = "https://api.frankfurter.app"
 YAHOO_FINANCE_BASE_URL = "https://query1.finance.yahoo.com"
-DEFAULT_USER_AGENT = "Mozilla/5.0 investment-portfolio-dashboard/2.0"
+DEFAULT_USER_AGENT = "Mozilla/5.0 financial-portfolio-lakehouse/2.0"
 
 
 @dataclass(frozen=True)
