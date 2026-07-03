@@ -1,7 +1,7 @@
 """PyArrow schemas for the 6 raw tables.
 
 All raw tables share the same schema shape: fetched_at, broker, source,
-payload (Fernet-encrypted), payload_hash, account_id, and source_file.
+payload (Fernet-encrypted), payload_hash, and source_file.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ RAW_SCHEMA = pa.schema(
         pa.field("source", pa.string()),
         pa.field("payload", pa.binary()),
         pa.field("payload_hash", pa.string()),
-        pa.field("account_id", pa.string()),
         pa.field("source_file", pa.string()),
     ]
 )

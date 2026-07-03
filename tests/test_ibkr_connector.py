@@ -18,6 +18,7 @@ from pipeline.connectors.ibkr.client import (
 )
 from pipeline.connectors.ibkr import transform
 from pipeline.crypto import encrypt, generate_key
+from pipeline.raw.models import RAW_SCHEMA
 
 
 class TestClientParsing:
@@ -185,7 +186,6 @@ class TestFlexTransformSnapshot:
     def _build_flex_raw_table(
         self,
         xml_str: str,
-        account_id: str = "",
         fernet_key: bytes | None = None,
     ) -> pa.Table:
         """Build a raw-layer table with a Flex XML payload."""
@@ -205,20 +205,9 @@ class TestFlexTransformSnapshot:
                 "source": ["flex"],
                 "payload": [encrypted_payload],
                 "payload_hash": [payload_hash],
-                "account_id": [account_id],
                 "source_file": [""],
             },
-            schema=pa.schema(
-                [
-                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
-                    pa.field("source", pa.string()),
-                    pa.field("payload", pa.binary()),
-                    pa.field("payload_hash", pa.string()),
-                    pa.field("account_id", pa.string()),
-                    pa.field("source_file", pa.string()),
-                ]
-            ),
+            schema=RAW_SCHEMA,
         )
 
     def test_transform_produces_equity_and_cash_rows(self, fernet_key: bytes) -> None:
@@ -377,20 +366,9 @@ class TestConnectorFlexDispatch:
                 "source": ["flex"],
                 "payload": [encrypted_payload],
                 "payload_hash": [hashlib.sha256(xml_bytes).hexdigest()],
-                "account_id": [""],
                 "source_file": [""],
             },
-            schema=pa.schema(
-                [
-                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
-                    pa.field("source", pa.string()),
-                    pa.field("payload", pa.binary()),
-                    pa.field("payload_hash", pa.string()),
-                    pa.field("account_id", pa.string()),
-                    pa.field("source_file", pa.string()),
-                ]
-            ),
+            schema=RAW_SCHEMA,
         )
 
         connector = get("ibkr")

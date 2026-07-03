@@ -32,7 +32,6 @@ def fetch_snapshot(
     sources: list[str] = []
     payloads: list[bytes] = []
     payload_hashes: list[str] = []
-    account_ids: list[str] = []
     source_files: list[str] = []
 
     # Fetch account summary
@@ -44,7 +43,6 @@ def fetch_snapshot(
         sources.append(path)
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        account_ids.append("")
         source_files.append("")
 
     # Fetch positions
@@ -56,7 +54,6 @@ def fetch_snapshot(
         sources.append(path)
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        account_ids.append("")
         source_files.append("")
 
     # Fetch instruments metadata (always included for best data quality)
@@ -68,7 +65,6 @@ def fetch_snapshot(
         sources.append(path)
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        account_ids.append("")
         source_files.append("")
 
     return pa.table(
@@ -78,7 +74,6 @@ def fetch_snapshot(
             "source": sources,
             "payload": payloads,
             "payload_hash": payload_hashes,
-            "account_id": account_ids,
             "source_file": source_files,
         },
         schema=RAW_SCHEMA,
@@ -106,7 +101,6 @@ def fetch_cdc(
     sources: list[str] = []
     payloads: list[bytes] = []
     payload_hashes: list[str] = []
-    account_ids: list[str] = []
     source_files: list[str] = []
 
     for endpoint_name, fetch_method in [
@@ -126,7 +120,6 @@ def fetch_cdc(
             sources.append(path)
             payloads.append(raw_bytes)
             payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-            account_ids.append("")
             source_files.append("")
 
     return pa.table(
@@ -136,7 +129,6 @@ def fetch_cdc(
             "source": sources,
             "payload": payloads,
             "payload_hash": payload_hashes,
-            "account_id": account_ids,
             "source_file": source_files,
         },
         schema=RAW_SCHEMA,

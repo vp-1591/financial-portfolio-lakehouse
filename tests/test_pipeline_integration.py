@@ -38,7 +38,6 @@ class TestEncryptRawPayloadsSetColumn:
                 "source": ["test_source"] * 3,
                 "payload": payloads,
                 "payload_hash": ["hash1", "hash2", "hash3"],
-                "account_id": ["ACCT1"] * 3,
                 "source_file": [""] * 3,
             },
             schema=RAW_SCHEMA,
@@ -63,7 +62,6 @@ class TestEncryptRawPayloadsSetColumn:
                 "source": [],
                 "payload": [],
                 "payload_hash": [],
-                "account_id": [],
                 "source_file": [],
             },
             schema=RAW_SCHEMA,
@@ -98,7 +96,6 @@ class TestT212CdcKwargsSeparation:
                 "source": ["test"],
                 "payload": [b"{}"],
                 "payload_hash": ["hash"],
-                "account_id": [""],
                 "source_file": [""],
             },
             schema=RAW_SCHEMA,
@@ -111,7 +108,6 @@ class TestT212CdcKwargsSeparation:
                 "source": ["test_cdc"],
                 "payload": [b"[]"],
                 "payload_hash": ["hash_cdc"],
-                "account_id": [""],
                 "source_file": [""],
             },
             schema=RAW_SCHEMA,
@@ -201,61 +197,37 @@ class TestT212BasicAuth:
 
 
 class TestTransformDecryptsPayloads:
-    """Test that transform functions decrypt payloads before JSON parsing.
+    """Test that transform functions decrypt payloads before parsing.
 
     Raw Delta tables store encrypted payloads. Transforms must call
-    decrypt() before json.loads() or all rows are silently skipped.
+    decrypt() before parsing (JSON or XLSX) or all rows are silently skipped.
     """
 
     def test_xtb_transform_decrypts_encrypted_payload(self) -> None:
-        """XTB transform_snapshot must decrypt payloads from raw Delta tables."""
+        """XTB transform_snapshot must decrypt .xlsx payloads from raw Delta tables."""
         from pipeline.connectors.xtb.transform import transform_snapshot
 
         key = generate_key()
-        import json
-        from datetime import datetime, timezone
+        from tests.test_xtb_connector import _build_xlsx_bytes
 
-        positions_data = {
-            "positions": [
-                {
-                    "label": "TEST",
-                    "name": "Test Asset",
-                    "asset_class": "EQUITY",
-                    "currency": "USD",
-                    "value": 100.0,
-                    "isin": "",
-                },
-            ],
-            "net_worth": 100.0,
-        }
-        encrypted_payload = encrypt(json.dumps(positions_data).encode("utf-8"), key)
+        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
+        encrypted_payload = encrypt(xlsx_bytes, key)
 
         raw = pa.table(
             {
-                "fetched_at": [datetime.now(timezone.utc)],
+                "fetched_at": [None],
                 "broker": ["XTB"],
                 "source": ["OPEN POSITION"],
                 "payload": [encrypted_payload],
                 "payload_hash": ["abc"],
-                "account_id": ["XTB"],
                 "source_file": ["test.xlsx"],
             },
-            schema=pa.schema(
-                [
-                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
-                    pa.field("source", pa.string()),
-                    pa.field("payload", pa.binary()),
-                    pa.field("payload_hash", pa.string()),
-                    pa.field("account_id", pa.string()),
-                    pa.field("source_file", pa.string()),
-                ]
-            ),
+            schema=RAW_SCHEMA,
         )
 
         result = transform_snapshot(raw, key)
         assert result.num_rows >= 1, (
-            "XTB transform should produce rows from encrypted payload"
+            "XTB transform should produce rows from encrypted .xlsx payload"
         )
 
     def test_t212_transform_decrypts_encrypted_payload(self) -> None:
@@ -279,20 +251,9 @@ class TestTransformDecryptsPayloads:
                 "source": ["/equity/account/summary", "/equity/positions"],
                 "payload": [encrypted_summary, encrypted_positions],
                 "payload_hash": ["hash1", "hash2"],
-                "account_id": ["T212"] * 2,
                 "source_file": ["", ""],
             },
-            schema=pa.schema(
-                [
-                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
-                    pa.field("source", pa.string()),
-                    pa.field("payload", pa.binary()),
-                    pa.field("payload_hash", pa.string()),
-                    pa.field("account_id", pa.string()),
-                    pa.field("source_file", pa.string()),
-                ]
-            ),
+            schema=RAW_SCHEMA,
         )
 
         result = transform_snapshot(raw, key)
@@ -324,7 +285,6 @@ class TestDirectoryCreation:
                 "source": ["test"],
                 "payload": [b"test_data"],
                 "payload_hash": ["abc123"],
-                "account_id": ["ACCT1"],
                 "source_file": [""],
             },
             schema=RAW_SCHEMA,

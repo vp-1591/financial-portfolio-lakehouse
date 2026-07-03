@@ -25,11 +25,10 @@ class DecodedRow:
     """A decoded raw-layer row with decrypted payload and parsed content."""
 
     fetched_at: datetime
-    account_id: str
     source: str
     source_file: str
     payload_parsed: Any  # Parsed JSON (dict or list), or None
-    payload_raw: bytes  # Decrypted bytes (for XML payloads)
+    payload_raw: bytes  # Decrypted bytes (for XML/XLSX payloads)
 
 
 def decode_payload(payload: bytes | memoryview, fernet_key: bytes) -> bytes | None:
@@ -46,7 +45,7 @@ def parse_json(data: bytes) -> Any | None:
     """Parse JSON bytes. Returns None on parse failure."""
     try:
         return json.loads(data)
-    except (json.JSONDecodeError, TypeError):
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
         return None
 
 
@@ -92,14 +91,12 @@ def iter_raw_payloads(
     """
 
     fetched_ats = raw.column("fetched_at").to_pylist()
-    account_ids = raw.column("account_id").to_pylist()
     sources = raw.column("source").to_pylist()
     payloads = raw.column("payload").to_pylist()
     source_files = raw.column("source_file").to_pylist()
 
     for i in range(len(fetched_ats)):
         fetched_at = coerce_fetched_at(fetched_ats[i])
-        account_id = str(account_ids[i] or "")
         source = str(sources[i] or "")
         source_file = str(source_files[i] or "")
         payload_bytes = payloads[i]
@@ -114,7 +111,6 @@ def iter_raw_payloads(
 
         yield DecodedRow(
             fetched_at=fetched_at,
-            account_id=account_id,
             source=source,
             source_file=source_file,
             payload_parsed=parsed,

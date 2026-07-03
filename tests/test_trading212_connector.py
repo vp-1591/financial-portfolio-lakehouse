@@ -191,7 +191,6 @@ class TestTransformSnapshot:
         summary: dict,
         positions: list[dict],
         instruments: list[dict] | None = None,
-        account_id: str = "T212-1",
     ) -> pa.Table:
         """Build a raw-layer table from fake API responses.
 
@@ -199,6 +198,8 @@ class TestTransformSnapshot:
         raw Delta tables store encrypted payloads.
         """
         import hashlib
+
+        from pipeline.raw.models import RAW_SCHEMA
 
         key = self._fernet_key
         now = datetime.now(timezone.utc)
@@ -221,20 +222,9 @@ class TestTransformSnapshot:
                 "source": sources,
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "account_id": [account_id] * len(sources),
                 "source_file": [""] * len(sources),
             },
-            schema=pa.schema(
-                [
-                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
-                    pa.field("source", pa.string()),
-                    pa.field("payload", pa.binary()),
-                    pa.field("payload_hash", pa.string()),
-                    pa.field("account_id", pa.string()),
-                    pa.field("source_file", pa.string()),
-                ]
-            ),
+            schema=RAW_SCHEMA,
         )
 
     def test_transform_produces_equity_and_cash_rows(self, fernet_key: bytes) -> None:

@@ -20,8 +20,7 @@ def _compute_payload_hash(payload_bytes: bytes) -> str:
 def build_raw_table(
     broker: str,
     source: str,
-    payloads: list[tuple[bytes, str]],
-    account_id: str = "",
+    payloads: list[bytes],
     source_file: str = "",
 ) -> pa.Table:
     """Build a raw-layer PyArrow table from fetched payload data.
@@ -33,9 +32,7 @@ def build_raw_table(
     source:
         API endpoint path or sheet name that produced the data.
     payloads:
-        List of ``(raw_response_bytes, account_id)`` tuples.
-    account_id:
-        Default account ID when per-payload account_id is empty.
+        List of raw response bytes (one per payload).
     source_file:
         XLS filename for XTB reports; empty string for API brokers.
 
@@ -51,16 +48,14 @@ def build_raw_table(
     sources: list[str] = []
     encrypted_payloads: list[bytes] = []
     payload_hashes: list[str] = []
-    account_ids: list[str] = []
     source_files: list[str] = []
 
-    for payload_bytes, payload_account_id in payloads:
+    for payload_bytes in payloads:
         fetched_ats.append(now)
         brokers.append(broker)
         sources.append(source)
         payload_hashes.append(_compute_payload_hash(payload_bytes))
         encrypted_payloads.append(payload_bytes)  # Will be encrypted in ingest_raw
-        account_ids.append(payload_account_id or account_id)
         source_files.append(source_file)
 
     return pa.table(
@@ -70,7 +65,6 @@ def build_raw_table(
             "source": sources,
             "payload": encrypted_payloads,
             "payload_hash": payload_hashes,
-            "account_id": account_ids,
             "source_file": source_files,
         },
         schema=RAW_SCHEMA,
