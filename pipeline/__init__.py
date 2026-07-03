@@ -1,1 +1,1 @@
-"""Investment portfolio dashboard data pipeline."""
+"""Financial portfolio lakehouse data pipeline."""

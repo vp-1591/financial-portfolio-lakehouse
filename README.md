@@ -1,6 +1,8 @@
-# Investment Portfolio Dashboard
+# Cloud-Based Financial Portfolio Lakehouse Pipeline
 
-Utilities for consolidating broker assets into a single portfolio view.
+Data engineering pipeline for ingesting, normalizing, and querying
+multi-broker financial portfolio data with Delta Lake, S3-compatible storage,
+and medallion architecture.
 
 ## Medallion Pipeline
 

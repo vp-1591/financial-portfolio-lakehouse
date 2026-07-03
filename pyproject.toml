@@ -1,5 +1,5 @@
 [project]
-name = "investment-portfolio-dashboard"
+name = "financial-portfolio-lakehouse"
 version = "0.2.0"
 requires-python = ">=3.11"
 
@@ -15,7 +15,7 @@ pipeline = [
 dev = [
     "pytest==9.1.1",
     "ruff>=0.11.0",
-    "investment-portfolio-dashboard[pipeline]",
+    "financial-portfolio-lakehouse[pipeline]",
 ]
 
 [tool.setuptools.packages.find]
