@@ -55,6 +55,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0043 | Fix Empty-String Env Var Fallback and Broaden Demo IAM Policy | 2026-07-02 | active | — |
 | 0044 | S3_BUCKET_DEMO Standalone — Demo Cloud Storage Without S3_BUCKET | 2026-07-02 | active | — |
 | 0045 | Replace List-Append Pattern with Polars build_normalized_table | 2026-07-02 | active | — |
+| 0046 | Fix Consolidated Holdings Currency Column | 2026-07-03 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
