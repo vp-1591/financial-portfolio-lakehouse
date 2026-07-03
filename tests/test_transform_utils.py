@@ -16,6 +16,7 @@ from pipeline.connectors.transform_utils import (
     parse_json,
 )
 from pipeline.crypto import decrypt_float, encrypt, generate_key
+from pipeline.raw.models import RAW_SCHEMA
 
 
 class TestDecodePayload:
@@ -99,27 +100,25 @@ class TestIterRawPayloads:
 
     def _make_raw_table(
         self,
-        rows: list[tuple[datetime, str, bytes, str, str]],
+        rows: list[tuple[datetime, str, bytes, str]],
         fernet_key: bytes,
     ) -> pa.Table:
         """Build a raw table with encrypted payloads."""
-        from pipeline.raw.models import RAW_SCHEMA
+        from pipeline.crypto import encrypt
 
         fetched_ats = []
         brokers = []
         sources = []
         payloads = []
         payload_hashes = []
-        account_ids = []
         source_files = []
 
-        for fetched_at, source, payload, account_id, source_file in rows:
+        for fetched_at, source, payload, source_file in rows:
             fetched_ats.append(fetched_at)
             brokers.append("test_broker")
             sources.append(source)
             payloads.append(encrypt(payload, fernet_key))
             payload_hashes.append("hash_" + source)
-            account_ids.append(account_id)
             source_files.append(source_file)
 
         return pa.table(
@@ -129,14 +128,12 @@ class TestIterRawPayloads:
                 "source": sources,
                 "payload": payloads,
                 "payload_hash": payload_hashes,
-                "account_id": account_ids,
                 "source_file": source_files,
             },
             schema=RAW_SCHEMA,
         )
 
     def test_iterates_valid_rows(self, fernet_key: bytes) -> None:
-
         payload = json.dumps({"ticker": "AAPL"}).encode()
         table = self._make_raw_table(
             [
@@ -144,7 +141,6 @@ class TestIterRawPayloads:
                     datetime(2024, 1, 1, tzinfo=timezone.utc),
                     "/positions",
                     payload,
-                    "acct1",
                     "",
                 )
             ],
@@ -153,12 +149,10 @@ class TestIterRawPayloads:
 
         rows = list(iter_raw_payloads(table, fernet_key))
         assert len(rows) == 1
-        assert rows[0].account_id == "acct1"
         assert rows[0].source == "/positions"
         assert rows[0].payload_parsed == {"ticker": "AAPL"}
 
     def test_skips_rows_with_bad_decryption(self, fernet_key: bytes) -> None:
-
         payload = json.dumps({"ticker": "AAPL"}).encode()
         table = self._make_raw_table(
             [
@@ -166,7 +160,6 @@ class TestIterRawPayloads:
                     datetime(2024, 1, 1, tzinfo=timezone.utc),
                     "/positions",
                     payload,
-                    "acct1",
                     "",
                 )
             ],
@@ -185,7 +178,6 @@ class TestIterRawPayloads:
                     datetime(2024, 1, 1, tzinfo=timezone.utc),
                     "/positions",
                     b"not-json",
-                    "acct1",
                     "",
                 )
             ],
@@ -202,7 +194,6 @@ class TestIterRawPayloads:
                     datetime(2024, 1, 1, tzinfo=timezone.utc),
                     "/positions",
                     b"<xml>data</xml>",
-                    "acct1",
                     "",
                 )
             ],
@@ -224,14 +215,12 @@ class TestIterRawPayloads:
                     datetime(2024, 1, 1, tzinfo=timezone.utc),
                     "/positions",
                     payload1,
-                    "acct1",
                     "",
                 ),
                 (
                     datetime(2024, 1, 2, tzinfo=timezone.utc),
                     "/positions",
                     payload2,
-                    "acct2",
                     "",
                 ),
             ],
@@ -244,8 +233,6 @@ class TestIterRawPayloads:
         assert rows[1].payload_parsed == {"ticker": "MSFT"}
 
     def test_empty_table(self, fernet_key: bytes) -> None:
-        from pipeline.raw.models import RAW_SCHEMA
-
         table = pa.table(
             {
                 "fetched_at": [],
@@ -253,7 +240,6 @@ class TestIterRawPayloads:
                 "source": [],
                 "payload": [],
                 "payload_hash": [],
-                "account_id": [],
                 "source_file": [],
             },
             schema=RAW_SCHEMA,

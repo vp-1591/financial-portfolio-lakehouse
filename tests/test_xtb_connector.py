@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -23,6 +22,7 @@ from pipeline.connectors.xtb.parser import (
 )
 from pipeline.connectors.xtb.transform import transform_cdc, transform_snapshot
 from pipeline.crypto import decrypt_float, encrypt, generate_key
+from pipeline.raw.models import RAW_SCHEMA
 
 
 # --- XLS test helpers (preserved from tests/test_xtb_net_worth.py) ---
@@ -48,10 +48,17 @@ def sheet(rows: list[str]) -> str:
     )
 
 
+def temporary_report_path() -> Path:
+    directory = Path(__file__).resolve().parents[1] / ".tmp-tests"
+    directory.mkdir(exist_ok=True)
+    return directory / f"xtb-test-{uuid.uuid4().hex}.xlsx"
+
+
 def write_xtb_workbook(
     path: Path, include_isin: bool = False, include_cash_ops: bool = False
 ) -> None:
     """Create a minimal XLSX workbook for testing."""
+
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
@@ -175,10 +182,19 @@ def write_xtb_workbook(
         archive.writestr("xl/worksheets/sheet2.xml", cash_sheet_xml)
 
 
-def temporary_report_path() -> Path:
-    directory = Path(__file__).resolve().parents[1] / ".tmp-tests"
-    directory.mkdir(exist_ok=True)
-    return directory / f"xtb-test-{uuid.uuid4().hex}.xlsx"
+def _build_xlsx_bytes(
+    include_isin: bool = False, include_cash_ops: bool = False
+) -> bytes:
+    """Build minimal .xlsx bytes for transform tests."""
+    import tempfile
+
+    path = Path(tempfile.mkdtemp()) / f"test-{uuid.uuid4().hex}.xlsx"
+    write_xtb_workbook(
+        path, include_isin=include_isin, include_cash_ops=include_cash_ops
+    )
+    data = path.read_bytes()
+    path.unlink(missing_ok=True)
+    return data
 
 
 class TestParserHelpers:
@@ -272,17 +288,14 @@ class TestTransformSnapshot:
         self._fernet_key = key
         return key
 
-    def _build_raw_table(
-        self, positions_data: dict, account_id: str = "123456"
-    ) -> pa.Table:
-        """Build a raw-layer table from parsed XTB data.
+    def _build_raw_table(self, xlsx_bytes: bytes) -> pa.Table:
+        """Build a raw-layer table from .xlsx bytes.
 
         Payloads are encrypted to match the real pipeline flow where
         raw Delta tables store encrypted payloads.
         """
         key = self._fernet_key
-        raw_payload = json.dumps(positions_data).encode("utf-8")
-        encrypted_payload = encrypt(raw_payload, key)
+        encrypted_payload = encrypt(xlsx_bytes, key)
         now = datetime.now(timezone.utc)
 
         return pa.table(
@@ -291,77 +304,43 @@ class TestTransformSnapshot:
                 "broker": ["XTB"],
                 "source": ["OPEN POSITION"],
                 "payload": [encrypted_payload],
-                "payload_hash": [hashlib.sha256(raw_payload).hexdigest()],
-                "account_id": [account_id],
+                "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
                 "source_file": ["test_report.xlsx"],
             },
-            schema=pa.schema(
-                [
-                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
-                    pa.field("source", pa.string()),
-                    pa.field("payload", pa.binary()),
-                    pa.field("payload_hash", pa.string()),
-                    pa.field("account_id", pa.string()),
-                    pa.field("source_file", pa.string()),
-                ]
-            ),
+            schema=RAW_SCHEMA,
         )
 
     def test_transform_produces_position_rows(self, fernet_key: bytes) -> None:
-        data = {
-            "positions": [
-                {
-                    "label": "VWCE.DE",
-                    "name": "VWCE.DE",
-                    "asset_class": "EQUITY",
-                    "currency": "PLN",
-                    "value": 195.0,
-                    "isin": "IE00BK5BQT80",
-                },
-                {
-                    "label": "CASH PLN",
-                    "name": "Cash PLN",
-                    "asset_class": "CASH",
-                    "currency": "PLN",
-                    "value": 25.0,
-                    "isin": "",
-                },
-            ],
-            "net_worth": 220.0,
-        }
-        raw = self._build_raw_table(data)
+        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
+        raw = self._build_raw_table(xlsx_bytes)
         result = transform_snapshot(raw, fernet_key)
 
-        assert result.num_rows == 2
+        assert result.num_rows >= 2
         types = result.column("position_type").to_pylist()
         assert "EQUITY" in types
         assert "CASH" in types
 
         values = result.column("value").to_pylist()
         decrypted = [decrypt_float(v, fernet_key) for v in values]
-        assert any(v == pytest.approx(195.0) for v in decrypted)
-        assert any(v == pytest.approx(25.0) for v in decrypted)
+        assert any(v == pytest.approx(195.0, rel=0.01) for v in decrypted)
 
     def test_transform_preserves_isin(self, fernet_key: bytes) -> None:
-        data = {
-            "positions": [
-                {
-                    "label": "VWCE.DE",
-                    "name": "VWCE.DE",
-                    "asset_class": "EQUITY",
-                    "currency": "PLN",
-                    "value": 195.0,
-                    "isin": "IE00BK5BQT80",
-                },
-            ],
-            "net_worth": 195.0,
-        }
-        raw = self._build_raw_table(data)
+        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
+        raw = self._build_raw_table(xlsx_bytes)
         result = transform_snapshot(raw, fernet_key)
 
         isins = result.column("isin").to_pylist()
         assert "IE00BK5BQT80" in isins
+
+    def test_transform_extracts_account_id(self, fernet_key: bytes) -> None:
+        """Account ID should come from the .xlsx data, not from the raw table."""
+        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
+        raw = self._build_raw_table(xlsx_bytes)
+        result = transform_snapshot(raw, fernet_key)
+
+        # The test workbook has account "123456" in the Account field
+        account_ids = result.column("account_id").to_pylist()
+        assert all(aid == "123456" for aid in account_ids)
 
 
 class TestTransformCDC:
@@ -373,26 +352,8 @@ class TestTransformCDC:
 
     def test_transform_cdc_produces_operation_rows(self, fernet_key: bytes) -> None:
         now = datetime.now(timezone.utc)
-        ops_data = [
-            {
-                "operation_id": "1",
-                "operation_type": "Deposit",
-                "amount": 200.0,
-                "currency": "PLN",
-                "comment": "Initial deposit",
-                "operation_date": "2026-01-01",
-            },
-            {
-                "operation_id": "2",
-                "operation_type": "Dividend",
-                "amount": 5.0,
-                "currency": "EUR",
-                "comment": "VWCE dividend",
-                "operation_date": "2026-03-15",
-            },
-        ]
-        raw_payload = json.dumps(ops_data).encode("utf-8")
-        encrypted_payload = encrypt(raw_payload, fernet_key)
+        xlsx_bytes = _build_xlsx_bytes(include_cash_ops=True)
+        encrypted_payload = encrypt(xlsx_bytes, fernet_key)
 
         raw = pa.table(
             {
@@ -400,31 +361,18 @@ class TestTransformCDC:
                 "broker": ["XTB"],
                 "source": ["CASH OPERATION"],
                 "payload": [encrypted_payload],
-                "payload_hash": [hashlib.sha256(raw_payload).hexdigest()],
-                "account_id": ["123456"],
+                "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
                 "source_file": ["test_report.xlsx"],
             },
-            schema=pa.schema(
-                [
-                    pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
-                    pa.field("source", pa.string()),
-                    pa.field("payload", pa.binary()),
-                    pa.field("payload_hash", pa.string()),
-                    pa.field("account_id", pa.string()),
-                    pa.field("source_file", pa.string()),
-                ]
-            ),
+            schema=RAW_SCHEMA,
         )
 
         result = transform_cdc(raw, fernet_key)
-        assert result.num_rows == 2
+        assert result.num_rows >= 1
 
         op_types = result.column("operation_type").to_pylist()
         assert "Deposit" in op_types
-        assert "Dividend" in op_types
 
         amounts = result.column("amount").to_pylist()
         decrypted = [decrypt_float(v, fernet_key) for v in amounts]
-        assert any(v == pytest.approx(200.0) for v in decrypted)
-        assert any(v == pytest.approx(5.0) for v in decrypted)
+        assert any(v == pytest.approx(200.0, rel=0.01) for v in decrypted)

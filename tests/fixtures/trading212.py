@@ -19,7 +19,6 @@ from pipeline.normalized.models import trading212_snapshot_normalized_schema
 
 
 def t212_raw_snapshot(
-    account_id: str = "T212-DEMO",
     summary: dict[str, Any] | None = None,
     positions: list[dict[str, Any]] | None = None,
     instruments: dict[str, Any] | None = None,
@@ -89,7 +88,6 @@ def t212_raw_snapshot(
                 hashlib.sha256(positions_bytes).hexdigest(),
                 hashlib.sha256(instruments_bytes).hexdigest(),
             ],
-            "account_id": [account_id, account_id, account_id],
             "source_file": ["", "", ""],
         },
         schema=RAW_SCHEMA,

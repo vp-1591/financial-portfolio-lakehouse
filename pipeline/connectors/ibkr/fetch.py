@@ -51,7 +51,6 @@ def fetch_snapshot_via_flex(
             "source": ["flex"],
             "payload": [xml_bytes],
             "payload_hash": [payload_hash],
-            "account_id": [""],
             "source_file": [""],
         },
         schema=RAW_SCHEMA,

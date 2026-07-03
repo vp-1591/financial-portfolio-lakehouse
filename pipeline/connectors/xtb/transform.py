@@ -8,6 +8,10 @@ from pipeline.connectors.transform_utils import (
     build_normalized_table,
     iter_raw_payloads,
 )
+from pipeline.connectors.xtb.parser import (
+    load_cash_operations_from_bytes,
+    load_positions_from_bytes,
+)
 from pipeline.normalized.models import (
     xtb_cdc_normalized_schema,
     xtb_snapshot_normalized_schema,
@@ -15,30 +19,33 @@ from pipeline.normalized.models import (
 
 
 def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
-    """Transform raw XTB snapshot data into the normalized schema."""
+    """Transform raw XTB snapshot data into the normalized schema.
+
+    The raw payload is expected to contain .xlsx bytes (the original
+    XTB report file). This function decrypts the payload, parses the
+    .xlsx, and extracts positions and cash balances.
+    """
     records: list[dict] = []
 
-    for row in iter_raw_payloads(raw, fernet_key):
+    for row in iter_raw_payloads(raw, fernet_key, require_json=False):
         if "OPEN POSITION" not in row.source.upper():
             continue
 
-        positions = row.payload_parsed.get("positions", [])
-        for pos in positions:
-            if not isinstance(pos, dict):
-                continue
+        positions, _net_worth = load_positions_from_bytes(row.payload_raw)
 
+        for pos in positions:
             records.append(
                 {
                     "fetched_at": row.fetched_at,
-                    "account_id": str(pos.get("account_id", row.account_id)),
-                    "position_type": pos.get("asset_class", "EQUITY"),
-                    "label": str(pos.get("label", "")),
-                    "name": str(pos.get("name", "")),
-                    "asset_class": pos.get("asset_class", "EQUITY"),
-                    "currency": str(pos.get("currency", "")),
-                    "value": float(pos.get("value", 0)),
-                    "value_currency": str(pos.get("currency", "")),
-                    "isin": str(pos.get("isin", "")),
+                    "account_id": pos.account_id,
+                    "position_type": pos.asset_class,
+                    "label": pos.label,
+                    "name": pos.name,
+                    "asset_class": pos.asset_class,
+                    "currency": pos.currency,
+                    "value": pos.value,
+                    "value_currency": pos.currency,
+                    "isin": pos.isin,
                 }
             )
 
@@ -51,28 +58,31 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
 
 def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
-    """Transform raw XTB CDC data into the normalized CDC schema."""
+    """Transform raw XTB CDC data into the normalized CDC schema.
+
+    The raw payload is expected to contain .xlsx bytes (the original
+    XTB report file). This function decrypts the payload, parses the
+    .xlsx, and extracts cash operations.
+    """
     records: list[dict] = []
 
-    for row in iter_raw_payloads(raw, fernet_key):
-        operations = row.payload_parsed
-        if not isinstance(operations, list):
+    for row in iter_raw_payloads(raw, fernet_key, require_json=False):
+        if "CASH OPERATION" not in row.source.upper():
             continue
 
-        for op in operations:
-            if not isinstance(op, dict):
-                continue
+        operations = load_cash_operations_from_bytes(row.payload_raw)
 
+        for op in operations:
             records.append(
                 {
                     "fetched_at": row.fetched_at,
-                    "account_id": str(op.get("account_id", row.account_id)),
-                    "operation_id": str(op.get("operation_id", "")),
-                    "operation_type": str(op.get("operation_type", "")),
-                    "amount": float(op.get("amount", 0)),
-                    "currency": str(op.get("currency", "")),
-                    "comment": str(op.get("comment", "")),
-                    "operation_date": str(op.get("operation_date", "")),
+                    "account_id": op.account_id,
+                    "operation_id": op.operation_id,
+                    "operation_type": op.operation_type,
+                    "amount": op.amount,
+                    "currency": op.currency,
+                    "comment": op.comment,
+                    "operation_date": op.operation_date,
                 }
             )
 
