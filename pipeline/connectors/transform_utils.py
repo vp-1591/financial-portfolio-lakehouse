@@ -1,8 +1,8 @@
 """Shared utilities for bronze → silver (raw → normalized) transforms.
 
-Provides Polars-based helpers to decrypt, parse, and iterate raw Delta
-table rows, replacing the former pandas ``iterrows`` + manual list-append
-pattern.
+Provides helpers to decrypt, parse, and iterate raw Delta table rows,
+and to build normalized PyArrow tables from row dicts using Polars for
+column encryption and schema casting.
 """
 
 from __future__ import annotations
@@ -12,11 +12,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Iterator
 
+import polars as pl
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
-
-from pipeline.crypto import decrypt
+from pipeline.crypto import decrypt, encrypt_float
 
 
 @dataclass
@@ -119,3 +120,72 @@ def iter_raw_payloads(
             payload_parsed=parsed,
             payload_raw=decrypted,
         )
+
+
+def build_normalized_table(
+    records: list[dict[str, Any]],
+    schema: "pa.Schema",
+    fernet_key: bytes,
+    encrypt_columns: list[str] | None = None,
+) -> "pa.Table":
+    """Build a normalized PyArrow table from row dicts, encrypting specified columns.
+
+    Replaces the manual list-append pattern (initialize N empty lists, loop
+    and append to each, encrypt inline, assemble ``pa.table()``) with a single
+    Polars DataFrame construction followed by batch column encryption.
+
+    Parameters
+    ----------
+    records:
+        List of dicts, one per output row.  Keys must match schema field names.
+        Values for columns listed in *encrypt_columns* must be plain floats
+        (not yet encrypted) — the function applies Fernet encryption via
+        ``encrypt_float``.
+    schema:
+        Target PyArrow schema.  Encrypted columns must be ``pa.binary()``
+        in the schema but ``float`` in the input dicts.
+    fernet_key:
+        Fernet key for encrypting float columns.
+    encrypt_columns:
+        Column names whose float values should be Fernet-encrypted to binary.
+        Defaults to an empty list (no encryption).
+    """
+    import pyarrow as pa
+
+    if encrypt_columns is None:
+        encrypt_columns = []
+
+    # Empty result set: return a correctly-typed empty table.
+    if not records:
+        return pa.table(
+            {field.name: pa.array([], type=field.type) for field in schema},
+            schema=schema,
+        )
+
+    df = pl.DataFrame(records)
+
+    # Encrypt specified float columns to binary Fernet tokens.
+    for col_name in encrypt_columns:
+        if col_name in df.columns:
+            df = df.with_columns(
+                pl.col(col_name)
+                .map_elements(
+                    lambda v, _key=fernet_key: (
+                        encrypt_float(v, _key) if v is not None else None
+                    ),
+                    return_dtype=pl.Binary,
+                )
+                .alias(col_name),
+            )
+
+    # Ensure all schema columns are present; fill missing with null.
+    for field in schema:
+        if field.name not in df.columns:
+            df = df.with_columns(pl.lit(None).alias(field.name))
+
+    # Reorder columns to match schema order.
+    df = df.select([field.name for field in schema])
+
+    # Convert to PyArrow and cast to target schema.
+    arrow_table = df.to_arrow()
+    return arrow_table.cast(schema)

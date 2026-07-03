@@ -310,7 +310,7 @@ def consolidate_holdings(
         fetched_ats.append(now)
         brokers.append(holding.broker)
         tickers.append(holding.ticker)
-        currencies.append(holding.security_currency or holding.currency)
+        currencies.append(converter.target_currency)
         values.append(encrypt_float(converted_value, fernet_key))
         identifiers.append(identifier or "-")
         security_currencies.append(holding.security_currency or "-")
