@@ -10,9 +10,6 @@ client-portal-gateway-ibkr/
 *.err
 *.out
 
-# Random notes
-roadmap*.md
-
 # Pipeline data and secrets
 data/
 .secrets/
