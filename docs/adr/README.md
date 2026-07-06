@@ -57,6 +57,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0045 | Replace List-Append Pattern with Polars build_normalized_table | 2026-07-02 | active | — |
 | 0046 | Fix Consolidated Holdings Currency Column | 2026-07-03 | active | — |
 | 0047 | Move XLSX Parsing to Silver Layer and Remove account_id from Raw Schema | 2026-07-03 | active | — |
+| 0048 | XTB Cloud Upload — S3 Staging + EventBridge | 2026-07-06 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

@@ -59,6 +59,9 @@ class StorageBackend(Protocol):
     """
 
     def table_path(self, layer: str, table_name: str) -> str: ...
+    def staging_path(
+        self, staging_prefix: str, connector_name: str, filename: str
+    ) -> str: ...
     def ensure_parent(self, table_path: str) -> None:
         """Create parent dirs and clean up orphaned files from failed writes."""
         ...
@@ -83,6 +86,11 @@ class LocalBackend:
 
     def table_path(self, layer: str, table_name: str) -> str:
         return str(self.data_dir / layer / table_name)
+
+    def staging_path(
+        self, staging_prefix: str, connector_name: str, filename: str
+    ) -> str:
+        return str(self.data_dir / staging_prefix / connector_name / filename)
 
     def ensure_parent(self, table_path: str) -> None:
         """Create parent directory and rescue orphaned files from failed writes.
@@ -151,6 +159,13 @@ class S3Backend:
         if self.prefix:
             return f"s3://{self.bucket}/{self.prefix}/{layer}/{table_name}"
         return f"s3://{self.bucket}/{layer}/{table_name}"
+
+    def staging_path(
+        self, staging_prefix: str, connector_name: str, filename: str
+    ) -> str:
+        if self.prefix:
+            return f"s3://{self.bucket}/{self.prefix}/{staging_prefix}/{connector_name}/{filename}"
+        return f"s3://{self.bucket}/{staging_prefix}/{connector_name}/{filename}"
 
     def ensure_parent(self, table_path: str) -> None:
         # S3 does not require parent directories to exist.
@@ -229,6 +244,17 @@ class StorageConfig:
     def analytics_path(self, table_name: str) -> str:
         """Return the full path for an analytics-layer table."""
         return self.backend.table_path("analytics", table_name)
+
+    def staging_path(self, connector_name: str, filename: str) -> str:
+        """Return the full path for a staging file.
+
+        Uses ``staging`` prefix in production, ``staging_demo`` in demo
+        mode — matching the existing ``pipeline``/``pipeline_demo`` pattern.
+        """
+        from pipeline.secrets import is_demo
+
+        prefix = "staging_demo" if is_demo() else "staging"
+        return self.backend.staging_path(prefix, connector_name, filename)
 
     @property
     def storage_options(self) -> dict[str, str] | None:

@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from pipeline.connectors.registry import all
 from pipeline.crypto import load_key
@@ -424,6 +425,38 @@ def cmd_full(args: argparse.Namespace) -> int:
     return cmd_allocate(args)
 
 
+def cmd_upload_xtb(args: argparse.Namespace) -> int:
+    """Upload an XTB .xlsx report to S3 staging.
+
+    The pipeline's Step Function will detect the file via EventBridge
+    and trigger the XTB fetch → transform → consolidate → allocate
+    pipeline automatically.
+    """
+    from pipeline.s3 import upload_to_staging
+    from pipeline.storage import S3Backend
+
+    config = get_storage()
+
+    if not isinstance(config.backend, S3Backend):
+        print(
+            "Error: upload-xtb requires S3 storage. "
+            "Set S3_BUCKET to use cloud storage.",
+            file=sys.stderr,
+        )
+        return 1
+
+    file_path = Path(args.file).resolve()
+    if not file_path.exists():
+        print(f"Error: file not found: {file_path}", file=sys.stderr)
+        return 1
+
+    s3_uri = config.staging_path("xtb", file_path.name)
+    result_uri = upload_to_staging(file_path, s3_uri)
+    print(f"Uploaded {file_path.name} → {result_uri}")
+    print("The pipeline will process this file automatically via EventBridge.")
+    return 0
+
+
 def main() -> int:
     # Load .env and validate available secrets.
     inject_secrets()
@@ -474,7 +507,7 @@ def main() -> int:
         action="append",
         type=str,
         default=None,
-        help="Path to XTB Excel report (can be specified multiple times)",
+        help="Path to XTB Excel report, or an s3:// URI (can be specified multiple times)",
     )
 
     # transform
@@ -547,7 +580,7 @@ def main() -> int:
         action="append",
         type=str,
         default=None,
-        help="Path to XTB Excel report (can be specified multiple times)",
+        help="Path to XTB Excel report, or an s3:// URI (can be specified multiple times)",
     )
     full_parser.add_argument(
         "--fx-rate",
@@ -571,6 +604,17 @@ def main() -> int:
         help="CSV file with ticker,isin columns",
     )
 
+    # upload-xtb
+    upload_xtb_parser = subparsers.add_parser(
+        "upload-xtb",
+        help="Upload XTB .xlsx report to S3 staging",
+    )
+    upload_xtb_parser.add_argument(
+        "file",
+        type=str,
+        help="Path to XTB .xlsx report to upload",
+    )
+
     args = parser.parse_args()
 
     # Resolve storage configuration before any path access.
@@ -586,6 +630,7 @@ def main() -> int:
         "allocate": cmd_allocate,
         "full": cmd_full,
         "query": cmd_query,
+        "upload-xtb": cmd_upload_xtb,
     }
 
     return commands[args.command](args)

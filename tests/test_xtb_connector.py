@@ -376,3 +376,87 @@ class TestTransformCDC:
         amounts = result.column("amount").to_pylist()
         decrypted = [decrypt_float(v, fernet_key) for v in amounts]
         assert any(v == pytest.approx(200.0, rel=0.01) for v in decrypted)
+
+
+class TestFetchFromS3:
+    """Tests for fetch_snapshot / fetch_cdc with S3 URIs.
+
+    These tests mock pipeline.s3.read_s3_bytes to avoid needing a real
+    S3 connection, verifying that _read_file_bytes dispatches correctly
+    and source_file is set to the filename portion of the S3 key.
+    """
+
+    @pytest.fixture()
+    def xlsx_bytes(self) -> bytes:
+        return _build_xlsx_bytes()
+
+    def test_fetch_snapshot_s3_uri(self, xlsx_bytes: bytes, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "pipeline.s3.read_s3_bytes",
+            lambda uri: (xlsx_bytes, "report.xlsx"),
+        )
+
+        from pipeline.connectors.xtb.fetch import fetch_snapshot
+
+        table = fetch_snapshot("s3://bucket/pipeline/staging/xtb/report.xlsx")
+        assert table.num_rows == 1
+        assert table.column("source_file")[0].as_py() == "report.xlsx"
+        assert table.column("broker")[0].as_py() == "XTB"
+        assert table.column("source")[0].as_py() == "OPEN POSITION"
+
+    def test_fetch_cdc_s3_uri(self, xlsx_bytes: bytes, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "pipeline.s3.read_s3_bytes",
+            lambda uri: (xlsx_bytes, "cash_ops.xlsx"),
+        )
+
+        from pipeline.connectors.xtb.fetch import fetch_cdc
+
+        table = fetch_cdc("s3://bucket/pipeline/staging/xtb/cash_ops.xlsx")
+        assert table.num_rows == 1
+        assert table.column("source_file")[0].as_py() == "cash_ops.xlsx"
+        assert table.column("source")[0].as_py() == "CASH OPERATION"
+
+    def test_fetch_snapshot_local_path_still_works(self) -> None:
+        """Local file paths are not affected by S3 support."""
+        from pipeline.connectors.xtb.fetch import fetch_snapshot
+
+        report = temporary_report_path()
+        write_xtb_workbook(report)
+        try:
+            table = fetch_snapshot(report)
+        finally:
+            report.unlink(missing_ok=True)
+
+        assert table.num_rows == 1
+        assert table.column("source_file")[0].as_py() == report.name
+
+    def test_read_file_bytes_s3_extracts_filename(
+        self, xlsx_bytes: bytes, monkeypatch
+    ) -> None:
+        from pipeline.connectors.xtb.fetch import _read_file_bytes
+
+        monkeypatch.setattr(
+            "pipeline.s3.read_s3_bytes",
+            lambda uri: (xlsx_bytes, "nested_report.xlsx"),
+        )
+
+        payload, filename = _read_file_bytes(
+            "s3://bucket/pipeline/staging/xtb/nested_report.xlsx"
+        )
+        assert payload == xlsx_bytes
+        assert filename == "nested_report.xlsx"
+
+    def test_read_file_bytes_local_path(self) -> None:
+        from pipeline.connectors.xtb.fetch import _read_file_bytes
+
+        report = temporary_report_path()
+        write_xtb_workbook(report)
+        expected_bytes = report.read_bytes()
+        try:
+            payload, filename = _read_file_bytes(report)
+        finally:
+            report.unlink(missing_ok=True)
+
+        assert payload == expected_bytes
+        assert filename == report.name
