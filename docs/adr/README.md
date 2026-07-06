@@ -4,7 +4,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 
 | Field | Value |
 |-------|-------|
-| last-indexed | 2026-07-01T17:00:00+02:00 |
+| last-indexed | 2026-07-06T12:00:00+02:00 |
 
 ## Index
 
@@ -41,7 +41,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0029 | Remove Redundant Environment Variables and IBKR Gateway Dead Code | 2026-07-01 | active | — |
 | 0030 | Require IBKR Flex Query ID and Rename PORTFOLIO_ENCRYPTION_KEY | 2026-07-01 | active | — |
 | 0031 | Make decrypt_df Auto-Detect Encrypted Columns | 2026-07-01 | active | — |
-| 0032 | ADR Index and Optimize-adrs Workflow | 2026-07-01 | active | — |
+| 0032a | ADR Index and Optimize-adrs Workflow | 2026-07-01 | active | — |
+| 0032b | Docker Support and Query CLI Subcommand | 2026-07-01 | active | — |
 | 0033 | Migrate Terraform State from Local to S3 Backend | 2026-07-01 | active | — |
 | 0034 | Add required_version Constraint for Terraform 1.11+ | 2026-07-01 | active | — |
 | 0035 | Remove dead cashBalance and startingCash fallbacks from IBKR transform | 2026-07-02 | active | — |
@@ -64,6 +65,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
   0002b → 0002-use-broker-native-identifiers-in-portfolio-report.md
   0013a → 0013-add-ibkr-flex-connector-to-pipeline.md
   0013b → 0013-replace-pandas-with-polars-in-transform.md
+  0032a → 0032-adr-index-and-optimize-workflow.md
+  0032b → 0032-docker-and-query-cli.md
 -->
 
 <!-- Superseded ADRs without files (merged before creation):
