@@ -453,7 +453,8 @@ def cmd_upload_xtb(args: argparse.Namespace) -> int:
     s3_uri = config.staging_path("xtb", file_path.name)
     result_uri = upload_to_staging(file_path, s3_uri)
     print(f"Uploaded {file_path.name} → {result_uri}")
-    print("The pipeline will process this file automatically via EventBridge.")
+    print("Run the pipeline with an s3:// URI to process this file.")
+    print("(EventBridge auto-processing will be added in a future phase.)")
     return 0
 
 

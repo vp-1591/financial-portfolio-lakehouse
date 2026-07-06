@@ -188,13 +188,12 @@ def _build_xlsx_bytes(
     """Build minimal .xlsx bytes for transform tests."""
     import tempfile
 
-    path = Path(tempfile.mkdtemp()) / f"test-{uuid.uuid4().hex}.xlsx"
-    write_xtb_workbook(
-        path, include_isin=include_isin, include_cash_ops=include_cash_ops
-    )
-    data = path.read_bytes()
-    path.unlink(missing_ok=True)
-    return data
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / f"test-{uuid.uuid4().hex}.xlsx"
+        write_xtb_workbook(
+            path, include_isin=include_isin, include_cash_ops=include_cash_ops
+        )
+        return path.read_bytes()
 
 
 class TestParserHelpers:
