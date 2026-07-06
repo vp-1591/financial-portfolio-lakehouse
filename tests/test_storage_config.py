@@ -295,6 +295,27 @@ class TestS3Backend:
         # Should not raise — S3 doesn't need parent dirs
         backend.ensure_parent("s3://my-bucket/pipeline/raw/ibkr_snapshot")
 
+    def test_staging_path_with_prefix(self):
+        backend = S3Backend(bucket="my-bucket", prefix="pipeline")
+        assert (
+            backend.staging_path("staging", "xtb", "report.xlsx")
+            == "s3://my-bucket/pipeline/staging/xtb/report.xlsx"
+        )
+
+    def test_staging_path_no_prefix(self):
+        backend = S3Backend(bucket="my-bucket", prefix="")
+        assert (
+            backend.staging_path("staging", "xtb", "report.xlsx")
+            == "s3://my-bucket/staging/xtb/report.xlsx"
+        )
+
+    def test_staging_path_demo_prefix(self):
+        backend = S3Backend(bucket="my-bucket-demo", prefix="pipeline_demo")
+        assert (
+            backend.staging_path("staging_demo", "xtb", "report.xlsx")
+            == "s3://my-bucket-demo/pipeline_demo/staging_demo/xtb/report.xlsx"
+        )
+
     def test_storage_options_lowercase_keys(self, monkeypatch):
         """S3Backend.storage_options returns lowercase keys for deltalake."""
         monkeypatch.delenv("DEMO", raising=False)
@@ -523,6 +544,72 @@ class TestStorageConfigHelpers:
         )
         assert config.analytics_path("portfolio_allocation") == str(
             data / "analytics" / "portfolio_allocation"
+        )
+
+    def test_staging_path_local_backend(self, tmp_path: Path) -> None:
+        data = tmp_path / "data"
+        secrets = tmp_path / ".secrets"
+        secrets.mkdir()
+        config = StorageConfig(
+            data_dir=str(data),
+            raw_dir=str(data / "raw"),
+            normalized_dir=str(data / "normalized"),
+            analytics_dir=str(data / "analytics"),
+            secrets_dir=str(secrets),
+            encryption_key_file=str(secrets / "encryption.key"),
+            backend=LocalBackend(data),
+        )
+        # Production mode — staging_path uses "staging" prefix
+        result = config.staging_path("xtb", "report.xlsx")
+        assert result == str(data / "staging" / "xtb" / "report.xlsx")
+
+    def test_staging_path_local_backend_demo(self, tmp_path: Path, monkeypatch) -> None:
+        data = tmp_path / "data_demo"
+        secrets = tmp_path / ".secrets"
+        secrets.mkdir()
+        config = StorageConfig(
+            data_dir=str(data),
+            raw_dir=str(data / "raw"),
+            normalized_dir=str(data / "normalized"),
+            analytics_dir=str(data / "analytics"),
+            secrets_dir=str(secrets),
+            encryption_key_file=str(secrets / "encryption.key"),
+            backend=LocalBackend(data),
+        )
+        monkeypatch.setenv("DEMO", "true")
+        result = config.staging_path("xtb", "report.xlsx")
+        assert result == str(data / "staging_demo" / "xtb" / "report.xlsx")
+
+    def test_staging_path_s3_backend(self, monkeypatch) -> None:
+        backend = S3Backend(bucket="my-bucket", prefix="pipeline")
+        config = StorageConfig(
+            data_dir="s3://my-bucket/pipeline",
+            raw_dir="s3://my-bucket/pipeline/raw",
+            normalized_dir="s3://my-bucket/pipeline/normalized",
+            analytics_dir="s3://my-bucket/pipeline/analytics",
+            secrets_dir="/app/.secrets",
+            encryption_key_file="/app/.secrets/encryption.key",
+            backend=backend,
+        )
+        monkeypatch.delenv("DEMO", raising=False)
+        result = config.staging_path("xtb", "report.xlsx")
+        assert result == "s3://my-bucket/pipeline/staging/xtb/report.xlsx"
+
+    def test_staging_path_s3_backend_demo(self, monkeypatch) -> None:
+        backend = S3Backend(bucket="my-bucket-demo", prefix="pipeline_demo")
+        config = StorageConfig(
+            data_dir="s3://my-bucket-demo/pipeline_demo",
+            raw_dir="s3://my-bucket-demo/pipeline_demo/raw",
+            normalized_dir="s3://my-bucket-demo/pipeline_demo/normalized",
+            analytics_dir="s3://my-bucket-demo/pipeline_demo/analytics",
+            secrets_dir="/app/.secrets",
+            encryption_key_file="/app/.secrets/encryption.key",
+            backend=backend,
+        )
+        monkeypatch.setenv("DEMO", "true")
+        result = config.staging_path("xtb", "report.xlsx")
+        assert (
+            result == "s3://my-bucket-demo/pipeline_demo/staging_demo/xtb/report.xlsx"
         )
 
 

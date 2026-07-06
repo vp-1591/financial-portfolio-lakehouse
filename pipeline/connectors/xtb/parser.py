@@ -1,10 +1,12 @@
 """XTB XLS parsing.
 
 Parses XTB Excel (.xlsx) reports for open positions and cash operations.
+Supports both file-path and in-memory (bytes) input.
 """
 
 from __future__ import annotations
 
+import io
 import re
 import zipfile
 import xml.etree.ElementTree as ET
@@ -302,31 +304,20 @@ def cash_operations_total(rows: list[dict[str, Any]]) -> float:
     return 0.0
 
 
-def load_positions(
-    report_path: Path,
+def _load_positions_from_workbook(
+    workbook: zipfile.ZipFile,
     account_id_override: str | None = None,
 ) -> tuple[list[XtbPosition], float]:
-    """Load positions and net worth from an XTB Excel report.
+    """Core positions logic operating on an already-open workbook.
 
     Returns (positions, net_worth).
     """
-    if not report_path.is_absolute():
-        raise XtbError("--file must be an absolute path to the XTB Excel report.")
-    if not report_path.exists():
-        raise XtbError(f"XTB report does not exist: {report_path}")
-
-    try:
-        workbook = zipfile.ZipFile(report_path)
-    except zipfile.BadZipFile as exc:
-        raise XtbError(f"XTB report is not a valid .xlsx file: {report_path}") from exc
-
-    with workbook:
-        paths = sheet_paths_by_name(workbook)
-        sheet_names = list(paths)
-        open_sheet = find_sheet_name(sheet_names, "OPEN POSITION")
-        cash_sheet = find_sheet_name(sheet_names, "CASH OPERATION")
-        open_rows = read_sheet_rows(workbook, paths[open_sheet])
-        cash_rows = read_sheet_rows(workbook, paths[cash_sheet])
+    paths = sheet_paths_by_name(workbook)
+    sheet_names = list(paths)
+    open_sheet = find_sheet_name(sheet_names, "OPEN POSITION")
+    cash_sheet = find_sheet_name(sheet_names, "CASH OPERATION")
+    open_rows = read_sheet_rows(workbook, paths[open_sheet])
+    cash_rows = read_sheet_rows(workbook, paths[cash_sheet])
 
     account_id_value = str(
         account_id_override or value_below_label(open_rows, "Account") or "XTB"
@@ -356,6 +347,69 @@ def load_positions(
     return assets, net_worth
 
 
+def _load_cash_operations_from_workbook(
+    workbook: zipfile.ZipFile,
+    account_id_override: str | None = None,
+) -> list[XtbCashOperation]:
+    """Core cash operations logic operating on an already-open workbook.
+
+    Returns a list of XtbCashOperation data objects.
+    """
+    paths = sheet_paths_by_name(workbook)
+    sheet_names = list(paths)
+    cash_sheet = find_sheet_name(sheet_names, "CASH OPERATION")
+    cash_rows = read_sheet_rows(workbook, paths[cash_sheet])
+    open_sheet = find_sheet_name(sheet_names, "OPEN POSITION")
+    open_rows = read_sheet_rows(workbook, paths[open_sheet])
+
+    account_id_value = str(
+        account_id_override or value_below_label(open_rows, "Account") or "XTB"
+    )
+    return load_cash_operations(cash_rows, account_id_value)
+
+
+def load_positions(
+    report_path: Path,
+    account_id_override: str | None = None,
+) -> tuple[list[XtbPosition], float]:
+    """Load positions and net worth from an XTB Excel report.
+
+    Returns (positions, net_worth).
+    """
+    if not report_path.is_absolute():
+        raise XtbError("--file must be an absolute path to the XTB Excel report.")
+    if not report_path.exists():
+        raise XtbError(f"XTB report does not exist: {report_path}")
+
+    try:
+        workbook = zipfile.ZipFile(report_path)
+    except zipfile.BadZipFile as exc:
+        raise XtbError(f"XTB report is not a valid .xlsx file: {report_path}") from exc
+
+    with workbook:
+        return _load_positions_from_workbook(workbook, account_id_override)
+
+
+def load_positions_from_bytes(
+    data: bytes,
+    account_id_override: str | None = None,
+) -> tuple[list[XtbPosition], float]:
+    """Load positions and net worth from XTB Excel report bytes.
+
+    Accepts the raw bytes of an .xlsx file (e.g. from the raw Delta table
+    payload column after decryption).
+
+    Returns (positions, net_worth).
+    """
+    try:
+        workbook = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise XtbError("XTB report bytes are not a valid .xlsx file") from exc
+
+    with workbook:
+        return _load_positions_from_workbook(workbook, account_id_override)
+
+
 def load_cash_operations_from_report(
     report_path: Path,
     account_id_override: str | None = None,
@@ -375,14 +429,24 @@ def load_cash_operations_from_report(
         raise XtbError(f"XTB report is not a valid .xlsx file: {report_path}") from exc
 
     with workbook:
-        paths = sheet_paths_by_name(workbook)
-        sheet_names = list(paths)
-        cash_sheet = find_sheet_name(sheet_names, "CASH OPERATION")
-        cash_rows = read_sheet_rows(workbook, paths[cash_sheet])
-        open_sheet = find_sheet_name(sheet_names, "OPEN POSITION")
-        open_rows = read_sheet_rows(workbook, paths[open_sheet])
+        return _load_cash_operations_from_workbook(workbook, account_id_override)
 
-    account_id_value = str(
-        account_id_override or value_below_label(open_rows, "Account") or "XTB"
-    )
-    return load_cash_operations(cash_rows, account_id_value)
+
+def load_cash_operations_from_bytes(
+    data: bytes,
+    account_id_override: str | None = None,
+) -> list[XtbCashOperation]:
+    """Load cash operations from XTB Excel report bytes.
+
+    Accepts the raw bytes of an .xlsx file (e.g. from the raw Delta table
+    payload column after decryption).
+
+    Returns a list of XtbCashOperation data objects.
+    """
+    try:
+        workbook = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise XtbError("XTB report bytes are not a valid .xlsx file") from exc
+
+    with workbook:
+        return _load_cash_operations_from_workbook(workbook, account_id_override)

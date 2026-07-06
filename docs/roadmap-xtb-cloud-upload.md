@@ -1,5 +1,15 @@
 # XTB Report → Cloud Pipeline: Upload Roadmap
 
+## Phase 1 — ✅ Completed
+
+Code changes for S3 staging upload and S3-aware fetch (no infrastructure):
+
+- `pipeline/storage.py` — `staging_path()` on `StorageBackend` protocol, `S3Backend`, `LocalBackend`, and `StorageConfig`; uses `staging`/`staging_demo` prefix for production/demo isolation
+- `pipeline/s3.py` — New module: `parse_s3_uri()`, `upload_to_staging()`, `read_s3_bytes()`, `delete_from_staging()` using PyArrow's `S3FileSystem`
+- `pipeline/connectors/xtb/fetch.py` — `_read_file_bytes()` helper dispatches on `s3://` prefix; both `fetch_snapshot` and `fetch_cdc` accept S3 URIs
+- `pipeline/run.py` — `upload-xtb` subcommand uploads `.xlsx` to S3 staging; `--xtb-file` help mentions S3 URI support
+- `docs/adr/0048-xtb-cloud-upload.md` — ADR documenting the decision
+
 ## Goal
 
 Pass an XTB `.xlsx` report to the cloud pipeline without manual AWS console
