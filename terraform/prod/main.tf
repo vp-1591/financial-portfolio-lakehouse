@@ -144,6 +144,18 @@ resource "aws_iam_user_policy_attachment" "pipeline" {
   policy_arn = aws_iam_policy.pipeline.arn
 }
 
+# Attach the ECR push/pull policy (defined in terraform/shared/) so the
+# pipeline user can push Docker images during deploy and pull them at runtime.
+# terraform/shared/ must be applied before terraform/prod/.
+data "aws_iam_policy" "ecr_push_pull" {
+  name = "pipeline-ecr-push-pull"
+}
+
+resource "aws_iam_user_policy_attachment" "ecr_push_pull" {
+  user       = aws_iam_user.pipeline.name
+  policy_arn = data.aws_iam_policy.ecr_push_pull.arn
+}
+
 # ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
