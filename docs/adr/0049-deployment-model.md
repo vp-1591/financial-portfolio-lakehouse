@@ -76,10 +76,10 @@ automated run with quality gates after deploy.
   Secrets.
 - Must work with the existing Terraform state layout (separate state
   files per directory).
-- The `pipeline` IAM user (from `terraform/prod/`) must be granted ECR
-  push/pull permissions. This is a manual step: after applying
-  `terraform/shared/`, attach the `pipeline-ecr-push-pull` IAM policy to
-  the `pipeline` IAM user via the AWS Console.
+- The `pipeline` IAM user (from `terraform/prod/`) is granted ECR push/pull
+  permissions via a data source lookup of the `pipeline-ecr-push-pull` IAM
+  policy (defined in `terraform/shared/`). The `shared` module must be
+  applied before `prod` so the policy exists when the attachment is created.
 - No changes to `ci.yml` or `pipeline.yml`.
 
 ## Consequences
@@ -93,8 +93,9 @@ automated run with quality gates after deploy.
   or `production-latest` tag for ECS task definitions, enabling zero-downtime
   updates by pushing a new image.
 - **Neutral**: The ECR push IAM policy lives in `shared/` state while the
-  pipeline IAM user lives in `prod/` state. Attaching the policy requires
-  a manual step or a future `terraform_remote_state` data source.
+  pipeline IAM user lives in `prod/` state. The attachment uses a data
+  source lookup by policy name, so the state files remain independent but
+  `terraform/shared/` must be applied before `terraform/prod/`.
 - **Neutral**: Staging pipeline runs are manual until Phase 3.
 - **Negative**: The `staging-latest` and `production-latest` tags are
   mutable. If two tags are pushed in quick succession, the mutable tag

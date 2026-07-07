@@ -60,6 +60,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0047 | Move XLSX Parsing to Silver Layer and Remove account_id from Raw Schema | 2026-07-03 | active | — |
 | 0048 | XTB Cloud Upload — S3 Staging + EventBridge | 2026-07-06 | active | — |
 | 0049 | Deployment Model — Branch/Tag Environment Strategy | 2026-07-07 | active | — |
+| 0050 | Attach ECR Policy to Pipeline User in Terraform | 2026-07-07 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
