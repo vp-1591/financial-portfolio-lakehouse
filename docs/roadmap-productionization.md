@@ -2,11 +2,9 @@
 
 ## Goal
 
-This roadmap is meant to make the portfolio pipeline look credible to DE hiring
-managers. The core story is operational maturity: reliable orchestration,
-repeatable execution, and a report that proves the pipeline is doing real work.
-Analytics is a supporting story that shows the system can produce useful output,
-but the primary audience is engineering.
+Make the portfolio pipeline production-ready: reliable orchestration, repeatable
+execution, environment-aware configuration, and a report that proves the pipeline
+is doing real work.
 
 ## Current state
 
@@ -18,21 +16,17 @@ The pipeline already has the core engineering foundation:
 - automated tests
 - a working CLI entrypoint
 
-What remains is to make it feel production-like: orchestrated runs, scheduleable
-execution, and a polished reporting artifact that can be delivered without manual
-intervention.
+What remains is operational maturity: orchestrated runs, scheduleable execution,
+and a polished reporting artifact delivered without manual intervention.
 
 ---
 
 ## What remains to build
 
-The work below is intentionally focused on DE credibility rather than a broad DA
-product roadmap.
-
 ### 1. Deployment and environment strategy
 
-The foundation for everything else: a clear deployment model that separates
-staging from production and enables repeatable execution.
+A clear deployment model that separates staging from production and enables
+repeatable execution.
 
 #### Branch & environment flow
 
@@ -64,46 +58,71 @@ Planned work:
 - environment-aware config for test, staging, and production-style runs
 - configurable storage paths and credentials
 - infrastructure for AWS-backed execution and scheduling
-- a simple deployment path that can be explained in one minute to a hiring manager
+- a simple deployment model with clear environment boundaries
 
 ### 2. Orchestration: Per-connector Step Functions
 
-Each connector runs as its own Step Function with its own trigger. This
-avoids the XTB-blocking-IBKR problem (XTB has no API, must wait for manual
-upload) and isolates per-broker failures.
+Each connector runs as its own Step Function with its own trigger. Each Step
+Function runs two ECS Fargate tasks: one for the connector's fetch+transform,
+then one for consolidate+allocate.
 
 ```
-IBKR  — schedule / manual trigger → ibkr_fetch → ibkr_transform → consolidate → allocate
-T212  — schedule / manual trigger → t212_fetch → t212_transform → consolidate → allocate
-XTB   — file arrival trigger      → xtb_fetch  → xtb_transform  → consolidate → allocate
+IBKR  — schedule / manual trigger → [fetch+transform] → [consolidate+allocate]
+T212  — schedule / manual trigger → [fetch+transform] → [consolidate+allocate]
+XTB   — file arrival trigger      → [fetch+transform] → [consolidate+allocate]
 ```
 
-Each Step Function:
-- Runs each step as a separate ECS Fargate task (same Docker image, different subcommand)
-- Has per-step retry with exponential backoff (broker APIs are flaky)
-- Catches and isolates per-broker failures (one broker down doesn't block others)
-- Reports step-level duration and status in the AWS console
+Each bracketed step is one Fargate task running the existing Docker image with
+a different subcommand (e.g. `python -m pipeline run-full-ibkr`).
 
-Consolidate and allocate read **all** normalized tables (not just the
-connector that triggered), so the output is always a complete picture.
-Running them multiple times per window is fine — they are idempotent
-overwrites.
+**Why per-connector, not per-step?**
 
-**Why per-connector Step Functions?**
+The pipeline has four logical steps (fetch, transform, consolidate, allocate),
+but running each as a separate Fargate task means four cold starts per connector
+run — roughly 3–4 minutes of overhead for a pipeline whose actual work takes
+under a minute. Grouping into two tasks per connector (connector work, then
+consolidation) cuts cold starts from 4 to 2 while preserving all the orchestration
+benefits:
 
-- **Independent triggers** — XTB is file-driven (no API), IBKR/T212 are
-  API-driven. Mixing them in one monolithic command means XTB blocks the
-  others or requires manual file upload before every run.
-- **Per-broker retry** — one broker's flaky API doesn't block the others.
-- **Step-level observability** — each step reports duration and status in the
-  AWS console.
-- **Event-driven XTB** — file arrival triggers the pipeline automatically,
-  no manual workflow dispatch needed.
+- **Fewer cold starts** — two per connector run instead of four, cutting
+  overhead from ~3–4 minutes to ~1.5–2 minutes
+- **Always-current analytics** — consolidate+allocate runs after each connector
+  completes, so the analytics layer is always up-to-date rather than waiting for
+  all connectors to finish
+- **Idempotent by design** — consolidate and allocate are full-snapshot
+  overwrites, so running them after every connector is safe and correct
+- **Independent triggers** — XTB is file-driven, IBKR/T212 are API-driven;
+  mixing them would require manual coordination before every run
+- **Per-broker retry** — one broker's flaky API doesn't block the others;
+  Step Functions retry with exponential backoff on the connector task, then
+  re-run consolidation
+- **Failure isolation** — IBKR down doesn't block T212 or XTB
+- **Event-driven XTB** — file arrival triggers the pipeline automatically
+
+Step-level durations (how long each step took) move from the Step Functions
+graph to structured CloudWatch logs. This is an acceptable trade-off: for a
+daily personal pipeline, log-based observability is sufficient and avoids
+per-step cold starts that would add 2+ minutes of overhead per run.
+
+**Connector subcommands**
+
+Each connector needs a thin CLI wrapper that runs fetch+transform sequentially
+within a single process:
+
+| Subcommand | What it runs |
+|---|---|
+| `run-ibkr` | IBKR fetch → IBKR transform |
+| `run-t212` | T212 fetch → T212 transform |
+| `run-xtb` | XTB fetch → XTB transform |
+| `run-consolidate-allocate` | Consolidate → allocate |
+
+The existing `full` subcommand (fetch → transform → consolidate → allocate for
+all enabled connectors) remains for local development and testing.
 
 #### AWS resources needed
 
 - **Step Functions** — one state machine per connector (ibkr, t212, xtb)
-- **ECS Fargate** — task definition for the pipeline container, scheduled by Step Functions
+- **ECS Fargate** — two task definitions: connector task and consolidate-allocate task
 - **EventBridge** — scheduled triggers for IBKR/T212; S3 file arrival trigger for XTB
 - **S3** — already in use for Delta Lake storage (separate buckets for staging vs prod); `staging/xtb/` prefix for XTB file arrival trigger
 - **IAM roles** — task execution role, Step Functions role, per-connector least-privilege policies
@@ -111,7 +130,7 @@ overwrites.
 #### Cost estimate (personal use)
 
 - Step Functions: ~$0.25/month per state machine (state transitions are cheap)
-- ECS Fargate: ~$1-2/month (only runs during pipeline execution)
+- ECS Fargate: ~$0.50-1/month (2 tasks per connector run, ~2 minutes each, daily schedule)
 - S3: negligible for portfolio-sized data
 
 ### 3. Data quality checks (staging gate)
@@ -151,9 +170,8 @@ Use that classification to generate:
 - a short cheat sheet that explains the mix in plain English
 - a small summary section in the HTML report
 
-This demonstrates AI augmentation skills in a data engineering pipeline: a
-small, concrete feature that shows how automation, classification, and reporting
-can be layered onto the existing system without changing the core architecture.
+This shows how automation, classification, and reporting can be layered onto the
+existing system without changing the core architecture.
 
 ### 5. Delivery and operational visibility
 
@@ -181,7 +199,10 @@ code changes.
 
 Move the core pipeline execution flow to per-connector Step Functions so
 connector runs can be triggered manually, scheduled, or event-driven (file
-arrival for XTB). Set up ECS Fargate tasks, EventBridge triggers, and IAM roles.
+arrival for XTB). Each Step Function runs two Fargate tasks: connector
+fetch+transform, then consolidate+allocate. Add connector subcommands
+(`run-ibkr`, `run-t212`, `run-xtb`, `run-consolidate-allocate`) and set up
+ECS task definitions, EventBridge triggers, and IAM roles.
 
 ### Phase 3 — Staging data quality gates
 
@@ -201,21 +222,18 @@ and schedule.
 
 ---
 
-## Why this roadmap is strong for DE hiring
+## Alternatives considered
 
-This roadmap is useful because it highlights the skills that matter most for DE
-roles:
-
-- **Real pipeline orchestration** — per-connector Step Functions with independent triggers shows event-driven architecture and failure isolation, not just running a monolithic script end-to-end
-- **Clear operational boundaries** — separating deploy from run, staging from production, and per-broker concerns
-- **Repeatable execution and scheduling** — automated staging gates, environment-aware config, and scheduled/manual/event-driven triggers
-- **Infrastructure-aware deployment thinking** — ECS Fargate, EventBridge, Step Functions, IAM isolation, and cost awareness
-- **A visible artifact** — a polished HTML report that proves the system works and can support downstream analytics needs
-
-The report and the position-type feature are valuable because they show the
-pipeline can support adjacent analytics needs, but the core narrative remains
-engineering-first.
+| Approach | Why rejected |
+|----------|-------------|
+| **Per-step Fargate tasks** (4 per connector) | Adds ~3–4 minutes of cold-start overhead per connector run. Steps are fast and sequential, so per-step granularity provides little benefit over log-based observability. |
+| **Single monolithic Step Function** (all connectors in one run) | XTB has no API and must wait for manual file upload — it would block IBKR/T212 or require coordination before every run. |
+| **Lambda functions** | Requires rewriting all pipeline code for Lambda constraints (deployment package size limits, no native Delta Lake support, 15-minute timeout). The existing Docker image runs unmodified on Fargate. |
+| **Long-running ECS service** (always-on container) | Costs orders of magnitude more for a pipeline that runs once daily. Paying for idle compute contradicts the event-driven model. |
 
 ### Future (v3, optional)
 
-Dagster for asset-based orchestration and local development UX. Adds lineage visualization and a web UI. Worth considering if the project grows beyond 4 steps or needs cross-pipeline scheduling. Not included now to keep scope focused — Step Functions is sufficient and cheaper for a single pipeline.
+Dagster for asset-based orchestration and local development UX. Adds lineage
+visualization and a web UI. Worth considering if the project grows beyond 4
+steps or needs cross-pipeline scheduling. Not included now to keep scope
+focused — Step Functions is sufficient and cheaper for a single pipeline.
