@@ -11,7 +11,15 @@ To create a single dashboard that consolidates assests from different brokers.
 - Before committing, run `ruff check --fix .` and `ruff format .` to fix lint issues.
 - After running ruff, re-run tests to ensure the auto-fixes didn't break anything.
 
-@~/Documents/Vadym/GitRep/agents-artifacts/claude-config/adr-workflow.md
+@~/.claude/shared/adr-workflow.md
+
+## Roadmap workflow
+
+Roadmaps live in `docs/roadmap-<topic>.md` and follow the template in
+`docs/roadmap-template.md`. Use `/create-roadmap` to create or update one —
+it clarifies ambiguities before drafting.
+
+The workflow order is: `analyze → roadmap → plan → implement → ADR → review`.
 
 ## Environment
 

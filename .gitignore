@@ -24,3 +24,6 @@ data/
 
 # Exploration notebooks
 exploration/
+
+#BMAD
+_bmad/*
