@@ -18,30 +18,10 @@ the downstream pipeline automatically.
 
 ## Architecture
 
-Each connector runs as its own Step Function with its own trigger:
-
-```
-IBKR  — schedule / manual trigger → ibkr_fetch → ibkr_transform → consolidate → allocate
-T212  — schedule / manual trigger → t212_fetch → t212_transform → consolidate → allocate
-XTB   — file arrival trigger      → xtb_fetch  → xtb_transform  → consolidate → allocate
-```
-
-Every connector goes through its own `fetch.py` to produce a raw Delta table
-row.  Consolidate and allocate read **all** normalized tables (not just the
-connector that triggered), so the output is always a complete picture.
-Running them multiple times per window is fine — they are idempotent
-overwrites.
-
-### Why per-connector Step Functions?
-
-- **Independent triggers** — XTB is file-driven (no API), IBKR/T212 are
-  API-driven.  Mixing them in one monolithic `full` command means XTB blocks
-  the others or requires manual file upload before every run.
-- **Per-broker retry** — one broker's flaky API doesn't block the others.
-- **Step-level observability** — each step reports duration and status in the
-  AWS console.
-- **Event-driven XTB** — file arrival triggers the pipeline automatically,
-  no manual workflow dispatch needed.
+XTB is one of three per-connector Step Functions described in
+`docs/roadmap-productionization.md`.  The XTB-specific trigger is file arrival
+(S3 ObjectCreated → EventBridge → Step Function), while IBKR and T212 use
+schedule/manual triggers.
 
 ## XTB upload flow
 
@@ -72,24 +52,24 @@ upload-xtb      →  uploads .xlsx to s3://bucket/staging/xtb/<filename>
 EventBridge      →  detects s3:ObjectCreated in staging/xtb/
                 →  triggers XTB Step Function
 
-Step Function    →  xtb_fetch: reads .xlsx from S3 staging, encrypts,
-                    appends to raw Delta table
-                →  xtb_transform: decrypts + parses, writes normalized
-                →  consolidate: merges all normalized tables
-                →  allocate: calculates allocations
+Step Function    →  xtb_fetch+transform: reads .xlsx from S3 staging,
+                    encrypts, appends to raw Delta table, decrypts + parses,
+                    writes normalized
+                →  consolidate+allocate: merges all normalized tables,
+                    calculates allocations
                 →  (optional) clean up staging file
 ```
 
-- More "DE portfolio impressive" — shows event-driven architecture.
+- Event-driven architecture — S3 triggers Step Functions automatically.
 - `upload-xtb` only needs S3 write permissions; it doesn't start Step
   Functions itself.
 - The staging prefix is **ephemeral** — files are cleaned up after fetch
   succeeds.  The raw Delta table is the permanent storage.
 - Requires an EventBridge rule and IAM permissions for S3 → Step Functions.
 
-**Recommendation:** Option B for portfolio value.  The event-driven pattern
-demonstrates real DE skills (S3 triggers, Step Functions, IAM isolation).
-Option A is a valid fallback for local development or simpler deployments.
+**Recommendation:** Option B.  The event-driven pattern provides automatic
+triggering, least-privilege IAM, and ephemeral staging.  Option A is a valid
+fallback for local development or simpler deployments.
 
 ## Current flow (painful)
 
@@ -132,21 +112,12 @@ This uploads the file and the pipeline picks it up automatically.
 - S3 ObjectCreated event on `<bucket>/staging/xtb/` prefix.
 - Target: XTB Step Function.
 
-### 4. Step Function: XTB pipeline
+### 4. Step Function + IBKR/T212 pipelines
 
-- State machine: `xtb_fetch → xtb_transform → consolidate → allocate`
-- Each step runs as a separate ECS Fargate task (same Docker image,
-  different subcommand).
-- Per-step retry with exponential backoff.
-- Catches and isolates failures (XTB down doesn't block IBKR/T212).
-
-### 5. Step Functions: IBKR and T212 pipelines (separate roadmap)
-
-- IBKR: `ibkr_fetch → ibkr_transform → consolidate → allocate`
-  (schedule or manual trigger)
-- T212: `t212_fetch → t212_transform → consolidate → allocate`
-  (schedule or manual trigger)
-- See `docs/roadmap-add-staging.md` for full details.
+See `docs/roadmap-productionization.md` Phase 2 for the full orchestration
+plan.  The XTB Step Function follows the same two-task pattern
+(`xtb_fetch+transform → consolidate+allocate`) with a file-arrival trigger
+instead of a schedule.
 
 ## Files to touch
 
