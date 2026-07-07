@@ -1,0 +1,12 @@
+# Terraform state files (contain sensitive data)
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Terraform variable files (may contain secrets)
+*.tfvars
+terraform.tfvars
+
+# Backend config (contains account identifiers)
+backend.tf

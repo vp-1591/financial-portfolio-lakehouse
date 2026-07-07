@@ -21,6 +21,14 @@ mode are logged as warnings and :func:`resolve_secret` returns ``None``,
 allowing callers to gracefully skip connectors or operations that require
 the missing secret.
 
+**Deployment model.**  In the project's deployment model
+(see :doc:`/docs/adr/0049-deployment-model`), ``DEMO=true`` corresponds to
+the **staging** environment and ``DEMO=false`` (or unset) to **production**.
+Staging uses demo broker credentials and a separate S3 bucket; production
+uses live credentials and the production bucket.  The ``DEMO`` flag is the
+single source of truth for environment selection — there is no separate
+``PIPELINE_ENV`` variable.
+
 Connector toggles (``IBKR_ENABLED``, ``T212_ENABLED``, ``XTB_ENABLED``)
 default to **enabled**.  Set them to ``0``, ``false``, or ``no`` to disable
 a connector.
