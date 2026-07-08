@@ -558,6 +558,39 @@ module "consolidate_allocate" {
 }
 
 # ------------------------------------------------------------------------------
+# Step Functions IAM Role (from shared infrastructure)
+# ------------------------------------------------------------------------------
+
+data "aws_iam_role" "sfn" {
+  name = "pipeline-sfn-role"
+}
+
+# ------------------------------------------------------------------------------
+# Orchestrator (Step Functions state machine + EventBridge triggers)
+# ------------------------------------------------------------------------------
+
+module "orchestrator" {
+  source = "../modules/orchestrator"
+
+  env                              = local.env_label
+  demo                             = true
+  ecs_cluster_arn                  = var.ecs_cluster_arn
+  subnet_ids                       = aws_subnet.private[*].id
+  security_group_ids               = [aws_security_group.pipeline_demo.id]
+  task_def_arns                    = { for k, v in module.connector_task : k => v.task_definition_arn }
+  consolidate_allocate_task_def_arn = module.consolidate_allocate.task_definition_arn
+  sfn_role_arn                     = data.aws_iam_role.sfn.arn
+  xtb_staging_bucket_name         = aws_s3_bucket.pipeline_demo.bucket
+  xtb_staging_prefix              = "staging_demo/xtb/"
+  scheduled                        = false    # no daily schedule for demo
+  schedule_cron                    = "cron(0 6 * * ? *)"
+  schedule_connectors              = ["ibkr", "trading212"]
+  file_arrival_connectors          = ["ibkr", "trading212", "xtb"]
+  state_machine_name               = "portfolio-pipeline-orchestrator-demo"
+  aws_region                       = var.aws_region
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
@@ -604,4 +637,9 @@ output "connector_task_def_arns" {
 output "consolidate_allocate_task_def_arn" {
   description = "ECS task definition ARN for the consolidate-allocate step (demo)."
   value       = module.consolidate_allocate.task_definition_arn
+}
+
+output "state_machine_arn" {
+  description = "ARN of the Step Functions orchestrator state machine (demo)."
+  value       = module.orchestrator.state_machine_arn
 }

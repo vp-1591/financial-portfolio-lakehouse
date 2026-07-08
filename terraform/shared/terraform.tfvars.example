@@ -1,48 +1,14 @@
 # terraform/shared/terraform.tfvars.example
-# Copy this file to terraform.tfvars and fill in the values from the target
-# environment's (demo or prod) terraform output:
+# Copy this file to terraform.tfvars and fill in the values:
 #   cp terraform.tfvars.example terraform.tfvars
 #
 # Apply order:
-#   1. shared/ apply #1 — creates ECR, ECS cluster, IAM roles (task_def_arns empty)
-#   2. demo/ (or prod/) apply — creates VPC, subnets, SSM, ECS task defs, etc.
-#   3. shared/ apply #2 — creates state machine + EventBridge (fill in task_def_arns
-#      and network config from the environment's outputs)
+#   1. shared/ apply — creates ECR + ECS cluster + IAM roles
+#   2. demo/ and prod/ apply — each creates its own state machine,
+#      EventBridge rules, and environment-specific resources
 #
-# For step 1, leave task_def_arns, consolidate_allocate_task_def_arn, subnet_ids,
-# and security_group_ids empty — the state machine won't be created yet.
+# No two-phase apply needed — shared/ no longer contains the state machine.
 
 # ── ECS cluster (shared across all environments) ──
 # Leave empty to use the module's default cluster:
 ecs_cluster_arn = ""
-
-# ── Network config (from the target environment's outputs) ──
-subnet_ids         = []
-security_group_ids = []
-
-# ── ECS task definitions (from the target environment's outputs) ──
-# Map of connector name → task definition ARN.
-# The keys must match the connector names used in schedule_connectors /
-# file_arrival_connectors (e.g. "ibkr", "trading212", "xtb").
-task_def_arns = {
-  ibkr       = "<from env output connector_task_def_arns.ibkr>"
-  trading212 = "<from env output connector_task_def_arns.trading212>"
-  xtb        = "<from env output connector_task_def_arns.xtb>"
-}
-consolidate_allocate_task_def_arn = "<from env output consolidate_allocate_task_def_arn>"
-
-# ── S3 trigger for XTB file arrivals ──
-xtb_staging_bucket_name = "<from env output s3_bucket>"
-xtb_staging_prefix      = "staging/xtb/"
-
-# ── Environment identity ──
-# Set env = "demo" and demo = true for staging, or env = "prod" and demo = false
-# for production.
-env  = "demo"
-demo = true
-
-# ── Schedule trigger (optional) ──
-# Set scheduled = true to create a daily EventBridge schedule rule.
-# scheduled        = true
-# schedule_cron    = "cron(0 6 * * ? *)"
-# schedule_connectors = ["ibkr", "trading212"]

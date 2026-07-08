@@ -62,6 +62,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0049 | Deployment Model — Branch/Tag Environment Strategy | 2026-07-07 | active | — |
 | 0050 | Attach ECR Policy to Pipeline User in Terraform | 2026-07-07 | active | — |
 | 0051 | Step Functions Orchestration | 2026-07-08 | active | — |
+| 0052 | Per-Environment State Machines and CI/CD Pipeline Trigger | 2026-07-08 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

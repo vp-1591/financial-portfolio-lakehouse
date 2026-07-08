@@ -65,3 +65,10 @@ jobs:
         run: |
           docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }}
           docker run --rm ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }} --help
+
+      - name: Trigger demo pipeline
+        if: github.ref == 'refs/heads/main'
+        run: |
+          aws stepfunctions start-execution \
+            --state-machine-arn ${{ secrets.DEMO_STATE_MACHINE_ARN }} \
+            --name "staging-$(echo ${{ github.sha }} | cut -c1-7)-$(date +%Y%m%d%H%M%S)"
