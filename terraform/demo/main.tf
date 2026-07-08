@@ -98,8 +98,9 @@ provider "aws" {
 # ------------------------------------------------------------------------------
 
 locals {
-  env_label = "demo"
-  image_tag = "staging-latest"
+  env_label   = "demo"
+  image_tag   = "staging-latest"
+  az_suffixes = ["a", "b", "c"]
 
   # Connector definitions for the ecs-task module for_each.
   # Demo environment uses _DEMO-suffixed SSM parameter names, mirroring
@@ -169,7 +170,7 @@ resource "aws_s3_bucket_public_access_block" "pipeline_demo" {
 resource "aws_s3_bucket_notification" "pipeline_demo" {
   bucket = aws_s3_bucket.pipeline_demo.id
 
-  eventbridge {}
+  eventbridge = true
 }
 
 # ------------------------------------------------------------------------------
@@ -247,7 +248,7 @@ resource "aws_subnet" "private" {
   count             = length(var.subnet_cidrs)
   vpc_id            = aws_vpc.pipeline_demo.id
   cidr_block        = var.subnet_cidrs[count.index]
-  availability_zone = "${var.aws_region}${chr(97 + count.index)}"
+  availability_zone = "${var.aws_region}${local.az_suffixes[count.index]}"
 
   tags = {
     Project = "investment-portfolio-pipeline-demo"

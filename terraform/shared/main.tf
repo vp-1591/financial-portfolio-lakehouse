@@ -72,13 +72,13 @@ variable "xtb_enabled" {
 variable "schedule_connectors" {
   description = "Connector names included in the daily-schedule execution input (no xtb_file)."
   type        = list(string)
-  default     = ["ibkr", "t212"]
+  default     = ["ibkr", "trading212"]
 }
 
 variable "file_arrival_connectors" {
   description = "Connector names included in the XTB file-arrival execution input."
   type        = list(string)
-  default     = ["ibkr", "t212", "xtb"]
+  default     = ["ibkr", "trading212", "xtb"]
 }
 
 variable "task_def_arns" {
@@ -332,6 +332,34 @@ data "aws_iam_policy_document" "sfn" {
       "arn:aws:iam::*:role/pipeline-task-demo-*",
     ]
   }
+
+  # Permissions for .sync service integrations (ecs:runTask.sync).
+  # Step Functions creates a managed EventBridge rule to receive task completion
+  # callbacks. Without these, CreateStateMachine fails with
+  # "is not authorized to create managed-rule".
+  # Rule name pattern covers both ECS and Step Functions sync integrations.
+  statement {
+    sid    = "SyncCallback"
+    effect = "Allow"
+    actions = [
+      "events:PutTargets",
+      "events:PutRule",
+      "events:DescribeRule",
+    ]
+    resources = [
+      "arn:aws:events:${var.aws_region}:*:rule/StepFunctions*",
+    ]
+  }
+
+  statement {
+    sid    = "DescribeExecution"
+    effect = "Allow"
+    actions = [
+      "states:DescribeExecution",
+      "states:StopExecution",
+    ]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "sfn" {
@@ -376,10 +404,10 @@ locals {
               Resource = "arn:aws:states:::ecs:runTask.sync"
               Parameters = {
                 "TaskDefinition.$" = "$.task_def_arn"
-                ClusterArn         = var.ecs_cluster_arn != "" ? var.ecs_cluster_arn : aws_ecs_cluster.pipeline.arn
+                Cluster             = var.ecs_cluster_arn != "" ? var.ecs_cluster_arn : aws_ecs_cluster.pipeline.arn
                 LaunchType          = "FARGATE"
                 NetworkConfiguration = {
-                  AwsVpcConfiguration = {
+                  AwsvpcConfiguration = {
                     Subnets        = var.subnet_ids
                     SecurityGroups = var.security_group_ids
                     AssignPublicIp  = "DISABLED"
@@ -413,10 +441,10 @@ locals {
         Resource = "arn:aws:states:::ecs:runTask.sync"
         Parameters = {
           "TaskDefinition.$" = "$.consolidate_allocate_task_def_arn"
-          ClusterArn         = var.ecs_cluster_arn != "" ? var.ecs_cluster_arn : aws_ecs_cluster.pipeline.arn
+          Cluster             = var.ecs_cluster_arn != "" ? var.ecs_cluster_arn : aws_ecs_cluster.pipeline.arn
           LaunchType          = "FARGATE"
           NetworkConfiguration = {
-            AwsVpcConfiguration = {
+            AwsvpcConfiguration = {
               Subnets        = var.subnet_ids
               SecurityGroups = var.security_group_ids
               AssignPublicIp  = "DISABLED"
@@ -444,9 +472,22 @@ locals {
 resource "aws_sfn_state_machine" "orchestrator" {
   count = local.create_state_machine ? 1 : 0
 
-  name     = var.state_machine_name
-  role_arn = aws_iam_role.sfn.arn
+  name       = var.state_machine_name
+  role_arn   = aws_iam_role.sfn.arn
   definition = local.sfn_definition
+
+  # Ensure IAM policy is fully propagated before creating the state machine.
+  # Without this, CreateStateMachine can fail with "is not authorized to create
+  # managed-rule" due to IAM eventual consistency.
+  depends_on = [aws_iam_role_policy.sfn]
+
+  # Logging is disabled because Step Functions managed-rule creation requires
+  # logs:CreateLogDelivery on the service-linked role. Execution history is
+  # available in the Step Functions console; ECS task logs go to per-task
+  # CloudWatch log groups (configured in the ecs-task module).
+  logging_configuration {
+    level = "OFF"
+  }
 
   tags = {
     Project = "investment-portfolio-pipeline"

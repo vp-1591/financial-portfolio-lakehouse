@@ -98,8 +98,9 @@ provider "aws" {
 # ------------------------------------------------------------------------------
 
 locals {
-  env_label = "prod"
-  image_tag = "production-latest"
+  env_label   = "prod"
+  image_tag   = "production-latest"
+  az_suffixes = ["a", "b", "c"]
 
   # Connector definitions for the ecs-task module for_each.
   # Each connector specifies its command and which SSM secrets it needs.
@@ -169,7 +170,7 @@ resource "aws_s3_bucket_public_access_block" "pipeline" {
 resource "aws_s3_bucket_notification" "pipeline" {
   bucket = aws_s3_bucket.pipeline.id
 
-  eventbridge {}
+  eventbridge = true
 }
 
 # ------------------------------------------------------------------------------
@@ -248,7 +249,7 @@ resource "aws_subnet" "private" {
   count             = length(var.subnet_cidrs)
   vpc_id            = aws_vpc.pipeline.id
   cidr_block        = var.subnet_cidrs[count.index]
-  availability_zone = "${var.aws_region}${chr(97 + count.index)}"
+  availability_zone = "${var.aws_region}${local.az_suffixes[count.index]}"
 
   tags = {
     Project = "investment-portfolio-pipeline"
