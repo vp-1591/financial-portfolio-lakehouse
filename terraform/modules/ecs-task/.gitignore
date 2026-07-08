@@ -1,0 +1,3 @@
+# Terraform state and provider cache
+.terraform/
+.terraform.lock.hcl
