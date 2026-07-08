@@ -50,11 +50,12 @@ params. No CLI edit, no ASL edit, no new Terraform var, no new PassRole grant.
 The modularity foundation. Add three methods to `BrokerConnector` (base.py) and implement in each
 connector (ibkr, trading212, xtb):
 
-1. `fetch_kwargs(self, args) -> dict` — builds the connector-specific snapshot kwargs currently
-   hardcoded as the `if connector.name == "ibkr"/elif "trading212"/elif "xtb"` block in `cmd_fetch`
-   (run.py:128-196). IBKR resolves `IBKR_FLEX_TOKEN`/`IBKR_FLEX_QUERY_ID`/`IBKR_FLEX_BASE_URL`;
-   T212 resolves `T212_API_KEY`/`T212_API_SECRET` + `is_demo()` base URL; XTB reads `args.xtb_file`.
-   Each connector imports `resolve_secret`/`get_env`/`is_demo` itself. Also `fetch_cdc_kwargs(self)
+1. `fetch_kwargs(self, args: argparse.Namespace) -> dict` — builds the connector-specific
+   snapshot kwargs currently hardcoded as the `if connector.name == "ibkr"/elif "trading212"/elif "xtb"`
+   block in `cmd_fetch` (run.py:128-196). `args` is the argparse `Namespace` from the CLI parser.
+   IBKR resolves `IBKR_FLEX_TOKEN`/`IBKR_FLEX_QUERY_ID`/`IBKR_FLEX_BASE_URL`; T212 resolves
+   `T212_API_KEY`/`T212_API_SECRET` + `is_demo()` base URL; XTB reads `args.xtb_file`. Each
+   connector imports `resolve_secret`/`get_env`/`is_demo` itself. Also `fetch_cdc_kwargs(self)
    -> dict` (T212 returns its snapshot kwargs; others `{}`).
 2. `required_secrets(self) -> list[str]` — the base secret env-var names (e.g. IBKR returns
    `["IBKR_FLEX_TOKEN","IBKR_FLEX_QUERY_ID"]`). Used by a future validate step and to document SSM
@@ -62,6 +63,11 @@ connector (ibkr, trading212, xtb):
 3. `extract_holdings(self, df: pl.DataFrame, fernet_key: bytes) -> list[Holding]` — moves the
    per-broker branch ladder from `pipeline/normalized/extract.py:86-134` onto the connector. Each
    connector knows its display name, description column, and security_currency source.
+4. `enabled_env_var` — a class/instance attribute on each connector declaring the `*_ENABLED`
+   environment variable name (e.g. `IbkrConnector.enabled_env_var = "IBKR_ENABLED"`,
+   `Trading212Connector.enabled_env_var = "T212_ENABLED"`, `XtbConnector.enabled_env_var =
+   "XTB_ENABLED"`). Avoids deriving the env var name from the connector registry name (the
+   mapping is not 1:1 — `trading212` → `T212_ENABLED`, not `TRADING212_ENABLED`).
 
 `pipeline/normalized/extract.py` `extract_holdings(broker, table_path, fernet_key)` becomes a thin
 shim that reads the normalized table to a DataFrame and calls `get(broker).extract_holdings(df,
@@ -74,20 +80,22 @@ fernet_key)` — **public signature preserved** so `cmd_consolidate` and existin
 ## Step 2 — CLI: one generic `run-connector <name>` subcommand
 
 Refactor `pipeline/run.py` (no behavior change to existing commands):
-1. Extract `fetch_connector(connector, args, fernet_key) -> int` from `cmd_fetch`'s loop body
-   (114–226) — now calls `connector.fetch_kwargs(args)` (no `if/elif`), then
-   `connector.fetch_snapshot(**kwargs)`, ingests raw, tries CDC. The XTB multi-file append loop
-   moves inside `XtbConnector.fetch_kwargs`/`fetch_snapshot` (or the helper handles
+1. Extract `fetch_connector(connector, args: argparse.Namespace, fernet_key) -> int` from
+   `cmd_fetch`'s loop body (114–226) — now calls `connector.fetch_kwargs(args)` (no `if/elif`),
+   then `connector.fetch_snapshot(**kwargs)`, ingests raw, tries CDC. The XTB multi-file append
+   loop moves inside `XtbConnector.fetch_kwargs`/`fetch_snapshot` (or the helper handles
    `args.xtb_file` list — pick the cleaner spot during impl). Preserve error-to-stderr behavior.
 2. Extract `transform_connector(connector, fernet_key) -> int` from `cmd_transform`'s loop body
    (240–284).
 3. `cmd_fetch`/`cmd_transform` iterate `all()` and call the helpers — unchanged behavior.
 4. **One** new subcommand `run-connector` with positional `connector` (connector name) + the
    `--xtb-file` (append) and `common_parser` args. `cmd_run_connector(args)`:
-   `connector = get(args.connector)`; if `not is_enabled(<NAME>_ENABLED)`: log + return 0 (runtime
-   gate, matches existing behavior); `rc = fetch_connector(...)`; `return rc if rc else
-   transform_connector(...)`. For XTB without `--xtb-file`: print error, return **1** (dedicated
-   subcommand fails loudly, unlike `cmd_fetch`'s silent skip).
+   `connector = get(args.connector)`; if `not is_enabled(connector.enabled_env_var)`: log + return
+   0 (runtime gate, matches existing behavior — uses the connector's `enabled_env_var` attribute
+   so `trading212` maps to `T212_ENABLED`, not `TRADING212_ENABLED`); `rc =
+   fetch_connector(...)`; `return rc if rc else transform_connector(...)`. For XTB without
+   `--xtb-file`: print error, return **1** (dedicated subcommand fails loudly, unlike
+   `cmd_fetch`'s silent skip).
 5. `cmd_run_consolidate_allocate(args)` — `cmd_consolidate(args)` then `cmd_allocate(args)` (both
    idempotent full-overwrite; reuse unchanged). Register subcommand `run-consolidate-allocate`
    with `common_parser` + `--fx-rate`/`--isin`/`--isin-map-file`.
@@ -110,6 +118,11 @@ Task execution role: ECR pull (attach `ecr_policy_arn`), CloudWatch Logs put,
 `ssm:GetParameters` + `kms:Decrypt` on the env KMS key for `secrets`.
 Task role: S3 read/write scoped to this env's `bucket_name`/`s3_prefix` only — no cross-env access.
 
+CloudWatch Logs: Terraform creates one log group per task definition with naming convention
+`/ecs/portfolio-pipeline-<env>-<connector>` (e.g. `/ecs/portfolio-pipeline-prod-ibkr`).
+Retention: 7 days (personal-use pipeline; adjust if needed later). ECS `logConfiguration` in the
+task definition points to the corresponding log group.
+
 ---
 
 ## Step 4 — Terraform `terraform/shared/` (orchestration + triggers)
@@ -117,7 +130,8 @@ Task role: S3 read/write scoped to this env's `bucket_name`/`s3_prefix` only —
 Variables: `scheduled` (bool, default `false`), `xtb_enabled` (bool, default `true` — also creates
 the S3 file-arrival rule), `schedule_connectors` (list, default `["ibkr","t212"]`),
 `file_arrival_connectors` (list, default `["ibkr","t212","xtb"]`), `task_def_arns` (map
-`name→arn`, default `{}` — fed from prod/demo outputs via tfvars),
+`name→arn`, default `{}` — fed from prod/demo outputs via tfvars; **keys are connector registry
+names** like `ibkr`, `trading212`, `xtb` matching the `for_each` keys in per-env modules),
 `consolidate_allocate_task_def_arn` (string), `xtb_staging_bucket_name`, `xtb_staging_prefix`
 (default `staging/xtb/`), `schedule_cron` (default `0 6 * * ? *`), `ecs_cluster_arn`, `subnet_ids`,
 `security_group_id`, `state_machine_name` (default `portfolio-pipeline-orchestrator`).
@@ -144,12 +158,18 @@ Resources (gated by `count`):
 - `aws_cloudwatch_event_rule` `xtb_file_arrival` (`count = var.xtb_enabled ? 1 : 0`):
   `source=["aws.s3"]`, `detail-type=["Object Created"]`, `detail.bucket.name`/`detail.object.key`
   prefix from `var.xtb_staging_prefix`. Target → state machine; `input_transformer` builds the
-  execution input: `{"demo":..., "connectors": var.file_arrival_connectors, "task_def_arns": ...,
-  "consolidate_allocate_task_def_arn":..., "xtb_file_uri": "s3://{bucket}/{encoded-key}"}` and
-  constructs each item's `command` (xtb item gets `--xtb-file <xtb_file_uri>`).
+  execution input using **static constant templates** (EventBridge input transformers support
+  constant values and `$.detail` JSON path extraction, but cannot dynamically construct lists).
+  The `connectors` array is defined as a constant in the input_transformer template — adding a
+  connector requires updating this template in Terraform, which is acceptable since it's
+  configuration-only (no ASL or CLI edit). The template specifies each connector item's `name`,
+  `task_def_arn` (looked up from `var.task_def_arns`), and `command` (e.g.
+  `["run-connector","xtb","--xtb-file","s3://..."]` for the xtb item).
 - `aws_cloudwatch_event_rule` `daily_schedule` (`count = var.scheduled ? 1 : 0`):
   `schedule_expression = var.schedule_cron`. Target → state machine; input lists
-  `var.schedule_connectors` (no xtb_file). **No XTB item, no broken `States.Format`.**
+  `var.schedule_connectors` (no xtb_file). **No XTB item, no broken `States.Format`.** Like
+  the file-arrival rule, the input_transformer uses static constant templates for the
+  `connectors` array.
 
 ### Daily-schedule + XTB correctness (bug avoided)
 An earlier design put both triggers into one state machine with a literal XTB branch reading
@@ -178,10 +198,16 @@ For each env (prod: `DEMO=false`, image `production-latest`; demo: `DEMO=true`, 
 - `aws_s3_bucket_notification` with empty `eventbridge {}` block (enables EventBridge on the
   bucket so the XTB file-arrival rule fires).
 - SSM `SecureString` parameter *names* + per-env `aws_kms_key` + grants (Terraform creates names +
-  KMS + grants; **values seeded out-of-band** — see Step 7).
+  KMS + grants; **values seeded out-of-band** — see Step 7). SSM naming convention mirrors
+  `DEMO_SECRET_MAP` in `secrets.py`:
+  - Prod: `/portfolio/prod/<SECRET>` (e.g. `/portfolio/prod/IBKR_FLEX_TOKEN`)
+  - Demo: `/portfolio/demo/<SECRET>_DEMO` (e.g. `/portfolio/demo/IBKR_FLEX_TOKEN_DEMO`)
+  This matches the existing convention where demo variants use `_DEMO` suffix.
 - VPC: `aws_vpc` + **private** subnets + `aws_security_group` (egress to VPC endpoints) + **S3,
   ECR, and CloudWatch Logs VPC interface endpoints** (`aws_vpc_endpoint`, `Interface`) with
-  route-table/private-DNS. No public IP. `cluster_arn` passed in from `shared/`.
+  route-table/private-DNS. No public IP. **Separate VPC per environment** (one in `prod/`, one in
+  `demo/`) — full data isolation matches the existing S3/IAM model. `cluster_arn` passed in from
+  `shared/`.
 - Outputs: map of connector task-def ARNs + `consolidate_allocate_task_def_arn` + bucket name +
   subnet ids + security group id (consumed by `shared/` via tfvars).
 
@@ -258,10 +284,10 @@ Create `docs/adr/0051-step-functions-orchestration.md`:
   trigger for the registry-driven revision.
 - **Decision** — orchestrator `Map` over a connector list from execution input (not literal
   branches); one `run-connector <name>` subcommand; connector self-description via
-  `fetch_kwargs`/`required_secrets`/`extract_holdings`; SSM SecureString secrets + per-env KMS;
-  VPC endpoints (no public IP); cluster-in-shared/networking-in-env; variable-based apply
-  decoupling; PassRole scoped to a role-name prefix; per-connector task defs via module `for_each`
-  for secret isolation.
+  `fetch_kwargs`/`required_secrets`/`extract_holdings`/`enabled_env_var`; SSM SecureString secrets
+  + per-env KMS; VPC endpoints (no public IP); cluster-in-shared/networking-in-env;
+  variable-based apply decoupling; PassRole scoped to a role-name prefix; per-connector task defs
+  via module `for_each` for secret isolation; CloudWatch Logs with 7-day retention per task.
 - **Constraints** — existing connectors keep working; `DEMO` isolation intact; state files
   independent; `ENCRYPTION_KEY` continuity; no `boto3` in app (EventBridge triggers the state
   machine; app uses PyArrow S3 — corrects ADR 0048's speculative "Phase 2 will add boto3").
@@ -280,6 +306,40 @@ Create `docs/adr/0051-step-functions-orchestration.md`:
 Update `docs/adr/README.md` index: append `| 0051 | Step Functions Orchestration | 2026-07-08 |
 active | — |`. Update `docs/roadmaps/roadmap-productionization.md` Phase 2 heading →
 `*[status: done]*`.
+
+---
+
+## Implementation sharding
+
+The plan is split into three PRs for focused review:
+
+### PR 1: Connector protocol (Steps 1)
+
+Connector self-description: `fetch_kwargs`, `fetch_cdc_kwargs`, `required_secrets`,
+`extract_holdings`, `enabled_env_var` on the `BrokerConnector` protocol. Implement in all three
+connectors. Refactor `extract_holdings` in `pipeline/normalized/extract.py` to delegate to
+connectors. **No behavior change** — existing `full`/`fetch`/`transform`/`consolidate`/`allocate`
+commands produce identical results.
+
+**Verification:** all existing tests pass; new unit tests for each connector's protocol methods.
+
+### PR 2: CLI subcommands (Step 2 + Step 6)
+
+Extract `fetch_connector`/`transform_connector` helpers from `cmd_fetch`/`cmd_transform`. Add
+`run-connector <name>` and `run-consolidate-allocate` subcommands. XTB S3 key percent-decoding in
+`_read_file_bytes`. Update `cmd_upload_xtb` print message. **No behavior change to existing
+commands** — `full`/`fetch`/`transform` still work identically.
+
+**Verification:** existing + new tests pass; `docker build` succeeds; `run-connector --help` and
+`run-consolidate-allocate --help` print usage.
+
+### PR 3: Terraform infrastructure (Steps 3–5 + Steps 7–8)
+
+ECS task module, shared orchestrator state machine + EventBridge triggers, per-env task defs + VPC
++ SSM + IAM. Secrets seeding runbook. Apply sequencing. ADR 0051 + roadmap status update.
+
+**Verification:** `terraform validate` + `terraform plan` in `shared/`, `prod/`, `demo/`; end-to-end
+cloud smoke test.
 
 ---
 

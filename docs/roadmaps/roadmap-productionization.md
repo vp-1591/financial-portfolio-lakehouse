@@ -64,25 +64,27 @@ Planned work:
 
 A single orchestrator Step Function runs all enabled connectors in parallel,
 waits for them to complete, then runs consolidate+allocate once — producing a
-consistent snapshot across all enabled connectors. Triggers and connector
-inclusion are explicit configuration, not derived from each other.
+consistent snapshot across all enabled connectors. The implementation plan is
+in `docs/roadmaps/phase-2-step-functions-orchestration.md`.
 
 #### Configuration
 
-The orchestrator is driven by four explicit flags (Terraform variables that
-map to the existing app-level env vars and to EventBridge rule creation):
+The orchestrator is driven by two trigger-creation flags and two connector
+lists (Terraform variables that control EventBridge rule creation and
+execution input):
 
-| Flag | Controls | Default |
+| Variable | Controls | Default |
 |---|---|---|
 | `scheduled` | Whether an EventBridge daily-schedule trigger fires the orchestrator | `false` when `xtb_enabled`, else `true` |
-| `ibkr_enabled` | Whether the orchestrator includes the IBKR fetch+transform task | `true` |
-| `t212_enabled` | Whether the orchestrator includes the T212 fetch+transform task | `true` |
-| `xtb_enabled` | Whether the orchestrator includes XTB, and whether the S3 file-arrival trigger is created | `true` |
+| `xtb_enabled` | Whether the S3 file-arrival trigger is created | `true` |
+| `schedule_connectors` | Which connectors the daily-schedule trigger includes | `["ibkr","t212"]` |
+| `file_arrival_connectors` | Which connectors the XTB file-arrival trigger includes | `["ibkr","t212","xtb"]` |
 
-The orchestrator fans out to every `*_enabled` connector, waits for all to
-complete, then runs consolidate+allocate. A deployment with only IBKR sets
-`t212_enabled=false` and `xtb_enabled=false`; the orchestrator runs IBKR,
-waits, then consolidates. No manual "disable from prerequisites" step.
+Connector inclusion is a **list in execution input**, not per-connector ASL
+branches. The orchestrator `Map` state iterates over `$.connectors` from the
+execution input — each item specifies `{name, task_def_arn, command}`. Adding
+a connector requires only updating the connector lists and adding a `locals`
+map entry per env, no ASL or CLI edit.
 
 #### Triggers
 
@@ -97,17 +99,35 @@ Two independent trigger sources, each created only when its flag is set:
   on a cron expression. Used when there is no manual gating connector.
 
 ```
-Orchestrator (single state machine, two possible triggers)
+Orchestrator (single state machine, Map over execution input)
   trigger: S3 file arrival (if xtb_enabled) AND/OR daily schedule (if scheduled)
-    ├─ XTB fetch+transform (if xtb_enabled)     ─┐
-    ├─ IBKR fetch+transform (if ibkr_enabled)   ─┤
-    ├─ T212 fetch+transform (if t212_enabled)   ─┤
-    └─ wait for all enabled connectors             │
-    └─ consolidate+allocate  ◄─────────────────────┘
+    ├─ Map over $.connectors (each item: {name, task_def_arn, command})
+    │   ├─ RunTask.sync: run-connector <name> (per connector)
+    │   └─ Retry on States.TaskFailed (connector-level isolation)
+    └─ RunTask.sync: run-consolidate-allocate
 ```
 
-Each bracketed step is one Fargate task running the existing Docker image with
-a different subcommand.
+Each connector task is one Fargate task running the existing Docker image with
+`run-connector <name>`.
+
+#### Connector self-description and CLI subcommands
+
+Connectors become self-describing via the `BrokerConnector` protocol — each
+connector declares `fetch_kwargs`, `required_secrets`, `extract_holdings`,
+and `enabled_env_var`. This replaces the per-connector `if/elif` branching in
+`cmd_fetch` and `extract_holdings`.
+
+The CLI has one generic connector subcommand and one consolidation subcommand
+(rather than per-connector subcommands):
+
+| Subcommand | What it runs |
+|---|---|
+| `run-connector <name>` | Fetch+transform for the named connector (e.g. `run-connector ibkr`) |
+| `run-consolidate-allocate` | Consolidate → allocate |
+
+Adding a connector requires zero CLI changes — only a new connector package,
+secrets entries, and a `locals` map entry per env. The existing `full`
+subcommand remains for local development and testing.
 
 #### Recommended combinations and the consistency trade-off
 
@@ -124,6 +144,19 @@ Running consolidate+allocate after each connector means analytics reflects
 partial data (e.g., IBKR's new data mixed with T212's previous snapshot). The
 orchestrator waits for all enabled connectors to complete, then runs
 consolidate+allocate once for a consistent snapshot.
+
+**Why Map over execution input, not literal Parallel branches?**
+
+Literal `Parallel` branches in ASL bake connector names into the state machine
+definition — adding a 4th connector requires editing the ASL, adding a CLI
+subcommand, adding Terraform variables, and adding `iam:PassRole` grants. The
+Map-over-input design drives connector inclusion from a list in execution
+input, so adding a connector touches only: (1) new connector package, (2)
+secrets entries, (3) one `locals` map entry per env. It also fixes a
+correctness bug: with literal branches, a daily schedule that includes an XTB
+branch would error because `$.detail.object.key` doesn't exist on schedule
+input — the Map design simply omits the XTB item from the schedule trigger's
+input.
 
 **Why is XTB file arrival the recommended trigger when XTB is enabled?**
 
@@ -142,46 +175,6 @@ set `scheduled=true` and `xtb_enabled=true` for a fully automated, consistent
 daily run. Until then, leave `scheduled=false` when `xtb_enabled=true` and use
 the manual upload as the trigger.
 
-**Why two Fargate tasks per connector, not four?**
-
-The pipeline has four logical steps (fetch, transform, consolidate, allocate),
-but running each as a separate Fargate task means four cold starts per connector
-run — roughly 3–4 minutes of overhead for a pipeline whose actual work takes
-under a minute. Grouping into two tasks (connector work, then consolidation)
-cuts cold starts from 4 to 2 while preserving orchestration benefits:
-
-- **Fewer cold starts** — two per connector run instead of four, cutting
-  overhead from ~3–4 minutes to ~1.5–2 minutes
-- **Consistent snapshots** — the orchestrator waits for all enabled connectors,
-  then runs consolidate+allocate once
-- **Idempotent by design** — consolidate and allocate are full-snapshot
-  overwrites, so re-running the orchestrator is safe and correct
-- **Per-broker retry** — one broker's flaky API doesn't block the others;
-  Step Functions retry with exponential backoff on the connector task, then
-  the orchestrator retries
-- **Failure isolation** — IBKR down doesn't block T212; a failed connector
-  task is retried independently within the orchestrator run
-
-Step-level durations (how long each step took) move from the Step Functions
-graph to structured CloudWatch logs. This is an acceptable trade-off: for a
-daily personal pipeline, log-based observability is sufficient and avoids
-per-step cold starts that would add 2+ minutes of overhead per run.
-
-**Connector subcommands**
-
-Each connector needs a thin CLI wrapper that runs fetch+transform sequentially
-within a single process:
-
-| Subcommand | What it runs |
-|---|---|
-| `run-ibkr` | IBKR fetch → IBKR transform |
-| `run-t212` | T212 fetch → T212 transform |
-| `run-xtb` | XTB fetch → XTB transform |
-| `run-consolidate-allocate` | Consolidate → allocate |
-
-The existing `full` subcommand (fetch → transform → consolidate → allocate for
-all enabled connectors) remains for local development and testing.
-
 #### AWS resource isolation
 
 AWS resources follow a hybrid model — shared orchestration, isolated data access:
@@ -190,29 +183,35 @@ AWS resources follow a hybrid model — shared orchestration, isolated data acce
 |---|---|---|
 | ECR repository | `shared/` | Both environments use the same Docker image with different tags (staging-latest, production-latest) |
 | Step Functions | `shared/` | State machines are orchestration wiring, not data. `DEMO` parameter selects the environment. |
-| ECS task definitions | `prod/` and `demo/` | Task definitions include `DEMO` flag and reference environment-specific IAM roles and S3 buckets. |
-| IAM roles (task execution) | `prod/` and `demo/` | Production tasks access production S3; demo tasks access demo S3. No cross-environment access. |
+| ECS task definitions | `prod/` and `demo/` | Created via `terraform/modules/ecs-task/` module with `for_each = local.connectors`. Each connector gets its own task def for secret isolation. |
+| IAM roles (task execution) | `prod/` and `demo/` | Production tasks access production S3; demo tasks access demo S3. No cross-environment access. `iam:PassRole` scoped to role-name prefix, not enumerated ARNs. |
 | S3 buckets | `prod/` and `demo/` | Already isolated (ADR 0037, 0038). |
-| EventBridge rules | `shared/` | S3 file arrival rule (created when `xtb_enabled=true`) and daily schedule rule (created when `scheduled=true`) are environment-agnostic. Rule creation is gated by the config flags. |
+| VPC + endpoints | `prod/` and `demo/` | Separate VPC per environment with private subnets, S3/ECR/CloudWatch interface endpoints. No public IP. Full data isolation. |
+| EventBridge rules | `shared/` | S3 file arrival rule (created when `xtb_enabled=true`) and daily schedule rule (created when `scheduled=true`) are environment-agnostic. |
 
 The pattern follows the existing ECR approach (ADR 0049): `terraform/shared/`
 defines the shared infrastructure, and `prod/`/`demo/` look up shared
 resources by name via `data` sources. ECS task definitions in `prod/` and
 `demo/` pass `DEMO=true` or `DEMO=false` as an environment variable, matching
-the environment selector established in ADR 0049. The `scheduled` and
-`*_enabled` flags are Terraform variables in `shared/` that control which
-EventBridge rules and ECS connector tasks are created.
+the environment selector established in ADR 0049. Connector task defs are
+created via a `for_each` over a `local.connectors` map per env — adding a
+connector requires one `locals` map entry per env and SSM params, no CLI or ASL
+edit.
 
 #### AWS resources needed
 
 - **Step Functions** — one orchestrator state machine. Triggered by S3 file
   arrival (if `xtb_enabled=true`) and/or daily schedule (if `scheduled=true`).
-- **ECS Fargate** — four task definitions per environment: one per connector
-  (ibkr, t212, xtb) and one for consolidate-allocate
+  Uses a `Map` state over `$.connectors` from execution input, not literal
+  Parallel branches.
+- **ECS Fargate** — per-connector task definitions (via `for_each` module) plus
+  one consolidate-allocate task def, per environment
 - **EventBridge** — S3 file arrival rule (created if `xtb_enabled=true`) and/or
   daily schedule rule (created if `scheduled=true`) targeting the orchestrator
 - **S3** — already in use for Delta Lake storage (separate buckets for staging
   vs prod); `staging/xtb/` prefix for XTB file arrival trigger
+- **VPC** — one per environment with private subnets and S3/ECR/CloudWatch
+  interface endpoints
 - **IAM roles** — task execution role per environment (prod + demo), Step
   Functions role, per-connector least-privilege policies
 
@@ -286,16 +285,19 @@ code changes.
 
 ### Phase 2 — Step Functions orchestration
 
-Move the core pipeline execution to an orchestrator Step Function that fans out
-to enabled connectors, waits for all to complete, then runs
-consolidate+allocate once for a consistent snapshot. Triggers and connector
-inclusion are explicit config flags (`scheduled`, `ibkr_enabled`,
-`t212_enabled`, `xtb_enabled`): S3 file arrival fires the orchestrator when
-`xtb_enabled=true`, a daily schedule fires it when `scheduled=true`. Add
-connector subcommands (`run-ibkr`, `run-t212`, `run-xtb`,
-`run-consolidate-allocate`) and set up ECS task definitions (in `prod/` and
-`demo/`), a shared state machine (in `shared/`), EventBridge triggers, and
-IAM roles.
+Move the core pipeline execution to an orchestrator Step Function that uses a
+`Map` state over a connector list from execution input, waits for all to
+complete, then runs consolidate+allocate once for a consistent snapshot.
+Connector inclusion is driven by `schedule_connectors`/`file_arrival_connectors`
+lists in execution input, not per-connector ASL branches. Triggers are
+controlled by `scheduled` and `xtb_enabled` flags. Add a generic `run-connector
+<name>` subcommand (plus `run-consolidate-allocate`) and make connectors
+self-describing via the `BrokerConnector` protocol (`fetch_kwargs`,
+`required_secrets`, `extract_holdings`, `enabled_env_var`). Set up ECS task
+definitions via a `for_each` module pattern (in `prod/` and `demo/`), a shared
+state machine (in `shared/`), EventBridge triggers, per-environment VPCs, and
+IAM roles. See `docs/roadmaps/phase-2-step-functions-orchestration.md` for the
+authoritative implementation plan.
 
 ### Phase 3 — Staging data quality gates
 
@@ -324,6 +326,8 @@ and schedule.
 | **Single monolithic Step Function** (all connectors in one run) | XTB has no API and must wait for manual file upload — it would block IBKR/T212 or require coordination before every run. |
 | **Deriving the trigger from `xtb_enabled` (no explicit `scheduled` flag)** | Magic/implicit behavior — the user can't schedule with XTB enabled even if they've automated XTB extraction. An explicit `scheduled` flag makes the trigger a deliberate config choice with the consistency trade-off documented above. |
 | **Separate XTB Step Function running consolidate+allocate** | Produces a snapshot with XTB's new data + IBKR/T212's stale daily data — not consistent. Folding XTB into the orchestrator run fetches all connectors fresh together. |
+| **Per-connector CLI subcommands** (`run-ibkr`, `run-t212`, `run-xtb`) | Adding a 4th connector requires a new CLI subcommand, new argparse handler, and new wiring. A generic `run-connector <name>` subcommand paired with self-describing connectors means zero CLI changes for new connectors. |
+| **Literal Parallel branches in ASL** | Baking connector names into the state machine definition means adding a connector requires editing the ASL, adding Terraform variables, and adding `iam:PassRole` grants. A `Map` over execution input makes connector inclusion configuration-only. Also causes a correctness bug: daily schedule + XTB branch fails because `$.detail.object.key` doesn't exist on schedule input. |
 | **Lambda functions** | Requires rewriting all pipeline code for Lambda constraints (deployment package size limits, no native Delta Lake support, 15-minute timeout). The existing Docker image runs unmodified on Fargate. |
 | **Long-running ECS service** (always-on container) | Costs orders of magnitude more for a pipeline that runs once daily. Paying for idle compute contradicts the event-driven model. |
 | **Fully isolated orchestration per environment** | Doubles Terraform for Step Functions (one set per env). State machines are orchestration wiring — the `DEMO` flag already selects the environment. Isolation belongs at the data layer (S3, IAM), not the orchestration layer. |
