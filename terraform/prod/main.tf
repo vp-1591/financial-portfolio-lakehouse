@@ -404,6 +404,10 @@ resource "aws_ssm_parameter" "ibkr_flex_token" {
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER" # Seed out-of-band: aws ssm put-parameter --name /portfolio/prod/IBKR_FLEX_TOKEN --value "..." --type SecureString --key-id <kms-key-id>
 
+  lifecycle {
+    ignore_changes = [value]
+  }
+
   tags = {
     Project = "investment-portfolio-pipeline"
     Env     = local.env_label
@@ -416,6 +420,10 @@ resource "aws_ssm_parameter" "ibkr_flex_query_id" {
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 
   tags = {
     Project = "investment-portfolio-pipeline"
@@ -431,6 +439,10 @@ resource "aws_ssm_parameter" "t212_api_key" {
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
 
+  lifecycle {
+    ignore_changes = [value]
+  }
+
   tags = {
     Project = "investment-portfolio-pipeline"
     Env     = local.env_label
@@ -443,6 +455,10 @@ resource "aws_ssm_parameter" "t212_api_secret" {
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 
   tags = {
     Project = "investment-portfolio-pipeline"
@@ -457,6 +473,10 @@ resource "aws_ssm_parameter" "encryption_key" {
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 
   tags = {
     Project = "investment-portfolio-pipeline"

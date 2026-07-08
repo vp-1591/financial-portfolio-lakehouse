@@ -323,17 +323,13 @@ data "aws_iam_policy_document" "sfn" {
     actions = [
       "iam:PassRole",
     ]
-    # Scope PassRole to task execution and task roles by naming convention.
-    # A new connector adds a role matching the prefix — no policy edit needed.
+    # Scope PassRole to task execution and task roles by environment prefix.
+    # A new connector adds a role matching pipeline-task-{env}-{name} — no policy edit needed.
     resources = [
-      "arn:aws:iam::*:role/pipeline-task-exec-*-ibkr",
-      "arn:aws:iam::*:role/pipeline-task-exec-*-trading212",
-      "arn:aws:iam::*:role/pipeline-task-exec-*-xtb",
-      "arn:aws:iam::*:role/pipeline-task-exec-*-consolidate-allocate",
-      "arn:aws:iam::*:role/pipeline-task-*-ibkr",
-      "arn:aws:iam::*:role/pipeline-task-*-trading212",
-      "arn:aws:iam::*:role/pipeline-task-*-xtb",
-      "arn:aws:iam::*:role/pipeline-task-*-consolidate-allocate",
+      "arn:aws:iam::*:role/pipeline-task-exec-prod-*",
+      "arn:aws:iam::*:role/pipeline-task-exec-demo-*",
+      "arn:aws:iam::*:role/pipeline-task-prod-*",
+      "arn:aws:iam::*:role/pipeline-task-demo-*",
     ]
   }
 }

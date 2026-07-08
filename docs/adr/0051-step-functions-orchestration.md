@@ -16,7 +16,7 @@ The registry-driven revision fixes both problems: connector inclusion is driven 
 
 3. **Connector self-description via `BrokerConnector` protocol** — each connector declares `fetch_kwargs`, `required_secrets`, `extract_holdings`, and `enabled_env_var`. This replaces per-connector `if/elif` branching.
 
-4. **SSM SecureString secrets + per-env KMS** — secrets stored in SSM Parameter Store as `SecureString`, encrypted with per-environment KMS keys. Naming convention mirrors `DEMO_SECRET_MAP` in `secrets.py`: `/portfolio/prod/<SECRET>` for prod, `/portfolio/demo/<SECRET>_DEMO` for demo. Terraform creates parameter names and KMS keys; values are seeded out-of-band (never in Terraform state).
+4. **SSM SecureString secrets + per-env KMS** — secrets stored in SSM Parameter Store as `SecureString`, encrypted with per-environment KMS keys. Naming convention mirrors `DEMO_SECRET_MAP` in `secrets.py`: `/portfolio/prod/<SECRET>` for prod, `/portfolio/demo/<SECRET>_DEMO` for demo. Terraform creates parameter names and KMS keys; values are seeded out-of-band (never in Terraform state). Each parameter has `lifecycle { ignore_changes = [value] }` so subsequent `terraform apply` does not overwrite seeded values with the placeholder.
 
 5. **VPC endpoints (no public IP)** — each environment has its own VPC with private subnets and S3/ECR/CloudWatch/SSM VPC interface endpoints. Separate VPC per environment matches the existing S3/IAM isolation model.
 

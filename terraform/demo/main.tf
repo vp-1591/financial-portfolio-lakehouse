@@ -395,6 +395,10 @@ resource "aws_ssm_parameter" "ibkr_flex_token_demo" {
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
 
+  lifecycle {
+    ignore_changes = [value]
+  }
+
   tags = {
     Project = "investment-portfolio-pipeline-demo"
     Env     = local.env_label
@@ -407,6 +411,10 @@ resource "aws_ssm_parameter" "ibkr_flex_query_id_demo" {
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 
   tags = {
     Project = "investment-portfolio-pipeline-demo"
@@ -422,6 +430,10 @@ resource "aws_ssm_parameter" "t212_api_key_demo" {
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
 
+  lifecycle {
+    ignore_changes = [value]
+  }
+
   tags = {
     Project = "investment-portfolio-pipeline-demo"
     Env     = local.env_label
@@ -434,6 +446,10 @@ resource "aws_ssm_parameter" "t212_api_secret_demo" {
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 
   tags = {
     Project = "investment-portfolio-pipeline-demo"
@@ -448,6 +464,10 @@ resource "aws_ssm_parameter" "encryption_key_demo" {
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
   value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 
   tags = {
     Project = "investment-portfolio-pipeline-demo"
