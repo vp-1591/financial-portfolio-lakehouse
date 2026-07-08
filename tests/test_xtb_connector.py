@@ -459,3 +459,60 @@ class TestFetchFromS3:
 
         assert payload == expected_bytes
         assert filename == report.name
+
+    def test_read_file_bytes_s3_percent_decodes_key(
+        self, xlsx_bytes: bytes, monkeypatch
+    ) -> None:
+        """EventBridge delivers percent-encoded S3 keys; _read_file_bytes decodes them."""
+        from pipeline.connectors.xtb.fetch import _read_file_bytes
+
+        captured_uris: list[str] = []
+
+        def mock_read_s3_bytes(uri: str):
+            captured_uris.append(uri)
+            return xlsx_bytes, "report with spaces.xlsx"
+
+        monkeypatch.setattr("pipeline.s3.read_s3_bytes", mock_read_s3_bytes)
+
+        # EventBridge delivers keys with %20 for spaces
+        payload, filename = _read_file_bytes(
+            "s3://bucket/staging/xtb/report%20with%20spaces.xlsx"
+        )
+        assert payload == xlsx_bytes
+        # The decoded URI should have spaces, not %20
+        assert captured_uris[0] == "s3://bucket/staging/xtb/report with spaces.xlsx"
+
+    def test_read_file_bytes_s3_no_double_decode(
+        self, xlsx_bytes: bytes, monkeypatch
+    ) -> None:
+        """A key with a literal % should not be double-decoded."""
+        from pipeline.connectors.xtb.fetch import _read_file_bytes
+
+        captured_uris: list[str] = []
+
+        def mock_read_s3_bytes(uri: str):
+            captured_uris.append(uri)
+            return xlsx_bytes, "report.xlsx"
+
+        monkeypatch.setattr("pipeline.s3.read_s3_bytes", mock_read_s3_bytes)
+
+        # A key with no percent-encoding should pass through unchanged
+        payload, filename = _read_file_bytes("s3://bucket/staging/xtb/report.xlsx")
+        assert captured_uris[0] == "s3://bucket/staging/xtb/report.xlsx"
+
+    def test_read_file_bytes_s3_multiple_percent_encodings(
+        self, xlsx_bytes: bytes, monkeypatch
+    ) -> None:
+        """Multiple percent-encoded characters in a single key are all decoded."""
+        from pipeline.connectors.xtb.fetch import _read_file_bytes
+
+        captured_uris: list[str] = []
+
+        def mock_read_s3_bytes(uri: str):
+            captured_uris.append(uri)
+            return xlsx_bytes, "my report.xlsx"
+
+        monkeypatch.setattr("pipeline.s3.read_s3_bytes", mock_read_s3_bytes)
+
+        payload, filename = _read_file_bytes("s3://bucket/staging/xtb/my%20report.xlsx")
+        assert captured_uris[0] == "s3://bucket/staging/xtb/my report.xlsx"

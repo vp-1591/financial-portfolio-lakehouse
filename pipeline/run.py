@@ -10,6 +10,9 @@ Usage::
     python -m pipeline.run keygen
     python -m pipeline.run query "SELECT * FROM portfolio_allocation_analytics"
     python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
+    python -m pipeline.run run-connector ibkr
+    python -m pipeline.run run-connector xtb --xtb-file s3://bucket/staging/xtb/report.xlsx
+    python -m pipeline.run run-consolidate-allocate --target-currency EUR
 
 Connector enable/disable is controlled by environment variables:
 
@@ -28,15 +31,12 @@ import logging
 import sys
 from pathlib import Path
 
-from pipeline.connectors.registry import all
+from pipeline.connectors.registry import all, get
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import (
-    get_env,
     inject_secrets,
-    is_demo,
     is_enabled,
-    resolve_secret,
 )
 from pipeline.storage import get_storage
 
@@ -104,183 +104,162 @@ def cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_fetch(args: argparse.Namespace) -> int:
-    """Fetch data from brokers and write to raw Delta tables."""
+def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> int:
+    """Fetch data from a single connector and write to raw Delta tables.
+
+    Returns 0 on success or when the connector is skipped (missing secrets,
+    not implemented).  Returns 1 if any fetch operation failed, so that
+    callers like :func:`cmd_run_connector` can skip the transform step.
+    """
     from pipeline.raw.ingest import ingest_raw
 
+    error_occurred = False
+
+    # XTB handles multiple files — iterate over each one.
+    if connector.name == "xtb":
+        xtb_files = getattr(args, "xtb_file", None)
+        if not xtb_files:
+            return 0
+        for xtb_file in xtb_files if isinstance(xtb_files, list) else [xtb_files]:
+            try:
+                raw = connector.fetch_snapshot(file_path=xtb_file)
+                table_path = get_raw_path(connector.name, "snapshot")
+                get_storage().backend.ensure_parent(table_path)
+                count = ingest_raw(raw, table_path, fernet_key)
+                logger.debug(
+                    "%s snapshot: %d rows written", connector.display_name, count
+                )
+            except Exception as exc:
+                error_occurred = True
+                print(
+                    f"  Error fetching {connector.display_name} snapshot: {exc}",
+                    file=sys.stderr,
+                )
+        return 1 if error_occurred else 0
+
+    # All other connectors use the fetch_kwargs protocol.
+    snapshot_kwargs = connector.fetch_kwargs(args)
+    if not snapshot_kwargs:
+        logger.debug(
+            "Skipping %s: required secrets not configured", connector.display_name
+        )
+        return 0
+
+    cdc_kwargs = connector.fetch_cdc_kwargs()
+
+    try:
+        raw = connector.fetch_snapshot(**snapshot_kwargs)
+        table_path = get_raw_path(connector.name, "snapshot")
+        get_storage().backend.ensure_parent(table_path)
+        count = ingest_raw(raw, table_path, fernet_key)
+        logger.debug("%s snapshot: %d rows written", connector.display_name, count)
+    except NotImplementedError:
+        logger.debug("%s snapshot: not implemented", connector.display_name)
+    except Exception as exc:
+        error_occurred = True
+        print(
+            f"  Error fetching {connector.display_name} snapshot: {exc}",
+            file=sys.stderr,
+        )
+
+    # Try CDC
+    try:
+        raw_cdc = connector.fetch_cdc(**cdc_kwargs)
+        cdc_path = get_raw_path(connector.name, "cdc")
+        get_storage().backend.ensure_parent(cdc_path)
+        count = ingest_raw(raw_cdc, cdc_path, fernet_key)
+        logger.debug("%s CDC: %d rows written", connector.display_name, count)
+    except NotImplementedError:
+        logger.debug("%s CDC: not implemented", connector.display_name)
+    except Exception as exc:
+        error_occurred = True
+        print(
+            f"  Error fetching {connector.display_name} CDC: {exc}",
+            file=sys.stderr,
+        )
+
+    return 1 if error_occurred else 0
+
+
+def transform_connector(connector, fernet_key: bytes) -> int:
+    """Transform raw data for a single connector into normalized Delta tables.
+
+    Returns 0 on success or when the connector is skipped (no raw data,
+    not implemented).
+    """
+    from deltalake import DeltaTable, write_deltalake
+
+    storage_opts = get_storage().storage_options
+
+    for layer in ("snapshot", "cdc"):
+        raw_path = get_raw_path(connector.name, layer)
+        try:
+            dt = DeltaTable(raw_path, storage_options=storage_opts)
+        except Exception:
+            continue
+
+        raw_table = dt.to_pyarrow_table()
+        if raw_table.num_rows == 0:
+            continue
+
+        try:
+            if layer == "snapshot":
+                normalized = connector.transform_snapshot(raw_table, fernet_key)
+            else:
+                normalized = connector.transform_cdc(raw_table, fernet_key)
+
+            config = get_storage()
+            norm_path = config.normalized_path(f"{connector.name}_{layer}")
+            config.backend.ensure_parent(norm_path)
+
+            if normalized.num_rows == 0:
+                logger.debug(
+                    "%s %s: no data to transform", connector.display_name, layer
+                )
+                continue
+            write_deltalake(
+                norm_path,
+                normalized,
+                mode="overwrite",
+                storage_options=storage_opts,
+            )
+            logger.debug(
+                "%s %s: %d rows transformed",
+                connector.display_name,
+                layer,
+                normalized.num_rows,
+            )
+        except NotImplementedError:
+            logger.debug(
+                "%s %s transform: not implemented", connector.display_name, layer
+            )
+
+    return 0
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    """Fetch data from brokers and write to raw Delta tables."""
     fernet_key = load_key()
-    connectors = all()
 
-    for connector in connectors:
-        if connector.name == "ibkr" and not is_enabled("IBKR_ENABLED"):
-            logger.debug("Skipping %s: IBKR_ENABLED is false", connector.display_name)
-            continue
-        if connector.name == "trading212" and not is_enabled("T212_ENABLED"):
-            logger.debug("Skipping %s: T212_ENABLED is false", connector.display_name)
-            continue
-        if connector.name == "xtb" and not is_enabled("XTB_ENABLED"):
-            logger.debug("Skipping %s: XTB_ENABLED is false", connector.display_name)
-            continue
-
-        snapshot_kwargs: dict = {}
-        cdc_kwargs: dict = {}
-
-        if connector.name == "ibkr":
-            ibkr_flex_token = resolve_secret("IBKR_FLEX_TOKEN")
-            if not ibkr_flex_token:
-                logger.debug(
-                    "Skipping %s: IBKR_FLEX_TOKEN not set", connector.display_name
-                )
-                continue
-            ibkr_flex_query_id = resolve_secret("IBKR_FLEX_QUERY_ID")
-            if not ibkr_flex_query_id:
-                logger.debug(
-                    "Skipping %s: IBKR_FLEX_QUERY_ID not set",
-                    connector.display_name,
-                )
-                continue
-            snapshot_kwargs = {
-                "flex_token": ibkr_flex_token,
-                "flex_query_id": ibkr_flex_query_id,
-                "flex_base_url": get_env(
-                    "IBKR_FLEX_BASE_URL",
-                    "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
-                ),
-            }
-            cdc_kwargs = {}
-
-        elif connector.name == "trading212":
-            t212_api_key = resolve_secret("T212_API_KEY")
-            if not t212_api_key:
-                logger.debug(
-                    "Skipping %s: T212_API_KEY not set", connector.display_name
-                )
-                continue
-            t212_api_secret = resolve_secret("T212_API_SECRET") or ""
-            default_base = (
-                "https://demo.trading212.com/api/v0"
-                if is_demo()
-                else "https://live.trading212.com/api/v0"
+    for connector in all():
+        if not is_enabled(connector.enabled_env_var):
+            logger.debug(
+                "Skipping %s: %s is false",
+                connector.display_name,
+                connector.enabled_env_var,
             )
-            base_url = get_env("T212_BASE_URL") or default_base
-            snapshot_kwargs = {
-                "api_key": t212_api_key,
-                "api_secret": t212_api_secret,
-                "base_url": base_url,
-            }
-            cdc_kwargs = snapshot_kwargs
-
-        elif connector.name == "xtb":
-            if not args.xtb_file:
-                logger.debug(
-                    "Skipping %s: no --xtb-file provided", connector.display_name
-                )
-                continue
-            for xtb_file in args.xtb_file:
-                xtb_kwargs = {
-                    "file_path": xtb_file,
-                }
-                try:
-                    raw = connector.fetch_snapshot(**xtb_kwargs)
-                    table_path = get_raw_path(connector.name, "snapshot")
-                    get_storage().backend.ensure_parent(table_path)
-                    count = ingest_raw(raw, table_path, fernet_key)
-                    logger.debug(
-                        "%s snapshot: %d rows written", connector.display_name, count
-                    )
-                except Exception as exc:
-                    print(
-                        f"  Error fetching {connector.display_name} snapshot: {exc}",
-                        file=sys.stderr,
-                    )
             continue
-
-        try:
-            raw = connector.fetch_snapshot(**snapshot_kwargs)
-            table_path = get_raw_path(connector.name, "snapshot")
-            get_storage().backend.ensure_parent(table_path)
-            count = ingest_raw(raw, table_path, fernet_key)
-            logger.debug("%s snapshot: %d rows written", connector.display_name, count)
-        except NotImplementedError:
-            logger.debug("%s snapshot: not implemented", connector.display_name)
-        except Exception as exc:
-            print(
-                f"  Error fetching {connector.display_name} snapshot: {exc}",
-                file=sys.stderr,
-            )
-
-        # Try CDC
-        try:
-            raw_cdc = connector.fetch_cdc(**cdc_kwargs)
-            cdc_path = get_raw_path(connector.name, "cdc")
-            get_storage().backend.ensure_parent(cdc_path)
-            count = ingest_raw(raw_cdc, cdc_path, fernet_key)
-            logger.debug("%s CDC: %d rows written", connector.display_name, count)
-        except NotImplementedError:
-            logger.debug("%s CDC: not implemented", connector.display_name)
-        except Exception as exc:
-            print(
-                f"  Error fetching {connector.display_name} CDC: {exc}",
-                file=sys.stderr,
-            )
+        fetch_connector(connector, args, fernet_key)
 
     return 0
 
 
 def cmd_transform(args: argparse.Namespace) -> int:
     """Transform raw data into normalized Delta tables."""
-    from deltalake import DeltaTable
-
-    from pipeline.crypto import load_key
-
     fernet_key = load_key()
-    connectors_list = all()
-    storage_opts = get_storage().storage_options
 
-    for connector in connectors_list:
-        for layer in ("snapshot", "cdc"):
-            raw_path = get_raw_path(connector.name, layer)
-            try:
-                dt = DeltaTable(raw_path, storage_options=storage_opts)
-            except Exception:
-                continue
-
-            raw_table = dt.to_pyarrow_table()
-            if raw_table.num_rows == 0:
-                continue
-
-            try:
-                if layer == "snapshot":
-                    normalized = connector.transform_snapshot(raw_table, fernet_key)
-                else:
-                    normalized = connector.transform_cdc(raw_table, fernet_key)
-
-                config = get_storage()
-                norm_path = config.normalized_path(f"{connector.name}_{layer}")
-                config.backend.ensure_parent(norm_path)
-                from deltalake import write_deltalake
-
-                if normalized.num_rows == 0:
-                    logger.debug(
-                        "%s %s: no data to transform", connector.display_name, layer
-                    )
-                    continue
-                write_deltalake(
-                    norm_path,
-                    normalized,
-                    mode="overwrite",
-                    storage_options=storage_opts,
-                )
-                logger.debug(
-                    "%s %s: %d rows transformed",
-                    connector.display_name,
-                    layer,
-                    normalized.num_rows,
-                )
-            except NotImplementedError:
-                logger.debug(
-                    "%s %s transform: not implemented", connector.display_name, layer
-                )
+    for connector in all():
+        transform_connector(connector, fernet_key)
 
     return 0
 
@@ -425,6 +404,47 @@ def cmd_full(args: argparse.Namespace) -> int:
     return cmd_allocate(args)
 
 
+def cmd_run_connector(args: argparse.Namespace) -> int:
+    """Run fetch+transform for a single connector.
+
+    Used by the Step Functions orchestrator: each Fargate task runs one
+    connector through fetch and transform in a single process, cutting
+    cold starts.
+    """
+    connector = get(args.connector)
+
+    if not is_enabled(connector.enabled_env_var):
+        logger.info(
+            "Skipping %s: %s is false",
+            connector.display_name,
+            connector.enabled_env_var,
+        )
+        return 0
+
+    # XTB requires --xtb-file in dedicated subcommand mode.
+    if connector.name == "xtb" and not getattr(args, "xtb_file", None):
+        print("Error: run-connector xtb requires --xtb-file", file=sys.stderr)
+        return 1
+
+    fernet_key = load_key()
+    rc = fetch_connector(connector, args, fernet_key)
+    if rc:
+        return rc
+    return transform_connector(connector, fernet_key)
+
+
+def cmd_run_consolidate_allocate(args: argparse.Namespace) -> int:
+    """Run consolidate then allocate — idempotent full-overwrite steps.
+
+    Used by the Step Functions orchestrator after all connector tasks
+    have completed.
+    """
+    rc = cmd_consolidate(args)
+    if rc:
+        return rc
+    return cmd_allocate(args)
+
+
 def cmd_upload_xtb(args: argparse.Namespace) -> int:
     """Upload an XTB .xlsx report to S3 staging.
 
@@ -453,8 +473,7 @@ def cmd_upload_xtb(args: argparse.Namespace) -> int:
     s3_uri = config.staging_path("xtb", file_path.name)
     result_uri = upload_to_staging(file_path, s3_uri)
     print(f"Uploaded {file_path.name} → {result_uri}")
-    print("Run the pipeline with an s3:// URI to process this file.")
-    print("(EventBridge auto-processing will be added in a future phase.)")
+    print("EventBridge will trigger the orchestrator on this file's arrival.")
     return 0
 
 
@@ -616,6 +635,53 @@ def main() -> int:
         help="Path to XTB .xlsx report to upload",
     )
 
+    # run-connector
+    run_connector_parser = subparsers.add_parser(
+        "run-connector",
+        parents=[common_parser],
+        help="Run fetch+transform for a single connector (orchestrator task)",
+    )
+    run_connector_parser.add_argument(
+        "connector",
+        type=str,
+        help="Connector name (e.g. ibkr, trading212, xtb)",
+    )
+    run_connector_parser.add_argument(
+        "--xtb-file",
+        action="append",
+        type=str,
+        default=None,
+        help="Path to XTB Excel report, or an s3:// URI (can be specified multiple times)",
+    )
+
+    # run-consolidate-allocate
+    run_consolidate_allocate_parser = subparsers.add_parser(
+        "run-consolidate-allocate",
+        parents=[common_parser],
+        help="Run consolidate then allocate (orchestrator task)",
+    )
+    run_consolidate_allocate_parser.add_argument(
+        "--fx-rate",
+        action="append",
+        type=parse_fx_rate,
+        default=[],
+        help="Manual FX rate override as CURRENCY=RATE",
+    )
+    run_consolidate_allocate_parser.add_argument(
+        "--isin",
+        action="append",
+        type=parse_isin_override,
+        default=[],
+        help="ISIN override as TICKER=ISIN",
+    )
+    run_consolidate_allocate_parser.add_argument(
+        "--isin-map-file",
+        action="append",
+        type=str,
+        default=[],
+        help="CSV file with ticker,isin columns",
+    )
+
     args = parser.parse_args()
 
     # Resolve storage configuration before any path access.
@@ -632,6 +698,8 @@ def main() -> int:
         "full": cmd_full,
         "query": cmd_query,
         "upload-xtb": cmd_upload_xtb,
+        "run-connector": cmd_run_connector,
+        "run-consolidate-allocate": cmd_run_consolidate_allocate,
     }
 
     return commands[args.command](args)
