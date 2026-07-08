@@ -108,9 +108,12 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
     """Fetch data from a single connector and write to raw Delta tables.
 
     Returns 0 on success or when the connector is skipped (missing secrets,
-    not implemented).  Errors are printed to *stderr*.
+    not implemented).  Returns 1 if any fetch operation failed, so that
+    callers like :func:`cmd_run_connector` can skip the transform step.
     """
     from pipeline.raw.ingest import ingest_raw
+
+    error_occurred = False
 
     # XTB handles multiple files — iterate over each one.
     if connector.name == "xtb":
@@ -127,11 +130,12 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
                     "%s snapshot: %d rows written", connector.display_name, count
                 )
             except Exception as exc:
+                error_occurred = True
                 print(
                     f"  Error fetching {connector.display_name} snapshot: {exc}",
                     file=sys.stderr,
                 )
-        return 0
+        return 1 if error_occurred else 0
 
     # All other connectors use the fetch_kwargs protocol.
     snapshot_kwargs = connector.fetch_kwargs(args)
@@ -152,6 +156,7 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
     except NotImplementedError:
         logger.debug("%s snapshot: not implemented", connector.display_name)
     except Exception as exc:
+        error_occurred = True
         print(
             f"  Error fetching {connector.display_name} snapshot: {exc}",
             file=sys.stderr,
@@ -167,12 +172,13 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
     except NotImplementedError:
         logger.debug("%s CDC: not implemented", connector.display_name)
     except Exception as exc:
+        error_occurred = True
         print(
             f"  Error fetching {connector.display_name} CDC: {exc}",
             file=sys.stderr,
         )
 
-    return 0
+    return 1 if error_occurred else 0
 
 
 def transform_connector(connector, fernet_key: bytes) -> int:

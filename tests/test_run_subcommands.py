@@ -40,7 +40,7 @@ class TestArgparseDispatch:
         # require storage setup.
         from pipeline import run as run_module
 
-        assert "run-connector" in run_module.main.__code__.co_consts or True
+        assert "run-connector" in run_module.main.__code__.co_consts
         # Verify cmd_run_connector is callable
         assert callable(cmd_run_connector)
 
@@ -110,6 +110,33 @@ class TestFetchConnectorIsolation:
             rc = fetch_connector(connector, args, fernet_key)
             assert rc == 0
             mock_snapshot.assert_not_called()
+
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
+    def test_returns_nonzero_on_snapshot_error(self, mock_ingest: MagicMock) -> None:
+        """fetch_connector returns 1 when snapshot fetch raises an exception."""
+        connector = get("ibkr")
+        args = argparse.Namespace()
+
+        with (
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value={
+                    "flex_token": "t",
+                    "flex_query_id": "q",
+                    "flex_base_url": "u",
+                },
+            ),
+            patch.object(
+                connector,
+                "fetch_snapshot",
+                side_effect=RuntimeError("API timeout"),
+            ),
+            patch.object(connector, "fetch_cdc_kwargs", return_value={}),
+        ):
+            fernet_key = generate_key()
+            rc = fetch_connector(connector, args, fernet_key)
+            assert rc == 1
 
 
 class TestTransformConnectorIsolation:
