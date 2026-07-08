@@ -59,74 +59,33 @@ IBKR data is fetched through the Flex Web Service API — no local gateway
 process or browser login is required. Data has a 15–30 minute delay compared
 to real-time positions.
 
-#### IBKR Flex Query setup
-
-1. Log in to [IBKR Client Portal](https://portal.interactivebrokers.com).
-2. Navigate to **Performance & Reports → Flex Queries**.
-3. Click the **+** icon in the **Activity Flex Query** section to create a new
-   query named `get-open-positions`.
-4. In the **Open Positions** section, select these fields: Account ID, Currency,
-   FX Rate To Base, Asset Class, Symbol, Description, Conid, ISIN, Listing
-   Exchange, Report Date, Quantity, Mark Price, Position Value, Cost Basis
-   Price, Cost Basis Money, Percent of NAV, Unrealized P/L, Side.
-5. In the **Account Information** section, select: Net Liquidation Value,
-   Cash Balance, Currency.
-6. Set **Format** to XML, **Period** to Last Business Day, and
-   **Include Currency Rates** to Yes.
-7. Click **Continue → Create** and note the **Query ID** (a numeric ID).
-8. On the same page, click the **gear icon ⚙️** next to **Flex Web Service
-   Configuration**, toggle it to **Enable**, and click **Generate A New Token**.
-   Copy the token immediately — it is shown only once.
+To set up: log in to [IBKR Client Portal](https://portal.interactivebrokers.com),
+navigate to **Performance & Reports → Flex Queries**, create an **Activity Flex
+Query** named `get-open-positions` with the Open Positions and Account
+Information fields you need, set Format to XML and Period to Last Business Day.
+Enable **Flex Web Service Configuration** and generate a token.
 
 ### Setup
-
-Create a venv and install dependencies:
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[pipeline]"
-```
-
-Generate an encryption key (only needed once):
-
-```powershell
-.venv\Scripts\python -m pipeline.run keygen
+.venv\Scripts\python -m pipeline.run keygen   # generate encryption key (once)
 ```
 
 ### Docker
 
-Run the pipeline in a container without installing Python. Data is stored in
-MinIO (S3-compatible storage) to avoid filesystem compatibility issues with
-Docker volume mounts on Windows.
-
 ```bash
-# Build and start MinIO + pipeline
 docker compose build
-docker compose up minio -d   # start MinIO in background
-
-# First-time setup: generate encryption key
-docker compose run --rm pipeline keygen
-
-# Run the full pipeline
+docker compose up minio -d
 docker compose run --rm pipeline full
-
-# Query Delta tables (human-readable)
 docker compose run --rm pipeline query "SELECT * FROM portfolio_allocation_analytics"
-
-# Query with decryption
-docker compose run --rm pipeline query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
-
-# Export as CSV
-docker compose run --rm pipeline query "SELECT * FROM portfolio_allocation_analytics" --format csv
-
-# MinIO console (browse data at http://localhost:9001)
-# Login: minioadmin / minioadmin
 ```
 
 Data persists in the `minio-data` Docker volume. Secrets come from `.env`
-(via `env_file` in docker-compose). MinIO credentials are configured in
-`docker-compose.yml` (default: `minioadmin` / `minioadmin`).
+(via `env_file` in docker-compose). MinIO console at http://localhost:9001
+(login: `minioadmin` / `minioadmin`).
 
 ### Secrets Management
 
@@ -135,56 +94,36 @@ They come from environment variables, set by one of two sources:
 
 1. **`.env` file (local dev)** — create a `.env` file in the project root
    (gitignored) with your secrets. The pipeline loads it automatically at
-   startup via `python-dotenv`:
-
-   ```bash
-   # .env (never committed — copy from .env.example)
-   IBKR_FLEX_TOKEN=your_token_here
-   IBKR_FLEX_QUERY_ID=your_query_id_here
-   T212_API_KEY=your_key_here
-   T212_API_SECRET=your_secret_here
-   ENCRYPTION_KEY=your_fernet_key_here
-   ```
+   startup via `python-dotenv`.
 
 2. **GitHub Secrets (CI)** — set in your repository settings. The pipeline
    workflow injects them as environment variables at runtime.
 
-Environment variables always take priority over `.env` file values.
-
 | Variable | Purpose |
 |----------|---------|
-| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token *(required)* |
-| `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID *(required)* |
+| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token |
+| `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID |
 | `IBKR_FLEX_BASE_URL` | IBKR Flex Web Service base URL (default: `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService`) |
 | `IBKR_ENABLED` | Enable/disable IBKR connector (default: enabled) |
-| `T212_API_KEY` | Trading 212 API key *(required)* |
-| `T212_API_SECRET` | Trading 212 API secret *(required)* |
+| `T212_API_KEY` | Trading 212 API key |
+| `T212_API_SECRET` | Trading 212 API secret |
 | `T212_BASE_URL` | Trading 212 API base URL (auto-derived from `DEMO`) |
 | `T212_ENABLED` | Enable/disable Trading 212 connector (default: enabled) |
 | `XTB_ENABLED` | Enable/disable XTB connector (default: enabled) |
-| `ENCRYPTION_KEY` | Fernet key for encrypting financial values *(required)* |
+| `ENCRYPTION_KEY` | Fernet key for encrypting financial values |
 | `DEMO` | Run in demo mode — uses `_DEMO` secrets and separate storage (default: `false`) |
-| `STORAGE_TYPE` | Storage backend: `cloud`, `minio`, or `local` (default: `cloud` if `S3_BUCKET` set, `local` otherwise) |
-| `S3_BUCKET` | S3 bucket for cloud storage (required when `STORAGE_TYPE=cloud`) |
+| `STORAGE_TYPE` | Storage backend: `cloud`, `minio`, or `local` |
+| `S3_BUCKET` | S3 bucket for cloud storage |
 | `AWS_ACCESS_KEY_ID` | AWS credential for S3 |
 | `AWS_SECRET_ACCESS_KEY` | AWS credential for S3 |
 | `AWS_REGION` | AWS region (default: `eu-west-1`) |
 | `S3_ENDPOINT_URL` | Custom S3 endpoint (for MinIO or other S3-compatible stores) |
 | `S3_ALLOW_HTTP` | Allow non-HTTPS connections to S3 endpoint (set to `true` for MinIO) |
 
-**Demo mode variables** (used only when `DEMO=true`):
-
-| Variable | Purpose |
-|----------|---------|
-| `IBKR_FLEX_TOKEN_DEMO` | IBKR Flex token for demo mode |
-| `IBKR_FLEX_QUERY_ID_DEMO` | IBKR Flex Query ID for demo mode |
-| `T212_API_KEY_DEMO` | Trading 212 API key for demo mode |
-| `T212_API_SECRET_DEMO` | Trading 212 API secret for demo mode |
-| `ENCRYPTION_KEY_DEMO` | Fernet key for demo mode |
-| `S3_BUCKET_DEMO` | S3 bucket for demo data (defaults to `{S3_BUCKET}-demo`) |
-| `S3_PREFIX_DEMO` | S3 prefix for demo data (defaults to `pipeline_demo`) |
-| `AWS_ACCESS_KEY_ID_DEMO` | AWS credential for demo S3 |
-| `AWS_SECRET_ACCESS_KEY_DEMO` | AWS credential for demo S3 |
+**Demo mode variables** (used when `DEMO=true`): `IBKR_FLEX_TOKEN_DEMO`,
+`IBKR_FLEX_QUERY_ID_DEMO`, `T212_API_KEY_DEMO`, `T212_API_SECRET_DEMO`,
+`ENCRYPTION_KEY_DEMO`, `S3_BUCKET_DEMO`, `S3_PREFIX_DEMO`,
+`AWS_ACCESS_KEY_ID_DEMO`, `AWS_SECRET_ACCESS_KEY_DEMO`.
 
 All connectors are **enabled by default**. Set a toggle to `0`, `false`, or
 `no` to disable it.
@@ -199,40 +138,20 @@ crate.
 
 For S3-compatible stores like MinIO, set `S3_ENDPOINT_URL` to the server
 URL (e.g. `http://minio:9000`) and `S3_ALLOW_HTTP=true` to allow non-HTTPS
-connections. The Docker setup uses MinIO by default — see the Docker section.
+connections. The Docker setup uses MinIO by default.
 
 The `keygen` command only works in local mode. For S3, set
 `ENCRYPTION_KEY` as an environment variable — **the encryption
 key is never stored in S3.**
 
-### Configuration
-
-All configuration is through environment variables. No config files needed —
-set env vars in your shell, `.env` file, or GitHub Actions workflow.
-
-Connectors are **enabled by default**. Set `IBKR_ENABLED=0`, `T212_ENABLED=0`,
-or `XTB_ENABLED=0` to disable a connector.
-
-See the [Secrets Management](#secrets-management) section for the full list of
-environment variables.
-
 ### Run the pipeline
 
-**Local (default — uses `data/` directory):**
-
+**Local:**
 ```powershell
 .venv\Scripts\python -m pipeline.run full
 ```
 
-**Local with custom data directory:**
-
-```powershell
-$env:PIPELINE_DATA_DIR = "C:\path\to\data"
-.venv\Scripts\python -m pipeline.run full
-```
-
-**Cloud (S3) — set environment variables:**
-
+**Cloud (S3):**
 ```powershell
 $env:S3_BUCKET = "your-bucket"
 $env:AWS_ACCESS_KEY_ID = "..."
@@ -242,16 +161,13 @@ $env:ENCRYPTION_KEY = "..."
 ```
 
 **GitHub Actions (manual dispatch):**
-
 Go to Actions → Pipeline → Run workflow. Secrets are injected automatically
-from GitHub Secrets. See `.github/workflows/pipeline.yml`.
+from GitHub Secrets.
 
 ### Querying data
 
-After running the pipeline, query Delta tables with SQL:
-
 ```bash
-# List all tables (Python API)
+# List all tables
 python -m pipeline.run query "SHOW TABLES"
 
 # Query with human-readable output
@@ -260,11 +176,8 @@ python -m pipeline.run query "SELECT * FROM portfolio_allocation_analytics"
 # Decrypt encrypted columns
 python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
 
-# Export as CSV
+# Export as CSV or JSON
 python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_allocation_analytics" --format csv
-
-# Export as JSON
-python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --format json --decrypt
 ```
 
 Table names follow the `{name}_{layer}` convention:
@@ -280,51 +193,79 @@ Table names follow the `{name}_{layer}` convention:
 | `consolidated_holdings_normalized` | Normalized |
 | `portfolio_allocation_analytics` | Analytics |
 
-Use `--decrypt` to decode Fernet-encrypted binary columns (financial values
-in normalized tables, payloads in raw tables). Without `--decrypt`, encrypted
-columns appear as binary data.
+## AWS Infrastructure
 
-### Infrastructure
+The pipeline runs on AWS Fargate, orchestrated by Step Functions, with
+per-environment isolation (demo / prod). Terraform in `terraform/` manages
+all resources.
 
-The `terraform/` directory contains separate Terraform configurations for
-production and demo environments:
+### Architecture
 
-- **`terraform/prod/`** — production S3 bucket and IAM user
-- **`terraform/demo/`** — demo S3 bucket and IAM user (isolated credentials)
+```mermaid
+flowchart TD
+    classDef cicd fill:#555,stroke:#333,color:#fff
+    classDef aws fill:#4472c4,stroke:#2f5496,color:#fff
+    classDef trigger fill:#5b9bd5,stroke:#2e75b6,color:#fff
+    classDef compute fill:#ed7d31,stroke:#c55a11,color:#fff
+    classDef storage fill:#7030a0,stroke:#5b2280,color:#fff
 
-The S3 backend bucket name is not committed to the repo (it contains an
-account identifier). Copy the sample config and fill in your bucket name:
+    GHA["GitHub Actions"]:::cicd
+    GHA -->|"push image"| ECR["ECR Repository"]:::aws
+    GHA -->|"merge to main"| SM["Step Functions"]:::compute
 
-**Production:**
+    EB["EventBridge"]:::trigger -->|"start"| SM
 
-```bash
-cd terraform/prod
-cp backend.tf.sample backend.tf
-# Edit backend.tf — set bucket to your S3 state bucket name
-terraform init
-terraform plan
-terraform apply
+    SM -->|"ecs:runTask.sync"| TASKS["ECS Tasks (Fargate)"]:::compute
+
+    ECS["ECS Cluster"]:::aws -->|"run"| TASKS
+    ECR -->|"pull"| TASKS
+
+    TASKS -->|"Delta tables"| S3["S3 Bucket"]:::storage
+    TASKS -->|"container logs"| CW["CloudWatch Logs"]:::compute
 ```
 
-**Demo:**
+### Terraform apply order
 
 ```bash
+# 1. Shared infrastructure (ECR, ECS cluster, IAM roles) — once
+cd terraform/shared
+terraform init
+terraform apply
+
+# 2. Copy shared outputs into env tfvars
+#    terraform output ecr_repository_url
+#    terraform output ecr_push_pull_policy_arn
+#    terraform output ecs_cluster_arn
+
+# 3. Per-environment infrastructure — each independently
 cd terraform/demo
-cp backend.tf.sample backend.tf
-# Edit backend.tf — set bucket to your S3 state bucket name
 terraform init
-terraform plan
+terraform apply
+
+cd terraform/prod
+terraform init
 terraform apply
 ```
 
-After applying, store the outputs in GitHub:
+### Post-apply steps
 
-| Output | GitHub type | Production | Demo |
-|--------|-------------|------------|------|
-| `s3_bucket` | Variable | `S3_BUCKET` | `S3_BUCKET_DEMO` |
-| `s3_prefix` | Variable | `S3_PREFIX` | `S3_PREFIX_DEMO` |
-| `access_key_id` | Secret | `AWS_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID_DEMO` |
-| `access_key_secret` | Secret | `AWS_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY_DEMO` |
+1. **Seed SSM secrets** — Terraform creates parameter names with `PLACEHOLDER`
+   values and `lifecycle ignore_changes`. Set real values manually:
+   ```bash
+   aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN_DEMO \
+     --value "real-token" --type SecureString --key-id <kms-key-id>
+   ```
+2. **Push Docker image** to ECR so task definitions have something to run.
+3. **Store outputs** in GitHub Secrets: `access_key_id`, `s3_bucket`, `s3_prefix`
+   (and `_DEMO` variants for demo).
+
+### CI/CD
+
+| Trigger | Action |
+|---------|--------|
+| Push to `main` | Build & push Docker image → start demo Step Functions execution |
+| Tag push `v*` | Build & push Docker image with version tag + `production-latest` |
+| Manual dispatch | Run pipeline directly via GitHub Actions (supports demo toggle) |
 
 ### Tests & Linting
 
