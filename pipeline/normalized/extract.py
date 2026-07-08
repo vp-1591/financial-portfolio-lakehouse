@@ -1,14 +1,7 @@
 """Extract Holding objects from normalized broker snapshot tables.
 
-Each broker's normalized snapshot has its own schema, but all share a
-common subset of columns that map to :class:`Holding`:
-
-- ``label`` → ``ticker``
-- ``value`` → encrypted float (decrypted here)
-- ``value_currency`` → ``currency``
-- ``isin`` → ``identifier`` (formatted as ``ISIN:...``)
-- ``security_currency`` → ``security_currency``
-- ``description`` → ``description``
+Delegates broker-specific extraction logic to each connector's
+:meth:`~pipeline.connectors.base.BrokerConnector.extract_holdings` method.
 """
 
 from __future__ import annotations
@@ -22,19 +15,15 @@ from pipeline.crypto import decrypt_float, load_key
 from pipeline.normalized.consolidate import Holding
 
 
-def _label_column_for(broker: str) -> str:
-    """Return the ticker/label column name for a broker's normalized schema."""
-    if broker == "ibkr":
-        return "label"
-    return "label"
-
-
 def extract_holdings(
     broker: str,
     table_path: str | Path,
     fernet_key: bytes | None = None,
 ) -> list[Holding]:
     """Read a normalized broker snapshot and return a list of :class:`Holding` objects.
+
+    Delegates the per-broker extraction logic to the connector registered
+    under *broker* via :func:`pipeline.connectors.registry.get`.
 
     Parameters
     ----------
@@ -81,56 +70,8 @@ def extract_holdings(
         .alias("value_decrypted")
     )
 
-    holdings: list[Holding] = []
+    # Delegate to the connector's extract_holdings method
+    from pipeline.connectors.registry import get as get_connector
 
-    if broker == "ibkr":
-        for row in df.iter_rows(named=True):
-            isin = str(row.get("isin", "") or "").strip()
-            identifier = f"ISIN:{isin}" if isin else ""
-            holdings.append(
-                Holding(
-                    broker="IBKR",
-                    ticker=str(row["label"]),
-                    currency=str(row.get("value_currency", row.get("currency", ""))),
-                    value=row["value_decrypted"],
-                    identifier=identifier,
-                    security_currency=str(row.get("security_currency", "")),
-                    description=str(row.get("description", "")),
-                )
-            )
-
-    elif broker == "trading212":
-        for row in df.iter_rows(named=True):
-            isin = str(row.get("isin", "") or "").strip()
-            identifier = f"ISIN:{isin}" if isin else ""
-            holdings.append(
-                Holding(
-                    broker="Trading 212",
-                    ticker=str(row["label"]),
-                    currency=str(row.get("value_currency", row.get("currency", ""))),
-                    value=row["value_decrypted"],
-                    identifier=identifier,
-                    security_currency=str(row.get("security_currency", "")),
-                    description=str(row.get("name", "")),
-                )
-            )
-
-    elif broker == "xtb":
-        for row in df.iter_rows(named=True):
-            isin = str(row.get("isin", "") or "").strip()
-            identifier = f"ISIN:{isin}" if isin else ""
-            holdings.append(
-                Holding(
-                    broker="XTB",
-                    ticker=str(row["label"]),
-                    currency=str(row.get("value_currency", row.get("currency", ""))),
-                    value=row["value_decrypted"],
-                    identifier=identifier,
-                    security_currency=str(
-                        row.get("value_currency", row.get("currency", ""))
-                    ),
-                    description=str(row.get("name", "")),
-                )
-            )
-
-    return holdings
+    connector = get_connector(broker)
+    return connector.extract_holdings(df, fernet_key)
