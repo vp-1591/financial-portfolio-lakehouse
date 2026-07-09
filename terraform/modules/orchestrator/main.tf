@@ -99,7 +99,7 @@ locals {
             AwsvpcConfiguration = {
               Subnets        = var.subnet_ids
               SecurityGroups = var.security_group_ids
-              AssignPublicIp  = "DISABLED"
+              AssignPublicIp  = "ENABLED"
             }
           }
           Overrides = {
