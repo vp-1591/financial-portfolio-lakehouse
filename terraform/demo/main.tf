@@ -231,6 +231,18 @@ resource "aws_iam_user_policy_attachment" "pipeline_demo" {
   policy_arn = aws_iam_policy.pipeline_demo.arn
 }
 
+# Attach the ECR push/pull policy (defined in terraform/shared/) so the
+# demo pipeline user can push Docker images during deploy and pull them at runtime.
+# terraform/shared/ must be applied before terraform/demo/.
+data "aws_iam_policy" "ecr_push_pull" {
+  name = "pipeline-ecr-push-pull"
+}
+
+resource "aws_iam_user_policy_attachment" "ecr_push_pull" {
+  user       = aws_iam_user.pipeline_demo.name
+  policy_arn = data.aws_iam_policy.ecr_push_pull.arn
+}
+
 # ------------------------------------------------------------------------------
 # VPC
 # ------------------------------------------------------------------------------
@@ -592,6 +604,47 @@ module "orchestrator" {
   file_arrival_connectors          = ["ibkr", "trading212", "xtb"]
   state_machine_name               = "portfolio-pipeline-orchestrator-demo"
   aws_region                       = var.aws_region
+}
+
+# ------------------------------------------------------------------------------
+# CI/CD IAM Policy (deploy workflow permissions)
+# ------------------------------------------------------------------------------
+
+# The deploy workflow authenticates as the demo IAM user and needs to:
+#   - Describe ECS task definitions (to resolve the latest ARN at runtime)
+#   - Start Step Functions executions (to trigger the demo orchestrator)
+# ecs:DescribeTaskDefinition does not support resource-level ARNs, so it must
+# be granted on "*". states:StartExecution is scoped to the demo state machine.
+data "aws_iam_policy_document" "pipeline_demo_cicd" {
+  statement {
+    sid    = "ECSDescribeTaskDef"
+    effect = "Allow"
+    actions = [
+      "ecs:DescribeTaskDefinition",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "SFNStartExecution"
+    effect = "Allow"
+    actions = [
+      "states:StartExecution",
+    ]
+    resources = [
+      module.orchestrator.state_machine_arn,
+    ]
+  }
+}
+
+resource "aws_iam_policy" "pipeline_demo_cicd" {
+  name   = "pipeline-demo-cicd"
+  policy = data.aws_iam_policy_document.pipeline_demo_cicd.json
+}
+
+resource "aws_iam_user_policy_attachment" "pipeline_demo_cicd" {
+  user       = aws_iam_user.pipeline_demo.name
+  policy_arn = aws_iam_policy.pipeline_demo_cicd.arn
 }
 
 # ------------------------------------------------------------------------------

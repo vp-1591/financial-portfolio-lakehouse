@@ -1,0 +1,57 @@
+name: Deploy (production)
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: eu-west-1
+      ECR_REPOSITORY: investment-portfolio-pipeline
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine image tags
+        id: tags
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "image_tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "env_tag=production-latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.image_tag }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify image starts
+        run: |
+          docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }}
+          docker run --rm ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }} --help
