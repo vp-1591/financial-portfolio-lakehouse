@@ -338,8 +338,13 @@ class TestS3Backend:
         assert opts["aws_secret_access_key"] == "test-secret"
         assert opts["aws_region"] == "us-east-1"
 
-    def test_storage_options_empty_credentials_set_explicitly(self, monkeypatch):
-        """Empty credential strings are set explicitly to prevent SDK fallback."""
+    def test_storage_options_no_credentials_omitted_for_iam_role_fallback(self, monkeypatch):
+        """When both credentials are None, keys are omitted to allow IAM role fallback.
+
+        On ECS with IAM task roles, omitting credential keys allows the SDK to
+        fall through its default credential chain. In CI, step-level conditionals
+        ensure production env vars are absent in demo runs.
+        """
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
         monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
@@ -348,10 +353,10 @@ class TestS3Backend:
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        # Empty credentials are set explicitly as "" to prevent object_store
-        # from falling back to environment variables.
-        assert opts["aws_access_key_id"] == ""
-        assert opts["aws_secret_access_key"] == ""
+        # Credential keys are omitted entirely — not empty strings —
+        # allowing object_store to fall through to IAM role metadata.
+        assert "aws_access_key_id" not in opts
+        assert "aws_secret_access_key" not in opts
         # Region is always present (has default).
         assert opts["aws_region"] == "eu-west-1"
 
@@ -405,10 +410,11 @@ class TestS3Backend:
         assert opts["aws_secret_access_key"] == "demo-secret"
 
     def test_storage_options_demo_mode_no_fallback(self, monkeypatch, caplog):
-        """In demo mode, missing _DEMO creds are set to empty strings, not omitted.
+        """In demo mode, missing _DEMO creds result in omitted keys, not empty strings.
 
-        Empty strings prevent object_store from falling back to environment
-        variables that may contain production credentials.
+        Omitting keys allows IAM role fallback on ECS. In CI, step-level
+        conditionals ensure production env vars are absent in demo runs
+        (ADR 0041 Decision #1), so there is nothing to fall back to.
         """
         monkeypatch.setenv("DEMO", "true")
         monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
@@ -417,9 +423,9 @@ class TestS3Backend:
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "prod-secret")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        # Should contain empty strings, not production credentials.
-        assert opts["aws_access_key_id"] == ""
-        assert opts["aws_secret_access_key"] == ""
+        # Should omit credential keys entirely, not use production credentials.
+        assert "aws_access_key_id" not in opts
+        assert "aws_secret_access_key" not in opts
 
 
 class TestPathsModule:

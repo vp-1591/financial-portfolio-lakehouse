@@ -51,7 +51,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0038 | Demo Terraform Infrastructure in Separate Directory | 2026-07-02 | active | — |
 | 0039 | STORAGE_TYPE Env Var and resolve_secret Credential Isolation | 2026-07-02 | active | — |
 | 0040 | Consolidate AWS Credentials and Fix Demo Isolation Bugs | 2026-07-02 | active | — |
-| 0041 | Step-Level CI Secrets and Explicit Empty Credentials | 2026-07-02 | active | — |
+| 0041 | Step-Level CI Secrets and Explicit Empty Credentials | 2026-07-02 | superseded | 0055 |
 | 0042 | Fix Demo Bucket Naming — Use Hyphen Instead of Underscore | 2026-07-02 | active | — |
 | 0043 | Fix Empty-String Env Var Fallback and Broaden Demo IAM Policy | 2026-07-02 | active | — |
 | 0044 | S3_BUCKET_DEMO Standalone — Demo Cloud Storage Without S3_BUCKET | 2026-07-02 | active | — |
@@ -65,6 +65,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0052 | Per-Environment State Machines and CI/CD Pipeline Trigger | 2026-07-08 | active | — |
 | 0053 | Per-Environment CI/CD Credentials and IAM Permissions | 2026-07-09 | active | — |
 | 0054 | Public-Subnet ECS — Eliminate Perma-VPC Charges | 2026-07-09 | active | — |
+| 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

@@ -1,5 +1,7 @@
 # ADR 0041: Step-Level CI Secrets and Explicit Empty Credentials
 
+> **Superseded by [ADR 0055](./0055-iam-role-credential-fallback.md)** — Decision #2 (explicit empty credentials) is superseded. When both AWS credentials are `None`, credential keys are now omitted to allow IAM role fallback instead of being set to empty strings.
+
 ## Context
 
 PR #16 introduced DEMO mode with isolated secrets. Code review (PR #16 review) identified two isolation gaps:

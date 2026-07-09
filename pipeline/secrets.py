@@ -332,15 +332,21 @@ class AwsCredentials:
 
         Keys use the lowercase convention required by the
         ``object_store`` Rust crate (e.g. ``aws_access_key_id``).
-        Credential keys are always included — when ``None``, they are
-        set to empty strings to prevent ``object_store`` from falling
-        back to environment variables.
+
+        When both ``key_id`` and ``secret_key`` are ``None``, credential
+        keys are **omitted** entirely, allowing ``object_store`` to fall
+        through its default credential chain (including ECS IAM task
+        roles).  When either credential is set, both keys are included
+        (with the missing one as an empty string) to prevent the SDK
+        from silently falling back to environment variables that may
+        contain production credentials.
         """
         opts: dict[str, str] = {
-            "aws_access_key_id": self.key_id or "",
-            "aws_secret_access_key": self.secret_key or "",
             "aws_region": self.region,
         }
+        if self.key_id is not None or self.secret_key is not None:
+            opts["aws_access_key_id"] = self.key_id or ""
+            opts["aws_secret_access_key"] = self.secret_key or ""
         if self.endpoint_url:
             opts["aws_endpoint_url"] = self.endpoint_url
         if self.allow_http:
@@ -352,15 +358,21 @@ class AwsCredentials:
 
         Keys use PyArrow convention (``access_key``, ``secret_key``,
         ``region``, ``endpoint_override``, ``scheme``).
-        Credential keys are always included — when ``None``, they are
-        set to empty strings to prevent PyArrow from falling back to
-        environment variables.
+
+        When both ``key_id`` and ``secret_key`` are ``None``, credential
+        keys are **omitted** entirely, allowing PyArrow to fall through
+        its default credential chain (including ECS IAM task roles).
+        When either credential is set, both keys are included (with the
+        missing one as an empty string) to prevent PyArrow from silently
+        falling back to environment variables that may contain production
+        credentials.
         """
         kwargs: dict = {
             "region": self.region,
-            "access_key": self.key_id or "",
-            "secret_key": self.secret_key or "",
         }
+        if self.key_id is not None or self.secret_key is not None:
+            kwargs["access_key"] = self.key_id or ""
+            kwargs["secret_key"] = self.secret_key or ""
         if self.endpoint_url:
             from urllib.parse import urlparse
 

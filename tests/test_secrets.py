@@ -743,11 +743,13 @@ class TestAwsCredentialsDataclass:
             "aws_region": "eu-west-1",
         }
 
-    def test_to_storage_options_none_credentials_set_empty(self):
-        """When credentials are None, they are set to empty strings (not omitted).
+    def test_to_storage_options_none_credentials_omitted(self):
+        """When both credentials are None, keys are omitted to allow IAM role fallback.
 
-        Empty strings prevent object_store from falling back to environment
-        variables that may contain production credentials.
+        Omitting credential keys allows object_store to fall through its default
+        credential chain (including ECS IAM task roles). When either credential
+        is set, both keys are included (with the missing one as empty string) to
+        block fallback to environment variables.
         """
         creds = AwsCredentials(
             key_id=None,
@@ -757,9 +759,24 @@ class TestAwsCredentialsDataclass:
             allow_http=False,
         )
         opts = creds.to_storage_options()
-        assert opts["aws_access_key_id"] == ""
-        assert opts["aws_secret_access_key"] == ""
+        assert "aws_access_key_id" not in opts
+        assert "aws_secret_access_key" not in opts
         assert opts["aws_region"] == "eu-west-1"
+
+    def test_to_storage_options_partial_credentials_includes_empty(self):
+        """When only one credential is set, both keys are included with empty string
+        for the missing one. This prevents SDK fallback to environment variables.
+        """
+        creds = AwsCredentials(
+            key_id="AKID",
+            secret_key=None,
+            region="eu-west-1",
+            endpoint_url=None,
+            allow_http=False,
+        )
+        opts = creds.to_storage_options()
+        assert opts["aws_access_key_id"] == "AKID"
+        assert opts["aws_secret_access_key"] == ""
 
     def test_to_storage_options_with_endpoint(self):
         creds = AwsCredentials(
@@ -786,11 +803,13 @@ class TestAwsCredentialsDataclass:
         assert kwargs["secret_key"] == "secret"
         assert kwargs["region"] == "eu-west-1"
 
-    def test_to_pyarrow_kwargs_none_credentials_set_empty(self):
-        """When credentials are None, they are set to empty strings (not omitted).
+    def test_to_pyarrow_kwargs_none_credentials_omitted(self):
+        """When both credentials are None, keys are omitted to allow IAM role fallback.
 
-        Empty strings prevent PyArrow from falling back to environment
-        variables that may contain production credentials.
+        Omitting credential keys allows PyArrow to fall through its default
+        credential chain (including ECS IAM task roles). When either credential
+        is set, both keys are included (with the missing one as empty string) to
+        block fallback to environment variables.
         """
         creds = AwsCredentials(
             key_id=None,
@@ -800,9 +819,24 @@ class TestAwsCredentialsDataclass:
             allow_http=False,
         )
         kwargs = creds.to_pyarrow_kwargs()
-        assert kwargs["access_key"] == ""
-        assert kwargs["secret_key"] == ""
+        assert "access_key" not in kwargs
+        assert "secret_key" not in kwargs
         assert kwargs["region"] == "eu-west-1"
+
+    def test_to_pyarrow_kwargs_partial_credentials_includes_empty(self):
+        """When only one credential is set, both keys are included with empty string
+        for the missing one. This prevents SDK fallback to environment variables.
+        """
+        creds = AwsCredentials(
+            key_id="AKID",
+            secret_key=None,
+            region="eu-west-1",
+            endpoint_url=None,
+            allow_http=False,
+        )
+        kwargs = creds.to_pyarrow_kwargs()
+        assert kwargs["access_key"] == "AKID"
+        assert kwargs["secret_key"] == ""
 
     def test_to_pyarrow_kwargs_endpoint_url(self):
         creds = AwsCredentials(
