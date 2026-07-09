@@ -1,0 +1,14 @@
+# terraform/shared/terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in the values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Apply order:
+#   1. shared/ apply — creates ECR + ECS cluster + IAM roles
+#   2. demo/ and prod/ apply — each creates its own state machine,
+#      EventBridge rules, and environment-specific resources
+#
+# No two-phase apply needed — shared/ no longer contains the state machine.
+
+# ── ECS cluster (shared across all environments) ──
+# Leave empty to use the module's default cluster:
+ecs_cluster_arn = ""

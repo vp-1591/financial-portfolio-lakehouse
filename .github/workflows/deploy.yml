@@ -65,3 +65,37 @@ jobs:
         run: |
           docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }}
           docker run --rm ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }} --help
+
+      - name: Trigger demo pipeline
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Resolve the latest demo task definition ARNs dynamically.
+          # ECS task definition families follow the pattern portfolio-pipeline-demo-{name}.
+          ibkr_arn=$(aws ecs describe-task-definition --task-definition portfolio-pipeline-demo-ibkr --query 'taskDefinition.taskDefinitionArn' --output text)
+          t212_arn=$(aws ecs describe-task-definition --task-definition portfolio-pipeline-demo-trading212 --query 'taskDefinition.taskDefinitionArn' --output text)
+          xtb_arn=$(aws ecs describe-task-definition --task-definition portfolio-pipeline-demo-xtb --query 'taskDefinition.taskDefinitionArn' --output text)
+          consolidate_arn=$(aws ecs describe-task-definition --task-definition portfolio-pipeline-demo-consolidate-allocate --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          # Build the execution input matching the state machine's expected schema:
+          #   connectors: [{name, task_def_arn, command}, ...]
+          #   consolidate_allocate_task_def_arn: string
+          #   demo: bool
+          input_json=$(jq -n \
+            --arg ibkr "$ibkr_arn" \
+            --arg t212 "$t212_arn" \
+            --arg xtb "$xtb_arn" \
+            --arg consolidate "$consolidate_arn" \
+            '{
+              connectors: [
+                {name: "ibkr", task_def_arn: $ibkr, command: ["run-connector", "ibkr", "--target-currency", "EUR"]},
+                {name: "trading212", task_def_arn: $t212, command: ["run-connector", "trading212", "--target-currency", "EUR"]},
+                {name: "xtb", task_def_arn: $xtb, command: ["run-connector", "xtb", "--target-currency", "EUR"]}
+              ],
+              consolidate_allocate_task_def_arn: $consolidate,
+              demo: true
+            }')
+
+          aws stepfunctions start-execution \
+            --state-machine-arn ${{ secrets.DEMO_STATE_MACHINE_ARN }} \
+            --name "staging-$(echo ${{ github.sha }} | cut -c1-7)-$(date +%Y%m%d%H%M%S)" \
+            --input "$input_json"

@@ -3,10 +3,17 @@
 # Creates:
 #   - ECR repository for the pipeline Docker image
 #   - IAM policy for ECR push/pull
+#   - ECS cluster (shared across environments)
+#   - IAM role for Step Functions (used by per-environment state machines)
 #
 # This repository is shared between staging and production deployments.
 # Staging images are tagged `git-<sha>` and `staging-latest`.
 # Production images are tagged `<version>` and `production-latest`.
+#
+# Apply order:
+#   1. shared/ apply — creates ECR + IAM policy + cluster + SFN role
+#   2. demo/ and prod/ apply — each creates its own state machine, EventBridge
+#      rules, and environment-specific resources
 #
 # Usage:
 #   cd terraform/shared
@@ -42,6 +49,12 @@ variable "expire_untagged_days" {
   description = "Number of days after which untagged images are expired."
   type        = number
   default     = 7
+}
+
+variable "ecs_cluster_arn" {
+  description = "ARN of the ECS cluster. If empty, the module creates one."
+  type        = string
+  default     = ""
 }
 
 # ------------------------------------------------------------------------------
@@ -161,6 +174,111 @@ resource "aws_iam_policy" "ecr_push_pull" {
 }
 
 # ------------------------------------------------------------------------------
+# ECS Cluster
+# ------------------------------------------------------------------------------
+
+resource "aws_ecs_cluster" "pipeline" {
+  name = "portfolio-pipeline-cluster"
+
+  tags = {
+    Project = "investment-portfolio-pipeline"
+  }
+}
+
+# ------------------------------------------------------------------------------
+# Step Functions IAM Role
+# ------------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "sfn_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["states.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "sfn" {
+  name               = "pipeline-sfn-role"
+  assume_role_policy = data.aws_iam_policy_document.sfn_assume.json
+
+  tags = {
+    Project = "investment-portfolio-pipeline"
+  }
+}
+
+# Step Functions needs ecs:RunTask to start Fargate tasks, ecs:StopTask to
+# cancel them, ecs:DescribeTasks to poll for completion, and iam:PassRole
+# to pass the task role to ECS. PassRole is scoped to a role-name prefix
+# (pipeline-task-*-prod or -demo-*) so a new connector task role needs no
+# policy edit.
+data "aws_iam_policy_document" "sfn" {
+  statement {
+    sid    = "RunTask"
+    effect = "Allow"
+    actions = [
+      "ecs:RunTask",
+      "ecs:StopTask",
+      "ecs:DescribeTasks",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "PassRole"
+    effect = "Allow"
+    actions = [
+      "iam:PassRole",
+    ]
+    # Scope PassRole to task execution and task roles by environment prefix.
+    # A new connector adds a role matching pipeline-task-{env}-{name} — no policy edit needed.
+    resources = [
+      "arn:aws:iam::*:role/pipeline-task-exec-prod-*",
+      "arn:aws:iam::*:role/pipeline-task-exec-demo-*",
+      "arn:aws:iam::*:role/pipeline-task-prod-*",
+      "arn:aws:iam::*:role/pipeline-task-demo-*",
+    ]
+  }
+
+  # Permissions for .sync service integrations (ecs:runTask.sync).
+  # Step Functions creates a managed EventBridge rule to receive task completion
+  # callbacks. Without these, CreateStateMachine fails with
+  # "is not authorized to create managed-rule".
+  # Rule name pattern covers both ECS and Step Functions sync integrations.
+  statement {
+    sid    = "SyncCallback"
+    effect = "Allow"
+    actions = [
+      "events:PutTargets",
+      "events:PutRule",
+      "events:DescribeRule",
+    ]
+    resources = [
+      "arn:aws:events:${var.aws_region}:*:rule/StepFunctions*",
+    ]
+  }
+
+  statement {
+    sid    = "DescribeExecution"
+    effect = "Allow"
+    actions = [
+      "states:DescribeExecution",
+      "states:StopExecution",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "sfn" {
+  name   = "pipeline-sfn-policy"
+  role   = aws_iam_role.sfn.id
+  policy = data.aws_iam_policy_document.sfn.json
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
@@ -177,4 +295,9 @@ output "ecr_repository_arn" {
 output "ecr_push_pull_policy_arn" {
   description = "ARN of the IAM policy for ECR push/pull. Attach this to the pipeline IAM user."
   value       = aws_iam_policy.ecr_push_pull.arn
+}
+
+output "ecs_cluster_arn" {
+  description = "ARN of the ECS cluster."
+  value       = aws_ecs_cluster.pipeline.arn
 }

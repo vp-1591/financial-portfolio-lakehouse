@@ -1,0 +1,10 @@
+# terraform/demo/terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in the values from terraform/shared outputs:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# These values come from `terraform output` in the shared/ directory after
+# running `terraform apply` there (shared apply #1).
+
+ecr_repository_url       = "<from shared output ecr_repository_url>"
+ecr_push_pull_policy_arn = "<from shared output ecr_push_pull_policy_arn>"
+ecs_cluster_arn          = "<from shared output ecs_cluster_arn>"

@@ -283,7 +283,7 @@ Establish the branch/tag/environment model and make the pipeline
 environment-aware so it can be deployed to different AWS environments without
 code changes.
 
-### Phase 2 — Step Functions orchestration
+### Phase 2 — Step Functions orchestration *[status: done]*
 
 Move the core pipeline execution to an orchestrator Step Function that uses a
 `Map` state over a connector list from execution input, waits for all to

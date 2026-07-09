@@ -27,3 +27,8 @@ exploration/
 
 #BMAD
 _bmad/*
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
