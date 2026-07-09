@@ -17,7 +17,6 @@ Usage:
 
 import argparse
 import json
-import sys
 from datetime import datetime, timezone
 
 import boto3
@@ -115,7 +114,9 @@ def main() -> None:
     print(f"Start date:       {response['startDate']}")
     print()
     print("Monitor at:")
-    print(f"  https://eu-west-1.console.aws.amazon.com/states/home?region=eu-west-1#/executions/details/{response['executionArn']}")
+    print(
+        f"  https://eu-west-1.console.aws.amazon.com/states/home?region=eu-west-1#/executions/details/{response['executionArn']}"
+    )
 
 
 if __name__ == "__main__":
