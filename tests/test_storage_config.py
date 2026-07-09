@@ -338,7 +338,9 @@ class TestS3Backend:
         assert opts["aws_secret_access_key"] == "test-secret"
         assert opts["aws_region"] == "us-east-1"
 
-    def test_storage_options_no_credentials_omitted_for_iam_role_fallback(self, monkeypatch):
+    def test_storage_options_no_credentials_omitted_for_iam_role_fallback(
+        self, monkeypatch
+    ):
         """When both credentials are None, keys are omitted to allow IAM role fallback.
 
         On ECS with IAM task roles, omitting credential keys allows the SDK to
