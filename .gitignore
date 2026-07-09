@@ -32,3 +32,6 @@ _bmad/*
 .terraform/
 *.tfstate
 *.tfstate.backup
+
+# review agent output
+.claude/_review-artifacts

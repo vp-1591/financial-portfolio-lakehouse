@@ -4,7 +4,7 @@
 #   - S3 bucket for Delta table storage
 #   - IAM user with least-privilege access to the bucket
 #   - IAM access key (store key ID and secret in GitHub Secrets)
-#   - VPC with private subnets, security group, and VPC endpoints
+#   - VPC with public subnets, Internet Gateway, and security group
 #   - KMS key for SSM SecureString encryption
 #   - SSM parameter names (values seeded out-of-band)
 #   - ECS task definitions for each connector + consolidate-allocate
@@ -68,9 +68,9 @@ variable "vpc_cidr" {
 }
 
 variable "subnet_cidrs" {
-  description = "CIDR blocks for private subnets (one per AZ)."
+  description = "CIDR blocks for public subnets (one per AZ)."
   type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  default     = ["10.0.1.0/24"]
 }
 
 # ------------------------------------------------------------------------------
@@ -93,6 +93,12 @@ provider "aws" {
   region = var.aws_region
 }
 
+# Resource renames: private subnets → public subnets (ADR 0054)
+moved {
+  from = aws_subnet.private
+  to   = aws_subnet.public
+}
+
 # ------------------------------------------------------------------------------
 # Local values
 # ------------------------------------------------------------------------------
@@ -100,7 +106,7 @@ provider "aws" {
 locals {
   env_label   = "prod"
   image_tag   = "production-latest"
-  az_suffixes = ["a", "b", "c"]
+  az_suffixes = ["a"]
 
   # Connector definitions for the ecs-task module for_each.
   # Each connector specifies its command and which SSM secrets it needs.
@@ -245,7 +251,7 @@ resource "aws_vpc" "pipeline" {
   }
 }
 
-resource "aws_subnet" "private" {
+resource "aws_subnet" "public" {
   count             = length(var.subnet_cidrs)
   vpc_id            = aws_vpc.pipeline.id
   cidr_block        = var.subnet_cidrs[count.index]
@@ -254,8 +260,37 @@ resource "aws_subnet" "private" {
   tags = {
     Project = "investment-portfolio-pipeline"
     Env     = local.env_label
-    Name    = "pipeline-${local.env_label}-private-${count.index}"
+    Name    = "pipeline-${local.env_label}-public-${count.index}"
   }
+}
+
+resource "aws_internet_gateway" "pipeline" {
+  vpc_id = aws_vpc.pipeline.id
+
+  tags = {
+    Project = "investment-portfolio-pipeline"
+    Env     = local.env_label
+  }
+}
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.pipeline.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.pipeline.id
+  }
+
+  tags = {
+    Project = "investment-portfolio-pipeline"
+    Env     = local.env_label
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  count          = length(var.subnet_cidrs)
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
 }
 
 resource "aws_security_group" "pipeline" {
@@ -263,109 +298,13 @@ resource "aws_security_group" "pipeline" {
   description = "Security group for pipeline ECS tasks (${local.env_label})"
   vpc_id      = aws_vpc.pipeline.id
 
-  # Egress to VPC endpoints (no public internet access)
-  egress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [aws_vpc.pipeline.cidr_block]
-  }
-
-  # Egress to S3 via VPC endpoint (handled by Gateway endpoint, no SG rule needed,
-  # but we allow DNS resolution through the VPC)
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Allow all egress for VPC endpoint traffic (S3, ECR, CloudWatch)"
+    description = "Allow all egress (AWS services via IGW, broker APIs)"
   }
-
-  tags = {
-    Project = "investment-portfolio-pipeline"
-    Env     = local.env_label
-  }
-}
-
-# VPC Gateway Endpoint for S3 (free, uses route tables)
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = aws_vpc.pipeline.id
-  service_name = "com.amazonaws.${var.aws_region}.s3"
-  route_table_ids = [
-    for subnet in aws_subnet.private : aws_vpc.pipeline.default_route_table_id
-  ]
-
-  tags = {
-    Project = "investment-portfolio-pipeline"
-    Env     = local.env_label
-  }
-}
-
-# VPC Interface Endpoints for ECR API, ECR DKR, CloudWatch Logs, and SSM
-# (required for Fargate tasks in private subnets with no public IP)
-resource "aws_vpc_endpoint" "ecr_api" {
-  vpc_id             = aws_vpc.pipeline.id
-  service_name       = "com.amazonaws.${var.aws_region}.ecr.api"
-  vpc_endpoint_type  = "Interface"
-  private_dns_enabled = true
-  subnet_ids         = aws_subnet.private[*].id
-  security_group_ids = [aws_security_group.pipeline.id]
-
-  tags = {
-    Project = "investment-portfolio-pipeline"
-    Env     = local.env_label
-  }
-}
-
-resource "aws_vpc_endpoint" "ecr_dkr" {
-  vpc_id             = aws_vpc.pipeline.id
-  service_name       = "com.amazonaws.${var.aws_region}.ecr.dkr"
-  vpc_endpoint_type  = "Interface"
-  private_dns_enabled = true
-  subnet_ids         = aws_subnet.private[*].id
-  security_group_ids = [aws_security_group.pipeline.id]
-
-  tags = {
-    Project = "investment-portfolio-pipeline"
-    Env     = local.env_label
-  }
-}
-
-resource "aws_vpc_endpoint" "logs" {
-  vpc_id             = aws_vpc.pipeline.id
-  service_name       = "com.amazonaws.${var.aws_region}.logs"
-  vpc_endpoint_type  = "Interface"
-  private_dns_enabled = true
-  subnet_ids         = aws_subnet.private[*].id
-  security_group_ids = [aws_security_group.pipeline.id]
-
-  tags = {
-    Project = "investment-portfolio-pipeline"
-    Env     = local.env_label
-  }
-}
-
-resource "aws_vpc_endpoint" "ssm" {
-  vpc_id             = aws_vpc.pipeline.id
-  service_name       = "com.amazonaws.${var.aws_region}.ssm"
-  vpc_endpoint_type  = "Interface"
-  private_dns_enabled = true
-  subnet_ids         = aws_subnet.private[*].id
-  security_group_ids = [aws_security_group.pipeline.id]
-
-  tags = {
-    Project = "investment-portfolio-pipeline"
-    Env     = local.env_label
-  }
-}
-
-resource "aws_vpc_endpoint" "ssm_messages" {
-  vpc_id             = aws_vpc.pipeline.id
-  service_name       = "com.amazonaws.${var.aws_region}.ssmmessages"
-  vpc_endpoint_type  = "Interface"
-  private_dns_enabled = true
-  subnet_ids         = aws_subnet.private[*].id
-  security_group_ids = [aws_security_group.pipeline.id]
 
   tags = {
     Project = "investment-portfolio-pipeline"
@@ -590,7 +529,7 @@ module "orchestrator" {
   env                              = local.env_label
   demo                             = false
   ecs_cluster_arn                  = var.ecs_cluster_arn
-  subnet_ids                       = aws_subnet.private[*].id
+  subnet_ids                       = aws_subnet.public[*].id
   security_group_ids               = [aws_security_group.pipeline.id]
   task_def_arns                    = { for k, v in module.connector_task : k => v.task_definition_arn }
   consolidate_allocate_task_def_arn = module.consolidate_allocate.task_definition_arn
@@ -659,8 +598,8 @@ output "s3_prefix" {
 }
 
 output "subnet_ids" {
-  description = "Private subnet IDs for ECS tasks."
-  value       = aws_subnet.private[*].id
+  description = "Public subnet IDs for ECS tasks."
+  value       = aws_subnet.public[*].id
 }
 
 output "security_group_id" {

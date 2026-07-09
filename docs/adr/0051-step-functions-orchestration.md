@@ -22,6 +22,8 @@ The registry-driven revision fixes both problems: connector inclusion is driven 
 
 5. **VPC endpoints (no public IP)** — each environment has its own VPC with private subnets and S3/ECR/CloudWatch/SSM VPC interface endpoints. Separate VPC per environment matches the existing S3/IAM isolation model.
 
+   > **Superseded by [ADR 0054](./0054-public-subnet-ecs.md)** — Private subnets and VPC Interface Endpoints replaced with public subnets and an Internet Gateway to eliminate ~$36/env/month in idle VPC endpoint charges.
+
 6. **Cluster in shared, networking in env** — the ECS cluster is shared (env-agnostic), while VPC, subnets, security groups, and VPC endpoints are per-environment. `DEMO` selects the environment.
 
 7. **Variable-based apply decoupling** — state files stay independent (ADR 0049). Apply order: shared #1 (ECR + cluster, state machine `count=0`) → prod/demo (task defs, VPCs, SSM) → shared #2 (state machine + EventBridge with ARN map in tfvars).

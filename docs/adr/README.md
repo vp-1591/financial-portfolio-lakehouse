@@ -61,9 +61,10 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0048 | XTB Cloud Upload — S3 Staging + EventBridge | 2026-07-06 | active | — |
 | 0049 | Deployment Model — Branch/Tag Environment Strategy | 2026-07-07 | active | — |
 | 0050 | Attach ECR Policy to Pipeline User in Terraform | 2026-07-07 | active | — |
-| 0051 | Step Functions Orchestration | 2026-07-08 | active | 0052 |
+| 0051 | Step Functions Orchestration | 2026-07-08 | superseded | 0052, 0054 |
 | 0052 | Per-Environment State Machines and CI/CD Pipeline Trigger | 2026-07-08 | active | — |
 | 0053 | Per-Environment CI/CD Credentials and IAM Permissions | 2026-07-09 | active | — |
+| 0054 | Public-Subnet ECS — Eliminate Perma-VPC Charges | 2026-07-09 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
