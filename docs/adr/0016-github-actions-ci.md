@@ -1,5 +1,7 @@
 # 0016: GitHub Actions CI
 
+> **Superseded by [ADR 0056](./0056-fix-ci-push-branch-filter.md)** — The `push` trigger scope was broad (`push:` without branch filter), causing duplicate CI runs on PR branches. ADR 0056 adds `branches: [main]` to eliminate the redundancy.
+
 ## Context
 
 The project had no CI/CD pipeline. Tests were run manually before commits, and there was no branch protection on `main`. PRs could be merged without automated verification.
