@@ -34,5 +34,10 @@ Never use the system Python (`C:\Python314`). Always prefix commands with the ve
 
 ```bash
 .venv/Scripts/python -m pytest tests/ -v
-.venv/Scripts/pip install <package>
+```
+
+Note: on Windows, use `python.exe -m pip` instead of bare `pip` — the venv's `pip` scripts are not directly callable from Git Bash:
+
+```bash
+.venv/Scripts/python.exe -m pip install <package>
 ```
