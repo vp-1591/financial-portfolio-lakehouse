@@ -93,6 +93,12 @@ provider "aws" {
   region = var.aws_region
 }
 
+# Resource renames: private subnets → public subnets (ADR 0054)
+moved {
+  from = aws_subnet.private
+  to   = aws_subnet.public
+}
+
 # ------------------------------------------------------------------------------
 # Local values
 # ------------------------------------------------------------------------------
