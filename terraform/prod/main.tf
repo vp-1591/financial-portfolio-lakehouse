@@ -611,9 +611,8 @@ module "orchestrator" {
 
 # The deploy workflow authenticates as the prod IAM user and needs to:
 #   - Describe ECS task definitions (to resolve the latest ARN at runtime)
-#   - Start Step Functions executions (to trigger the prod orchestrator)
 # ecs:DescribeTaskDefinition does not support resource-level ARNs, so it must
-# be granted on "*". states:StartExecution is scoped to the prod state machine.
+# be granted on "*".
 data "aws_iam_policy_document" "pipeline_cicd" {
   statement {
     sid    = "ECSDescribeTaskDef"
@@ -622,17 +621,6 @@ data "aws_iam_policy_document" "pipeline_cicd" {
       "ecs:DescribeTaskDefinition",
     ]
     resources = ["*"]
-  }
-
-  statement {
-    sid    = "SFNStartExecution"
-    effect = "Allow"
-    actions = [
-      "states:StartExecution",
-    ]
-    resources = [
-      module.orchestrator.state_machine_arn,
-    ]
   }
 }
 

@@ -36,9 +36,10 @@ permissions it needs:
    resource-level permissions) and `states:StartExecution` (scoped to the
    demo state machine ARN only) to the `pipeline-demo` user.
 
-2. **`pipeline-cicd` policy** (in `terraform/prod/`): Grants the same
-   permissions scoped to the prod state machine ARN. Added for symmetry and
-   future use if the prod pipeline is ever triggered manually.
+2. **`pipeline-cicd` policy** (in `terraform/prod/`): Grants only
+   `ecs:DescribeTaskDefinition` (on `*`). The prod deploy workflow does not
+   trigger Step Functions — production runs on a daily EventBridge schedule —
+   so `states:StartExecution` is not needed.
 
 ### ECR push/pull for the demo user
 
@@ -71,8 +72,8 @@ never sees demo credentials.
 - `terraform/shared/` must be applied before `terraform/demo/` and
   `terraform/prod/` so the `pipeline-ecr-push-pull` policy exists for the
   data source lookup.
-- The demo and prod CI/CD policies reference `module.orchestrator.state_machine_arn`,
-  so they must be defined after the orchestrator module block.
+- The demo CI/CD policy references `module.orchestrator.state_machine_arn`,
+  so it must be defined after the orchestrator module block.
 - Production pipeline runs are triggered by the daily EventBridge schedule
   defined in Terraform, not by the deploy workflow. This matches the design
   from ADR 0049.
@@ -80,17 +81,17 @@ never sees demo credentials.
 ## Consequences
 
 - **Positive**: The deploy trigger step no longer fails with
-  `AccessDeniedException`. Both `ecs:DescribeTaskDefinition` and
-  `states:StartExecution` are now authorized for the correct environment's
-  IAM user.
+  `AccessDeniedException`. `ecs:DescribeTaskDefinition` is authorized for
+  both environments' IAM users, and `states:StartExecution` is authorized
+  for the demo user.
 - **Positive**: Demo operations use demo credentials only. The staging workflow
   never loads prod credentials, and the production workflow never loads demo
   credentials.
-- **Positive**: The demo and prod users are symmetric — both have ECR push/pull
-  and CI/CD permissions. Adding a prod trigger in the future requires only a
-  workflow change.
-- **Positive**: `states:StartExecution` is scoped to the specific state machine
-  ARN in each policy, following least-privilege.
+- **Positive**: The prod CI/CD policy follows least-privilege — it grants only
+  `ecs:DescribeTaskDefinition`, the single permission the prod workflow needs.
+  A compromised prod key cannot trigger the production state machine.
+- **Positive**: `states:StartExecution` is scoped to the demo state machine
+  ARN only in the demo policy, following least-privilege.
 - **Neutral**: Two additional IAM policies to maintain (one per environment).
 - **Neutral**: `deploy.yml` is replaced by `deploy-staging.yml` and
   `deploy-prod.yml`. The old file is deleted.
