@@ -224,6 +224,19 @@ flowchart TD
     TASKS -->|"container logs"| CW["CloudWatch Logs"]:::compute
 ```
 
+### Step Functions workflow
+
+![Step Functions state machine diagram](docs/screenshots/step-functions-diagram.png)
+
+The orchestrator runs connectors in parallel (Map state, max concurrency 3),
+then consolidates results:
+
+1. **RunConnectors** — fans out across enabled brokers (IBKR, Trading 212, XTB),
+   each as an ECS Fargate task. Retries up to 2× on failure with exponential
+   backoff (30 s → 60 s).
+2. **ConsolidateAllocate** — after all connectors succeed, runs a single ECS task
+   that merges holdings, converts currencies, and computes portfolio allocation.
+
 ### Terraform apply order
 
 ```bash
