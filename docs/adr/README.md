@@ -25,7 +25,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0013b | Replace Pandas with Polars in Transform Pipeline | 2026-06-27 | active | — |
 | 0014 | Remove Pandas from Query Module, Use Polars Throughout | 2026-06-27 | active | — |
 | 0015 | Configure Data Paths with Environment-Aware Storage | 2026-06-28 | active | — |
-| 0016 | GitHub Actions CI | 2026-06-28 | active | — |
+| 0016 | GitHub Actions CI | 2026-06-28 | superseded | 0056 |
 | 0017 | Fixture Data for Transformation Tests | 2026-06-28 | active | — |
 | 0018 | Bitwarden Secrets and YAML Config | 2026-06-28 | superseded | 0019, 0020 |
 | 0019 | S3 Storage and GitHub Secrets | 2026-06-28 | active | — |
@@ -66,6 +66,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0053 | Per-Environment CI/CD Credentials and IAM Permissions | 2026-07-09 | active | — |
 | 0054 | Public-Subnet ECS — Eliminate Perma-VPC Charges | 2026-07-09 | active | — |
 | 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | active | — |
+| 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
