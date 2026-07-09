@@ -606,6 +606,47 @@ module "orchestrator" {
 }
 
 # ------------------------------------------------------------------------------
+# CI/CD IAM Policy (deploy workflow permissions)
+# ------------------------------------------------------------------------------
+
+# The deploy workflow authenticates as the prod IAM user and needs to:
+#   - Describe ECS task definitions (to resolve the latest ARN at runtime)
+#   - Start Step Functions executions (to trigger the prod orchestrator)
+# ecs:DescribeTaskDefinition does not support resource-level ARNs, so it must
+# be granted on "*". states:StartExecution is scoped to the prod state machine.
+data "aws_iam_policy_document" "pipeline_cicd" {
+  statement {
+    sid    = "ECSDescribeTaskDef"
+    effect = "Allow"
+    actions = [
+      "ecs:DescribeTaskDefinition",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "SFNStartExecution"
+    effect = "Allow"
+    actions = [
+      "states:StartExecution",
+    ]
+    resources = [
+      module.orchestrator.state_machine_arn,
+    ]
+  }
+}
+
+resource "aws_iam_policy" "pipeline_cicd" {
+  name   = "pipeline-cicd"
+  policy = data.aws_iam_policy_document.pipeline_cicd.json
+}
+
+resource "aws_iam_user_policy_attachment" "pipeline_cicd" {
+  user       = aws_iam_user.pipeline.name
+  policy_arn = aws_iam_policy.pipeline_cicd.arn
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
