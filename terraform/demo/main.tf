@@ -103,21 +103,23 @@ locals {
   az_suffixes = ["a", "b", "c"]
 
   # Connector definitions for the ecs-task module for_each.
-  # Demo environment uses _DEMO-suffixed SSM parameter names, mirroring
-  # DEMO_SECRET_MAP in pipeline/secrets.py.
+  # Demo environment uses _DEMO-suffixed SSM parameter names AND _DEMO-suffixed
+  # env var names, mirroring DEMO_SECRET_MAP in pipeline/secrets.py.
+  # resolve_secret("IBKR_FLEX_TOKEN") in demo mode looks for IBKR_FLEX_TOKEN_DEMO
+  # in the environment, so the ECS task must set the _DEMO-suffixed env var name.
   connectors = {
     ibkr = {
       command = ["run-connector", "ibkr", "--target-currency", "EUR"]
       secrets = [
-        { env_var = "IBKR_FLEX_TOKEN",   param_name = "/portfolio/demo/IBKR_FLEX_TOKEN_DEMO" },
-        { env_var = "IBKR_FLEX_QUERY_ID", param_name = "/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO" },
+        { env_var = "IBKR_FLEX_TOKEN_DEMO",   param_name = "/portfolio/demo/IBKR_FLEX_TOKEN_DEMO" },
+        { env_var = "IBKR_FLEX_QUERY_ID_DEMO", param_name = "/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO" },
       ]
     }
     trading212 = {
       command = ["run-connector", "trading212", "--target-currency", "EUR"]
       secrets = [
-        { env_var = "T212_API_KEY",    param_name = "/portfolio/demo/T212_API_KEY_DEMO" },
-        { env_var = "T212_API_SECRET",  param_name = "/portfolio/demo/T212_API_SECRET_DEMO" },
+        { env_var = "T212_API_KEY_DEMO",    param_name = "/portfolio/demo/T212_API_KEY_DEMO" },
+        { env_var = "T212_API_SECRET_DEMO",  param_name = "/portfolio/demo/T212_API_SECRET_DEMO" },
       ]
     }
     xtb = {
@@ -501,10 +503,12 @@ locals {
   }
 
   common_environment = {
-    DEMO         = "true"
-    STORAGE_TYPE = "cloud"
-    S3_BUCKET    = var.bucket_name
-    AWS_REGION   = var.aws_region
+    DEMO           = "true"
+    STORAGE_TYPE    = "cloud"
+    S3_BUCKET       = var.bucket_name
+    S3_BUCKET_DEMO  = var.bucket_name
+    S3_PREFIX_DEMO  = var.s3_prefix
+    AWS_REGION      = var.aws_region
   }
 }
 
@@ -524,7 +528,7 @@ module "connector_task" {
     XTB_ENABLED  = each.key == "xtb" ? "true" : "false"
   })
   secrets = concat(each.value.secrets, [
-    { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key_demo.arn }
+    { env_var = "ENCRYPTION_KEY_DEMO", arn = aws_ssm_parameter.encryption_key_demo.arn }
   ])
   bucket_arn    = aws_s3_bucket.pipeline_demo.arn
   s3_prefix     = var.s3_prefix
@@ -548,7 +552,7 @@ module "consolidate_allocate" {
     XTB_ENABLED  = "true"
   })
   secrets = [
-    { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key_demo.arn }
+    { env_var = "ENCRYPTION_KEY_DEMO", arn = aws_ssm_parameter.encryption_key_demo.arn }
   ]
   bucket_arn    = aws_s3_bucket.pipeline_demo.arn
   s3_prefix     = var.s3_prefix

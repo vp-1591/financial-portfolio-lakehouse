@@ -24,6 +24,7 @@ Additionally, the CI/CD workflow (`deploy.yml`) only built and pushed Docker ima
 - The ASL definition stays identical across environments (same Map/Task pattern, same container name `pipeline`).
 - Demo has `scheduled = false` — daily schedule only runs in prod.
 - The demo state machine ARN changes (from `portfolio-pipeline-orchestrator` to `portfolio-pipeline-orchestrator-demo`), requiring a one-time `DEMO_STATE_MACHINE_ARN` GitHub Secret update.
+- Demo ECS task environment variables use `_DEMO`-suffixed names (`IBKR_FLEX_TOKEN_DEMO`, `T212_API_KEY_DEMO`, `ENCRYPTION_KEY_DEMO`) to match what `resolve_secret()` expects in demo mode. Setting `S3_BUCKET_DEMO` alongside `S3_BUCKET` prevents double `-demo` suffix in the bucket name.
 
 ## Consequences
 

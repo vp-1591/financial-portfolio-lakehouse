@@ -1,5 +1,7 @@
 # 0051: Step Functions Orchestration
 
+> **Amended by [ADR 0052](./0052-per-env-state-machines.md)** — Decision #7 (variable-based apply decoupling / two-phase apply) is superseded. The state machine and EventBridge rules moved from `shared/` to per-environment roots, eliminating the two-phase apply. All other decisions (#1–#6, #8–#11) remain in force.
+
 ## Context
 
 Phase 2 of the productionization roadmap moves the portfolio pipeline to a Step Functions orchestrator on AWS. PR 1 made connectors self-describing via the `BrokerConnector` protocol (`fetch_kwargs`, `required_secrets`, `extract_holdings`, `enabled_env_var`), and PR 2 added the `run-connector <name>` and `run-consolidate-allocate` CLI subcommands. This PR (PR 3 of 3) builds the AWS infrastructure that runs them.
