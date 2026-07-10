@@ -626,10 +626,11 @@ class TestCdcTransform:
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
 
-        assert result.num_rows >= 4  # Trade + Dividend + Transfer + Fee
+        assert result.num_rows >= 5  # Trade + Dividend + BondInterest + Transfer + Fee
         event_types = result.column("event_type").to_pylist()
         assert "TRADE" in event_types
         assert "DIVIDEND" in event_types
+        assert "INTEREST" in event_types
         assert "TRANSFER" in event_types
         assert "FEE" in event_types
 
@@ -681,3 +682,84 @@ class TestCdcTransform:
         result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 0
+
+
+class TestClassifyIbkrCashType:
+    """Tests for IBKR CashTransaction type → normalized event_type mapping."""
+
+    def test_dividends(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Dividends", 42.5) == "DIVIDEND"
+
+    def test_payment_in_lieue(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("PaymentInLieue", 10.0) == "DIVIDEND"
+
+    def test_withholding_tax(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Withholding Tax", -5.0) == "TAX"
+
+    def test_871m_withholding(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("871(m) Withholding", -3.0) == "TAX"
+
+    def test_deposits_positive_is_deposit(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Deposits & Withdrawals", 1000.0) == "DEPOSIT"
+
+    def test_deposits_zero_is_deposit(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Deposits & Withdrawals", 0.0) == "DEPOSIT"
+
+    def test_deposits_negative_is_withdrawal(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert (
+            _classify_ibkr_cash_type("Deposits & Withdrawals", -500.0) == "WITHDRAWAL"
+        )
+
+    def test_broker_interest(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Broker Interest", 12.0) == "INTEREST"
+
+    def test_bond_interest(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Bond Interest", 25.0) == "INTEREST"
+
+    def test_broker_fees(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Broker Fees", -2.0) == "FEE"
+
+    def test_other_fees(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Other Fees", -1.0) == "FEE"
+
+    def test_commission_adjustments(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Commission Adjustments", -0.5) == "FEE"
+
+    def test_other_income(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Other Income", 5.0) == "ADJUSTMENT"
+
+    def test_price_adjustments(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Price Adjustments", 10.0) == "ADJUSTMENT"
+
+    def test_unknown_type_falls_through(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("SomeNewType", 42.0) == "UNKNOWN"

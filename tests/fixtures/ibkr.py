@@ -115,7 +115,7 @@ def ibkr_raw_cdc(
     """Build a raw IBKR CDC table with an encrypted Flex XML payload.
 
     Default data includes a Trade, a CashTransaction (dividend),
-    a Transfer, and a TransactionFee.
+    a CashTransaction (bond interest), a Transfer, and a TransactionFee.
     """
     if fernet_key is None:
         fernet_key = generate_key()
@@ -147,6 +147,13 @@ def ibkr_raw_cdc(
         ' amount="42.50" type="Dividends" dividendType="Qualified"'
         ' tradeId="" transactionId="CT001" code=""'
         ' assetClass="STK" conid="23897068" securityId="IE00BK5BQT80"/>'
+        f'<CashTransaction accountId="{account_id}" symbol="TLT"'
+        ' description="iShares 20+ Year Treasury Bond ETF"'
+        ' isin="US4642874848" currency="USD" fxRateToBase="0.9"'
+        ' dateTime="2026-04-01 00:00:00" settleDate="20260404"'
+        ' amount="35.00" type="Bond Interest" dividendType=""'
+        ' tradeId="" transactionId="CT002" code=""'
+        ' assetClass="STK" conid="7697096" securityId="US4642874848"/>'
         "</CashTransactions>"
         "<Transfers>"
         f'<Transfer accountId="{account_id}" symbol="MSFT"'
