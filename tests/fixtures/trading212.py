@@ -32,7 +32,7 @@ def t212_raw_snapshot(
         fernet_key = generate_key()
     if summary is None:
         summary = {
-            "free": 1500.0,
+            "cash": 1500.0,
             "invested": 8000.0,
             "result": 500.0,
             "currency": "GBP",

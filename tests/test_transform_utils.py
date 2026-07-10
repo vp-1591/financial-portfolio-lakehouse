@@ -12,6 +12,7 @@ from pipeline.connectors.transform_utils import (
     build_normalized_table,
     coerce_fetched_at,
     decode_payload,
+    filter_latest_snapshot,
     iter_raw_payloads,
     parse_json,
 )
@@ -369,3 +370,101 @@ class TestBuildNormalizedTable:
         assert list(result.schema.names) == list(
             trading212_snapshot_normalized_schema.names
         )
+
+
+class TestFilterLatestSnapshot:
+    """Tests for filter_latest_snapshot."""
+
+    def test_single_timestamp_returns_all_rows(self) -> None:
+        """All rows share the same fetched_at — none should be removed."""
+        now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        table = pa.table(
+            {
+                "fetched_at": [now, now, now],
+                "broker": ["IBKR", "IBKR", "IBKR"],
+                "source": ["flex", "flex", "flex"],
+                "payload": [b"a", b"b", b"c"],
+                "payload_hash": ["h1", "h2", "h3"],
+                "source_file": ["", "", ""],
+            },
+            schema=RAW_SCHEMA,
+        )
+        result = filter_latest_snapshot(table)
+        assert result.num_rows == 3
+
+    def test_multiple_timestamps_keeps_only_latest(self) -> None:
+        """Only rows from the latest fetched_at should be kept."""
+        t1 = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        t2 = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        table = pa.table(
+            {
+                "fetched_at": [t1, t1, t2, t2],
+                "broker": ["IBKR", "IBKR", "IBKR", "IBKR"],
+                "source": ["flex", "flex", "flex", "flex"],
+                "payload": [b"a", b"b", b"c", b"d"],
+                "payload_hash": ["h1", "h2", "h3", "h4"],
+                "source_file": ["", "", "", ""],
+            },
+            schema=RAW_SCHEMA,
+        )
+        result = filter_latest_snapshot(table)
+        assert result.num_rows == 2
+        # All remaining rows should have the latest timestamp
+        result_times = result.column("fetched_at").to_pylist()
+        assert all(t == t2 for t in result_times)
+
+    def test_empty_table_returns_empty(self) -> None:
+        """An empty table should be returned with the same schema."""
+        table = pa.table(
+            {
+                "fetched_at": [],
+                "broker": [],
+                "source": [],
+                "payload": [],
+                "payload_hash": [],
+                "source_file": [],
+            },
+            schema=RAW_SCHEMA,
+        )
+        result = filter_latest_snapshot(table)
+        assert result.num_rows == 0
+        assert result.schema.equals(RAW_SCHEMA)
+
+    def test_single_row_returns_unchanged(self) -> None:
+        """A table with a single row should be returned unchanged."""
+        now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        table = pa.table(
+            {
+                "fetched_at": [now],
+                "broker": ["IBKR"],
+                "source": ["flex"],
+                "payload": [b"a"],
+                "payload_hash": ["h1"],
+                "source_file": [""],
+            },
+            schema=RAW_SCHEMA,
+        )
+        result = filter_latest_snapshot(table)
+        assert result.num_rows == 1
+        assert result.column("broker")[0].as_py() == "IBKR"
+
+    def test_preserves_all_columns(self) -> None:
+        """After filtering, columns other than fetched_at are preserved."""
+        t1 = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        t2 = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        table = pa.table(
+            {
+                "fetched_at": [t1, t2],
+                "broker": ["IBKR", "T212"],
+                "source": ["flex", "/positions"],
+                "payload": [b"a", b"b"],
+                "payload_hash": ["h1", "h2"],
+                "source_file": ["file1", "file2"],
+            },
+            schema=RAW_SCHEMA,
+        )
+        result = filter_latest_snapshot(table)
+        assert result.num_rows == 1
+        assert result.column("broker")[0].as_py() == "T212"
+        assert result.column("source")[0].as_py() == "/positions"
+        assert result.column("source_file")[0].as_py() == "file2"

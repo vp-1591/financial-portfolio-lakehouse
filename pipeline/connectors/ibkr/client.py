@@ -16,10 +16,24 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from typing import Any
 
 # ISO 4217 currency codes are exactly 3 uppercase letters.
 _IS_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+
+
+@dataclass
+class CashReportResult:
+    """Parsed CashReport entries separated by type.
+
+    per_currency: entries with valid 3-letter ISO currency codes (e.g. "USD", "EUR").
+    base_summary: subtotal entries like "BASE SUMMARY" that aggregate across currencies.
+    """
+
+    per_currency: list[dict[str, Any]] = field(default_factory=list)
+    base_summary: list[dict[str, Any]] = field(default_factory=list)
+
 
 DEFAULT_FLEX_BASE_URL = (
     "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
@@ -206,7 +220,7 @@ def parse_account_info(root: ET.Element) -> list[dict[str, Any]]:
     return accounts
 
 
-def parse_cash_report(root: ET.Element) -> list[dict[str, Any]]:
+def parse_cash_report(root: ET.Element) -> CashReportResult:
     """Parse cash report entries from a Flex XML response.
 
     IBKR uses <CashReportCurrency> elements inside the <CashReport> section.
@@ -214,21 +228,24 @@ def parse_cash_report(root: ET.Element) -> list[dict[str, Any]]:
     currency. The Cash Report section must be included in the Flex Query
     configuration for these elements to appear.
 
-    Summary rows (e.g. currency="BASE SUMMARY") are excluded — they are
-    subtotals that would double-count per-currency entries.
+    Entries are separated into two categories:
+    - per_currency: entries with valid 3-letter ISO currency codes (e.g. "USD").
+    - base_summary: subtotal entries like "BASE SUMMARY" that aggregate
+      across currencies.
 
-    Returns a list of attribute dicts, one per per-currency <CashReportCurrency>.
+    Returns a :class:`CashReportResult` with both lists.
     """
-    entries: list[dict[str, Any]] = []
+    result = CashReportResult()
     for cr in root.iter("CashReportCurrency"):
         attribs = dict(cr.attrib)
         currency = str(attribs.get("currency", "") or "").upper()
-        # Skip summary/total rows: IBKR includes rows like "BASE SUMMARY",
-        # "Total", etc. that are subtotals, not actual currency balances.
         if currency and not _IS_CURRENCY_RE.match(currency):
-            continue
-        entries.append(attribs)
-    return entries
+            # Summary/total rows (e.g. "BASE SUMMARY", "Total")
+            result.base_summary.append(attribs)
+        else:
+            # Per-currency rows or rows with empty currency
+            result.per_currency.append(attribs)
+    return result
 
 
 def parse_conversion_rates(root: ET.Element) -> dict[str, float]:

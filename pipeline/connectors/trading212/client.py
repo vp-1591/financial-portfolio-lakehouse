@@ -234,11 +234,24 @@ def account_currency(summary: dict[str, Any]) -> str:
 
 
 def cash_value(summary: dict[str, Any]) -> float:
-    for key in ("free", "cash", "availableFunds", "available", "totalCash"):
-        value = first_value(summary, (key,))
-        if value is not None:
-            return as_float(value)
-    return 0.0
+    """Extract the available cash balance from a T212 account summary.
+
+    The live API returns ``cash`` as a scalar float.
+    The demo API returns ``cash`` as a nested dict like
+    ``{"availableToTrade": 10500.0, "reservedForOrders": 0, "inPies": 0}``.
+
+    When ``cash`` is a dict, drills into ``availableToTrade`` to get the
+    numeric amount.  Returns 0.0 when ``cash`` is absent.
+    """
+    raw = summary.get("cash")
+    if raw is None:
+        return 0.0
+    if isinstance(raw, dict):
+        inner = raw.get("availableToTrade")
+        if inner is not None:
+            return as_float(inner)
+        return 0.0
+    return as_float(raw)
 
 
 def net_worth_value(summary: dict[str, Any], fallback: float) -> float:

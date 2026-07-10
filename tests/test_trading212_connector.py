@@ -77,9 +77,24 @@ class TestClientParsing:
         assert account_currency({}) == ""
 
     def test_cash_value(self) -> None:
-        assert cash_value({"free": 25.0}) == 25.0
-        assert cash_value({"availableFunds": 100.0}) == 100.0
+        assert cash_value({"cash": 2500.0}) == 2500.0
         assert cash_value({}) == 0.0
+
+    def test_cash_value_nested_dict_available_to_trade(self) -> None:
+        """Demo API returns cash as a nested dict with availableToTrade."""
+        summary = {
+            "cash": {"availableToTrade": 10500.0, "reservedForOrders": 0, "inPies": 0}
+        }
+        assert cash_value(summary) == 10500.0
+
+    def test_cash_value_nested_dict_no_available_to_trade(self) -> None:
+        """Nested dict without availableToTrade returns 0.0."""
+        summary = {"cash": {"reservedForOrders": 0}}
+        assert cash_value(summary) == 0.0
+
+    def test_cash_value_none_value(self) -> None:
+        """Explicit None value for cash returns 0.0."""
+        assert cash_value({"cash": None}) == 0.0
 
     def test_net_worth_value(self) -> None:
         assert net_worth_value({"total": 225.0}, 0.0) == 225.0
@@ -228,7 +243,7 @@ class TestTransformSnapshot:
         )
 
     def test_transform_produces_equity_and_cash_rows(self, fernet_key: bytes) -> None:
-        summary = {"currencyCode": "EUR", "free": 25.0, "total": 225.0}
+        summary = {"currencyCode": "EUR", "cash": 25.0, "total": 225.0}
         positions = [
             {"ticker": "VUAA", "quantity": 2, "currentPrice": 100.0},
             {"ticker": "ZERO", "quantity": 0, "currentPrice": 100.0},
@@ -279,3 +294,30 @@ class TestTransformSnapshot:
 
         isins = result.column("isin").to_pylist()
         assert "IE00B4L5Y983" in isins
+
+    def test_transform_produces_cash_from_nested_cash_dict(
+        self, fernet_key: bytes
+    ) -> None:
+        """Demo API returns cash as a nested dict — transform should extract availableToTrade."""
+        summary = {
+            "currencyCode": "PLN",
+            "cash": {"availableToTrade": 10500.0, "reservedForOrders": 0, "inPies": 0},
+            "total": 15000.0,
+        }
+        positions = [
+            {"ticker": "VUAA", "quantity": 2, "currentPrice": 100.0},
+        ]
+        instruments = [
+            {"ticker": "VUAA", "currencyCode": "EUR", "name": "Vanguard ETF"}
+        ]
+
+        raw = self._build_raw_table(summary, positions, instruments)
+        result = transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "CASH" in types
+
+        cash_idx = types.index("CASH")
+        values = result.column("value").to_pylist()
+        cash_amount = decrypt_float(values[cash_idx], fernet_key)
+        assert cash_amount == pytest.approx(10500.0)
