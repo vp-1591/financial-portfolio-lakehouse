@@ -30,8 +30,10 @@ _PIPELINE_ENV_VARS = [
     "AWS_SECRET_ACCESS_KEY_DEMO",
     "IBKR_FLEX_TOKEN",
     "IBKR_FLEX_QUERY_ID",
+    "IBKR_FLEX_CDC_QUERY_ID",
     "IBKR_FLEX_TOKEN_DEMO",
     "IBKR_FLEX_QUERY_ID_DEMO",
+    "IBKR_FLEX_CDC_QUERY_ID_DEMO",
     "T212_API_KEY",
     "T212_API_SECRET",
     "T212_API_KEY_DEMO",
@@ -50,15 +52,23 @@ _PIPELINE_ENV_VARS = [
 
 
 @pytest.fixture(autouse=True)
-def _isolate_pipeline_env(monkeypatch):
+def _isolate_pipeline_env(monkeypatch, tmp_path):
     """Clear all pipeline env vars and reset singletons for test isolation.
 
     Ensures tests are isolated from local .env files and shell environment.
     Individual tests can set env vars via ``monkeypatch.setenv`` as needed;
     ``monkeypatch`` restores the original values after each test.
+
+    ``PROJECT_ROOT`` is redirected to an empty temp directory so that
+    ``load_dotenv`` finds no ``.env`` file by default.  Tests that
+    intentionally exercise ``.env`` loading override this by setting
+    ``PROJECT_ROOT`` to their own ``tmp_path`` with a crafted ``.env``.
     """
     for var in _PIPELINE_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # Redirect PROJECT_ROOT to an empty temp dir so load_dotenv finds no .env.
+    # Tests that need .env loading set PROJECT_ROOT to their own tmp_path.
+    monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
     # Reset storage singleton so resolve_storage() re-reads env vars
     import pipeline.storage
 
