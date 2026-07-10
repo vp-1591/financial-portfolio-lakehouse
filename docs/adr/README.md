@@ -69,6 +69,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |
 | 0057 | Fix Bronze→Silver Dedup and Cash Extraction Bugs | 2026-07-10 | active | — |
 | 0058 | Broker-Neutral CDC Events Schema | 2026-07-10 | active | — |
+| 0059 | Fix T212 CDC Paginated Response Bug and Test Isolation Leak | 2026-07-10 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
