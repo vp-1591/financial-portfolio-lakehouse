@@ -622,8 +622,8 @@ class TestCdcTransform:
         result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 1
-        assert result.column("event_type")[0].as_py() == "TRANSACTION"
-        assert result.column("raw_event_type")[0].as_py() == "TRANSACTION"
+        assert result.column("event_type")[0].as_py() == "DEPOSIT"
+        assert result.column("raw_event_type")[0].as_py() == "DEPOSIT"
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(1000.0)
 
