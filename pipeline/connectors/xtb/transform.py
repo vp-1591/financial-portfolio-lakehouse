@@ -6,6 +6,7 @@ import pyarrow as pa
 
 from pipeline.connectors.transform_utils import (
     build_normalized_table,
+    filter_latest_snapshot,
     iter_raw_payloads,
 )
 from pipeline.connectors.xtb.parser import (
@@ -25,6 +26,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     XTB report file). This function decrypts the payload, parses the
     .xlsx, and extracts positions and cash balances.
     """
+    raw = filter_latest_snapshot(raw)
     records: list[dict] = []
 
     for row in iter_raw_payloads(raw, fernet_key, require_json=False):

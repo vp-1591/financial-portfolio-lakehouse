@@ -6,6 +6,7 @@ import pyarrow as pa
 
 from pipeline.connectors.transform_utils import (
     build_normalized_table,
+    filter_latest_snapshot,
     iter_raw_payloads,
 )
 from pipeline.connectors.trading212.client import (
@@ -30,6 +31,7 @@ from pipeline.normalized.models import (
 
 def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """Transform raw Trading 212 snapshot data into the normalized schema."""
+    raw = filter_latest_snapshot(raw)
     records: list[dict] = []
 
     # Collect decoded rows to reconstruct per-account data

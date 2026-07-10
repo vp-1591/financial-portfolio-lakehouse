@@ -9,13 +9,18 @@ from typing import Any
 import pyarrow as pa
 
 from pipeline.connectors.ibkr.client import (
+    CashReportResult,
     as_float,
     parse_account_info,
     parse_cash_report,
     parse_conversion_rates,
     parse_positions,
 )
-from pipeline.connectors.transform_utils import build_normalized_table, decode_payload
+from pipeline.connectors.transform_utils import (
+    build_normalized_table,
+    decode_payload,
+    filter_latest_snapshot,
+)
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 
 
@@ -39,6 +44,8 @@ def transform_snapshot(
         When the Flex response reports ``BASE`` instead of a real currency
         code, use this value as the base currency.
     """
+    raw = filter_latest_snapshot(raw)
+
     records: list[dict[str, Any]] = []
 
     # Flex payloads are XML, not JSON — iterate raw table columns directly
@@ -60,7 +67,7 @@ def transform_snapshot(
         root = ET.fromstring(payload_bytes)
         positions = parse_positions(root)
         account_infos = parse_account_info(root)
-        cash_report_entries = parse_cash_report(root)
+        cash_result: CashReportResult = parse_cash_report(root)
         conversion_rates = parse_conversion_rates(root)
 
         # Build account_id -> base_currency lookup
@@ -153,9 +160,28 @@ def transform_snapshot(
                 }
             )
 
-        # Process cash entries
-        if cash_report_entries:
-            for entry in cash_report_entries:
+        # Process cash entries — use BASE_SUMMARY fallback when no per-currency
+        # entries exist (e.g. single-currency demo accounts).
+        cash_entries = cash_result.per_currency
+        if not cash_entries and cash_result.base_summary:
+            for summary in cash_result.base_summary:
+                ending_cash = as_float(summary.get("endingCash"))
+                if ending_cash != 0:
+                    acct_id = str(summary.get("accountId", ""))
+                    base_ccy = base_currency_by_account.get(acct_id, "USD")
+                    if base_currency_override:
+                        base_ccy = base_currency_override.upper()
+                    cash_entries = [
+                        {
+                            "accountId": acct_id,
+                            "currency": base_ccy,
+                            "endingCash": str(ending_cash),
+                        }
+                    ]
+                    break
+
+        if cash_entries:
+            for entry in cash_entries:
                 acct_id = str(entry.get("accountId", ""))
                 currency = str(entry.get("currency", "") or "").upper()
                 ending_cash = as_float(entry.get("endingCash"))

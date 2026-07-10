@@ -49,6 +49,40 @@ def parse_json(data: bytes) -> Any | None:
         return None
 
 
+def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
+    """Filter a raw table to only rows from the latest fetch.
+
+    All rows from a single fetch share the same ``fetched_at`` timestamp
+    (set once per API call in the fetch layer).  This function keeps only
+    rows whose ``fetched_at`` equals the maximum timestamp in the table,
+    effectively discarding stale snapshot batches that accumulated via
+    append-mode writes.
+
+    For CDC (change data capture) data this filter should **not** be used
+    -- CDC rows are chronological events, not replaceable snapshots.
+
+    Parameters
+    ----------
+    raw:
+        PyArrow table matching :data:`RAW_SCHEMA`.
+
+    Returns
+    -------
+    pa.Table
+        The same table filtered to the latest ``fetched_at`` value.
+        Returns the input unchanged if it has 0 or 1 rows.
+    """
+    import pyarrow.compute as pc
+
+    if raw.num_rows <= 1:
+        return raw
+
+    fetched_at = raw.column("fetched_at")
+    max_ts = pc.max(fetched_at)
+    mask = pc.equal(fetched_at, max_ts)
+    return raw.filter(mask)
+
+
 def coerce_fetched_at(value: Any) -> datetime:
     """Convert a fetched_at value to a timezone-aware datetime.
 

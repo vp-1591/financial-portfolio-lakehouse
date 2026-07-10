@@ -90,9 +90,10 @@ class TestClientParsing:
             "</FlexQueryResponse>"
         )
         root = ET.fromstring(xml_str)
-        entries = parse_cash_report(root)
-        assert len(entries) == 2
-        usd = [e for e in entries if e["currency"] == "USD"][0]
+        result = parse_cash_report(root)
+        assert len(result.per_currency) == 2
+        assert len(result.base_summary) == 0
+        usd = [e for e in result.per_currency if e["currency"] == "USD"][0]
         assert usd["accountId"] == "U123"
         assert usd["endingCash"] == "5000.00"
 
@@ -114,12 +115,56 @@ class TestClientParsing:
             "</FlexQueryResponse>"
         )
         root = ET.fromstring(xml_str)
-        entries = parse_cash_report(root)
-        currencies = [e["currency"] for e in entries]
+        result = parse_cash_report(root)
+        currencies = [e["currency"] for e in result.per_currency]
         assert "EUR" in currencies
         assert "PLN" in currencies
-        assert "BASE SUMMARY" not in currencies
-        assert len(entries) == 2
+        assert len(result.per_currency) == 2
+        assert len(result.base_summary) == 1
+        assert result.base_summary[0]["currency"] == "BASE SUMMARY"
+
+    def test_parse_cash_report_base_summary_only(self) -> None:
+        """When only BASE_SUMMARY exists (no per-currency entries), it goes to base_summary."""
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U999" fromDate="20260601" toDate="20260625">'
+            "<CashReport>"
+            '<CashReportCurrency accountId="U999" currency="BASE SUMMARY"'
+            ' endingCash="10500.00"/>'
+            "</CashReport>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+        root = ET.fromstring(xml_str)
+        result = parse_cash_report(root)
+        assert len(result.per_currency) == 0
+        assert len(result.base_summary) == 1
+        assert result.base_summary[0]["endingCash"] == "10500.00"
+
+    def test_parse_cash_report_mixed_entries(self) -> None:
+        """Per-currency entries and BASE_SUMMARY are separated correctly."""
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">'
+            "<CashReport>"
+            '<CashReportCurrency accountId="U123" currency="USD"'
+            ' endingCash="5000.00"/>'
+            '<CashReportCurrency accountId="U123" currency="BASE SUMMARY"'
+            ' endingCash="7000.00"/>'
+            "</CashReport>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+        root = ET.fromstring(xml_str)
+        result = parse_cash_report(root)
+        assert len(result.per_currency) == 1
+        assert result.per_currency[0]["currency"] == "USD"
+        assert len(result.base_summary) == 1
+        assert result.base_summary[0]["currency"] == "BASE SUMMARY"
 
     def test_parse_conversion_rates(self) -> None:
         xml_str = (
@@ -302,6 +347,115 @@ class TestFlexTransformSnapshot:
 
         currencies = result.column("currency").to_pylist()
         assert all(c == "CHF" for c in currencies)
+
+    def test_transform_produces_cash_from_base_summary_fallback(
+        self, fernet_key: bytes
+    ) -> None:
+        """When only BASE_SUMMARY exists (no per-currency entries), a CASH row is produced."""
+        from pipeline.crypto import decrypt_float
+
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U999" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U999" currency="USD"/>'
+            "<OpenPositions>"
+            '<OpenPosition symbol="CSPX" currency="USD" positionValue="5000.0"'
+            ' assetClass="STK" isin="IE00B5BMR087"'
+            ' fxRateToBase="1.0"/>'
+            "</OpenPositions>"
+            "<CashReport>"
+            '<CashReportCurrency accountId="U999" currency="BASE SUMMARY"'
+            ' endingCash="10500.0"/>'
+            "</CashReport>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+
+        raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
+        result = transform.transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "CASH" in types, f"Expected CASH row, got types: {types}"
+
+        cash_idx = types.index("CASH")
+        labels = result.column("label").to_pylist()
+        assert labels[cash_idx] == "CASH USD"
+
+        values = result.column("value").to_pylist()
+        cash_value = decrypt_float(values[cash_idx], fernet_key)
+        assert cash_value == pytest.approx(10500.0)
+
+    def test_transform_skips_base_summary_when_per_currency_exists(
+        self, fernet_key: bytes
+    ) -> None:
+        """When per-currency entries exist, BASE_SUMMARY should not produce a duplicate cash row."""
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U123" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U123" currency="USD"/>'
+            "<OpenPositions>"
+            '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000.0"'
+            ' assetClass="STK" fxRateToBase="1.0"/>'
+            "</OpenPositions>"
+            "<CashReport>"
+            '<CashReportCurrency accountId="U123" currency="USD"'
+            ' endingCash="500.0"/>'
+            '<CashReportCurrency accountId="U123" currency="BASE SUMMARY"'
+            ' endingCash="500.0"/>'
+            "</CashReport>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+
+        raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
+        result = transform.transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        cash_count = types.count("CASH")
+        assert cash_count == 1, f"Expected 1 CASH row, got {cash_count}"
+
+    def test_transform_base_summary_with_currency_override(
+        self, fernet_key: bytes
+    ) -> None:
+        """BASE_SUMMARY fallback uses base_currency_override when provided."""
+
+        xml_str = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U999" fromDate="20240101" toDate="20240102">'
+            '<AccountInformation accountId="U999" currency="BASE"/>'
+            "<OpenPositions>"
+            '<OpenPosition symbol="CSPX" currency="USD" positionValue="5000.0"'
+            ' assetClass="STK" isin="IE00B5BMR087"'
+            ' fxRateToBase="0.9"/>'
+            "</OpenPositions>"
+            "<CashReport>"
+            '<CashReportCurrency accountId="U999" currency="BASE SUMMARY"'
+            ' endingCash="3000.0"/>'
+            "</CashReport>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+
+        raw = self._build_flex_raw_table(xml_str, fernet_key=fernet_key)
+        result = transform.transform_snapshot(
+            raw, fernet_key, base_currency_override="CHF"
+        )
+
+        types = result.column("position_type").to_pylist()
+        assert "CASH" in types
+
+        cash_idx = types.index("CASH")
+        labels = result.column("label").to_pylist()
+        assert labels[cash_idx] == "CASH CHF"
+
+        currencies = result.column("currency").to_pylist()
+        assert currencies[cash_idx] == "CHF"
 
 
 class TestConnectorFlexDispatch:
