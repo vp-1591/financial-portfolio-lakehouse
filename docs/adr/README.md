@@ -67,6 +67,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0054 | Public-Subnet ECS — Eliminate Perma-VPC Charges | 2026-07-09 | active | — |
 | 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | active | — |
 | 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |
+| 0057 | Fix Bronze→Silver Dedup and Cash Extraction Bugs | 2026-07-10 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
