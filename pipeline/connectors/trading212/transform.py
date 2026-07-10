@@ -24,7 +24,7 @@ from pipeline.connectors.trading212.client import (
     position_value,
 )
 from pipeline.normalized.models import (
-    trading212_cdc_normalized_schema,
+    cdc_events_normalized_schema,
     trading212_snapshot_normalized_schema,
 )
 
@@ -119,7 +119,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
 
 def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
-    """Transform raw Trading 212 CDC data into the normalized CDC schema."""
+    """Transform raw Trading 212 CDC data into the broker-neutral CDC events schema."""
     records: list[dict] = []
 
     for row in iter_raw_payloads(raw, fernet_key):
@@ -129,13 +129,17 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
         # Determine event type from source path
         if "/orders" in row.source:
-            event_type = "ORDER"
+            event_type = "TRADE"
+            raw_event_type = "ORDER"
         elif "/dividends" in row.source:
             event_type = "DIVIDEND"
+            raw_event_type = "DIVIDEND"
         elif "/transactions" in row.source:
             event_type = "TRANSACTION"
+            raw_event_type = "TRANSACTION"
         else:
             event_type = "UNKNOWN"
+            raw_event_type = "UNKNOWN"
 
         for event in events:
             if not isinstance(event, dict):
@@ -146,23 +150,28 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             records.append(
                 {
                     "fetched_at": row.fetched_at,
+                    "broker": "Trading 212",
                     "account_id": "",
-                    "event_type": event_type,
                     "event_id": str(event.get("id", event.get("orderId", ""))),
-                    "ticker": str(event.get("ticker", event.get("instrument", ""))),
-                    "isin": str(event.get("isin", "")),
+                    "source": row.source,
+                    "event_type": event_type,
+                    "raw_event_type": raw_event_type,
+                    "event_datetime": str(
+                        event.get("date", event.get("createdDate", ""))
+                    ),
                     "currency": str(currency),
-                    "value": as_float(
+                    "cash_amount": as_float(
                         event.get("price", event.get("amount", event.get("value", 0)))
                     ),
+                    "ticker": str(event.get("ticker", event.get("instrument", ""))),
+                    "isin": str(event.get("isin", "")),
                     "quantity": as_float(event.get("quantity", event.get("shares", 0))),
-                    "event_date": str(event.get("date", event.get("createdDate", ""))),
                 }
             )
 
     return build_normalized_table(
         records,
-        trading212_cdc_normalized_schema,
+        cdc_events_normalized_schema,
         fernet_key,
-        encrypt_columns=["value", "quantity"],
+        encrypt_columns=["cash_amount", "quantity"],
     )
