@@ -14,7 +14,6 @@ Verifies that:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -38,8 +37,6 @@ class TestResolveStorage:
         import pipeline.storage
 
         pipeline.storage._config = None
-        # Clear STORAGE_TYPE cache from secrets module
-        os.environ.pop("STORAGE_TYPE", None)
 
     def teardown_method(self):
         """Reset module-level singleton after each test."""

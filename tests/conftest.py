@@ -10,6 +10,62 @@ import pytest
 from pipeline.crypto import generate_key
 from pipeline.storage import LocalBackend, StorageConfig, use_storage
 
+# All pipeline-related environment variables that tests must isolate from.
+# Cleared before each test so local .env files and shell env vars don't leak.
+_PIPELINE_ENV_VARS = [
+    "DEMO",
+    "STORAGE_TYPE",
+    "S3_BUCKET",
+    "S3_BUCKET_DEMO",
+    "S3_PREFIX",
+    "S3_PREFIX_DEMO",
+    "PIPELINE_DATA_DIR",
+    "PIPELINE_DATA_DIR_DEMO",
+    "S3_ENDPOINT_URL",
+    "S3_ALLOW_HTTP",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION",
+    "AWS_ACCESS_KEY_ID_DEMO",
+    "AWS_SECRET_ACCESS_KEY_DEMO",
+    "IBKR_FLEX_TOKEN",
+    "IBKR_FLEX_QUERY_ID",
+    "IBKR_FLEX_TOKEN_DEMO",
+    "IBKR_FLEX_QUERY_ID_DEMO",
+    "T212_API_KEY",
+    "T212_API_SECRET",
+    "T212_API_KEY_DEMO",
+    "T212_API_SECRET_DEMO",
+    "ENCRYPTION_KEY",
+    "ENCRYPTION_KEY_DEMO",
+    "IBKR_ENABLED",
+    "T212_ENABLED",
+    "XTB_ENABLED",
+    "IBKR_FLEX_BASE_URL",
+    "IBKR_FLEX_BASE_URL_DEMO",
+    "T212_BASE_URL",
+    "T212_BASE_URL_DEMO",
+    "XTB_REPORT_PATH",
+]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_pipeline_env(monkeypatch):
+    """Clear all pipeline env vars and reset singletons for test isolation.
+
+    Ensures tests are isolated from local .env files and shell environment.
+    Individual tests can set env vars via ``monkeypatch.setenv`` as needed;
+    ``monkeypatch`` restores the original values after each test.
+    """
+    for var in _PIPELINE_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    # Reset storage singleton so resolve_storage() re-reads env vars
+    import pipeline.storage
+
+    pipeline.storage._config = None
+    yield
+    pipeline.storage._config = None
+
 
 @pytest.fixture()
 def fernet_key() -> bytes:
