@@ -19,6 +19,29 @@ The full IBKR field reference is in `docs/_vendor/ibkr/reportingguide.pdf` (July
 The complete list of available fields per section is in
 `docs/_vendor/ibkr/flex-query-fields.md`.
 
+---
+
+> ⚠️ **Period setting — must cover historical activity**
+>
+> The Flex Query **Period** must be wide enough to capture past transactions, not just
+> the last business day. If the period is too narrow (e.g. `LastBusinessDay`), the
+> CDC sections (Trades, CashTransactions, Transfers, TransactionFees) will be **empty**
+> and the `normalized/ibkr_cdc` table will have zero rows.
+>
+> **Recommended:** `Last365Days` or a specific date range covering your account history.
+>
+> This does **not** affect the snapshot. The snapshot transform only reads
+> OpenPositions, AccountInformation, CashReport, and ConversionRates — these always
+> reflect current holdings regardless of the query period. The CDC transform reads
+> only the activity sections (Trades, CashTransactions, etc.) which are populated
+> based on the period.
+>
+> If you use a **single Flex Query** for both snapshot and CDC (the default when
+> `IBKR_FLEX_CDC_QUERY_ID` is not set), widening the period is safe: snapshot data
+> remains unchanged, and CDC data is now populated.
+
+---
+
 ## 5. Trades — Required for CDC
 
 Source: Activity Flex Query Reference → Trades. This section produces `<Trade>`
