@@ -70,7 +70,9 @@ class TestFetchConnectorIsolation:
     """fetch_connector uses connector.fetch_kwargs (no if/elif)."""
 
     @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
-    def test_uses_fetch_kwargs(self, mock_ingest: MagicMock) -> None:
+    def test_uses_fetch_kwargs(
+        self, mock_ingest: MagicMock, tmp_data_dir: Path
+    ) -> None:
         """fetch_connector calls connector.fetch_kwargs(args) and passes result to fetch_snapshot."""
         connector = get("ibkr")
         args = argparse.Namespace()
@@ -97,7 +99,9 @@ class TestFetchConnectorIsolation:
             mock_snapshot.assert_called_once()
 
     @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
-    def test_skips_connector_when_kwargs_empty(self, mock_ingest: MagicMock) -> None:
+    def test_skips_connector_when_kwargs_empty(
+        self, mock_ingest: MagicMock, tmp_data_dir: Path
+    ) -> None:
         """fetch_connector returns 0 and skips when fetch_kwargs returns {}."""
         connector = get("ibkr")
         args = argparse.Namespace()
@@ -112,7 +116,9 @@ class TestFetchConnectorIsolation:
             mock_snapshot.assert_not_called()
 
     @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
-    def test_returns_nonzero_on_snapshot_error(self, mock_ingest: MagicMock) -> None:
+    def test_returns_nonzero_on_snapshot_error(
+        self, mock_ingest: MagicMock, tmp_data_dir: Path
+    ) -> None:
         """fetch_connector returns 1 when snapshot fetch raises an exception."""
         connector = get("ibkr")
         args = argparse.Namespace()

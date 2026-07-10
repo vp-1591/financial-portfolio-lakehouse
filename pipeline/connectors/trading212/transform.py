@@ -137,13 +137,31 @@ def _classify_t212_event_type(raw_type: str) -> str:
     return _T212_TRANSACTION_TYPE_MAP.get(raw_type, "UNKNOWN")
 
 
+def _unwrap_t212_events(payload: object) -> list[dict]:
+    """Unwrap T212 API response into a list of event dicts.
+
+    The T212 API returns either a bare JSON list of events or a paginated
+    dict with ``{"items": [...], "nextPagePath": "..."}``.  When the
+    ``capture_raw`` fetcher stores raw HTTP responses, the per-request
+    payload is the paginated dict — this helper extracts the ``items``
+    list so the transform can process it uniformly.
+    """
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict) and "items" in payload:
+        items = payload["items"]
+        if isinstance(items, list):
+            return items
+    return []
+
+
 def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """Transform raw Trading 212 CDC data into the broker-neutral CDC events schema."""
     records: list[dict] = []
 
     for row in iter_raw_payloads(raw, fernet_key):
-        events = row.payload_parsed
-        if not isinstance(events, list):
+        events = _unwrap_t212_events(row.payload_parsed)
+        if not events:
             continue
 
         for event in events:

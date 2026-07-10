@@ -511,6 +511,40 @@ class TestCdcFetch:
             assert result.num_rows == 0
 
 
+class TestUnwrapT212Events:
+    """Tests for _unwrap_t212_events helper."""
+
+    def test_bare_list_returns_as_is(self) -> None:
+        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+
+        events = [{"id": 1}, {"id": 2}]
+        assert _unwrap_t212_events(events) is events
+
+    def test_paginated_dict_extracts_items(self) -> None:
+        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+
+        payload = {"items": [{"id": 1}], "nextPagePath": None}
+        assert _unwrap_t212_events(payload) == [{"id": 1}]
+
+    def test_paginated_dict_empty_items(self) -> None:
+        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+
+        payload = {"items": [], "nextPagePath": None}
+        assert _unwrap_t212_events(payload) == []
+
+    def test_dict_without_items_returns_empty(self) -> None:
+        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+
+        assert _unwrap_t212_events({"error": "not found"}) == []
+
+    def test_non_dict_non_list_returns_empty(self) -> None:
+        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+
+        assert _unwrap_t212_events("string") == []
+        assert _unwrap_t212_events(42) == []
+        assert _unwrap_t212_events(None) == []
+
+
 class TestCdcTransform:
     """Tests for the T212 CDC transform using broker-neutral schema."""
 
@@ -520,7 +554,7 @@ class TestCdcTransform:
 
     def _build_raw_cdc_table(
         self,
-        events: list[dict],
+        events: list[dict] | dict,
         source: str,
         fernet_key: bytes,
     ) -> pa.Table:
@@ -637,6 +671,46 @@ class TestCdcTransform:
         raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
         # Empty list means iter_raw_payloads yields nothing useful
         # but the raw table has a payload with []
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 0
+        assert result.schema == cdc_events_normalized_schema
+
+    def test_transform_cdc_unwraps_paginated_dict(self, fernet_key: bytes) -> None:
+        """Paginated T212 responses (dict with 'items') are unwrapped correctly."""
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        # Simulate the paginated response format: {"items": [...], "nextPagePath": null}
+        events = [
+            {
+                "id": "99",
+                "ticker": "VWCE",
+                "currency": "EUR",
+                "price": 100.0,
+                "quantity": 5,
+                "createdDate": "2024-06-01T12:00:00Z",
+            }
+        ]
+        paginated_payload = {"items": events, "nextPagePath": None}
+        raw = self._build_raw_cdc_table(
+            paginated_payload, "/equity/history/orders", fernet_key
+        )
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        assert result.column("event_type")[0].as_py() == "TRADE"
+        assert result.column("ticker")[0].as_py() == "VWCE"
+
+    def test_transform_cdc_paginated_dict_with_empty_items(
+        self, fernet_key: bytes
+    ) -> None:
+        """Paginated response with empty items list produces zero rows."""
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        paginated_payload = {"items": [], "nextPagePath": None}
+        raw = self._build_raw_cdc_table(
+            paginated_payload, "/equity/history/dividends", fernet_key
+        )
         result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 0
