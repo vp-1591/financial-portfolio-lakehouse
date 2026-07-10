@@ -137,35 +137,51 @@ class Trading212Client:
 
     # --- CDC (historical) endpoints ---
 
-    def orders(self, cursor: int | None = None) -> list[dict[str, Any]]:
-        """Fetch historical orders with cursor-based pagination."""
-        path = "/equity/history/orders"
-        if cursor is not None:
-            path = f"{path}?cursor={cursor}"
-        result = self.request("GET", path)
-        if not isinstance(result, list):
-            raise Trading212Error("Unexpected orders response.")
-        return result
+    def _fetch_paginated(self, path: str) -> list[dict[str, Any]]:
+        """Fetch all pages from a paginated T212 API endpoint.
 
-    def dividends(self, cursor: int | None = None) -> list[dict[str, Any]]:
-        """Fetch historical dividends with cursor-based pagination."""
-        path = "/equity/history/dividends"
-        if cursor is not None:
-            path = f"{path}?cursor={cursor}"
-        result = self.request("GET", path)
-        if not isinstance(result, list):
-            raise Trading212Error("Unexpected dividends response.")
-        return result
+        The T212 API returns either a bare JSON list (legacy/unpaginated)
+        or a dict with ``{"items": [...], "nextPagePath": "..."}``. This
+        method handles both formats and follows ``nextPagePath`` links
+        until no more pages exist.
+        """
+        all_items: list[dict[str, Any]] = []
+        current_path = path
 
-    def transactions(self, cursor: int | None = None) -> list[dict[str, Any]]:
-        """Fetch historical transactions with cursor-based pagination."""
-        path = "/equity/history/transactions"
-        if cursor is not None:
-            path = f"{path}?cursor={cursor}"
-        result = self.request("GET", path)
-        if not isinstance(result, list):
-            raise Trading212Error("Unexpected transactions response.")
-        return result
+        while current_path:
+            result = self.request("GET", current_path)
+
+            if isinstance(result, list):
+                # Legacy/unpaginated response: bare list of items
+                return result
+
+            if isinstance(result, dict):
+                items = result.get("items")
+                if not isinstance(items, list):
+                    raise Trading212Error(
+                        f"Paginated response from {current_path} missing 'items' list."
+                    )
+                all_items.extend(items)
+                next_page = result.get("nextPagePath")
+                current_path = str(next_page) if next_page else ""
+            else:
+                raise Trading212Error(
+                    f"Unexpected response type from {current_path}: {type(result).__name__}"
+                )
+
+        return all_items
+
+    def orders(self) -> list[dict[str, Any]]:
+        """Fetch all historical orders, following pagination."""
+        return self._fetch_paginated("/equity/history/orders")
+
+    def dividends(self) -> list[dict[str, Any]]:
+        """Fetch all historical dividends, following pagination."""
+        return self._fetch_paginated("/equity/history/dividends")
+
+    def transactions(self) -> list[dict[str, Any]]:
+        """Fetch all historical transactions, following pagination."""
+        return self._fetch_paginated("/equity/history/transactions")
 
 
 # --- Parsing helpers ---

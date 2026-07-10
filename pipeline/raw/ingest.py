@@ -133,11 +133,30 @@ def ingest_raw(
 ) -> int:
     """Encrypt, dedup, and write a raw table to a Delta table.
 
-    Returns the number of new rows written.
+    Returns the number of new rows written.  When all rows are
+    duplicates (``deduped.num_rows == 0``), creates a schema-only
+    Delta table if one does not already exist, so that downstream
+    transforms always find a table to read.
     """
     encrypted = encrypt_raw_payloads(table, fernet_key)
     deduped = dedup_raw(encrypted, table_path)
     if deduped.num_rows == 0:
+        # Create schema-only table if it doesn't exist yet
+        from pipeline.storage import get_storage
+
+        storage_opts = get_storage().storage_options
+        try:
+            from deltalake import DeltaTable
+
+            DeltaTable(table_path, storage_options=storage_opts)
+        except Exception:
+            get_storage().backend.ensure_parent(table_path)
+            write_deltalake(
+                table_path,
+                encrypted.slice(0, 0),
+                mode="append",
+                storage_options=storage_opts,
+            )
         return 0
     from pipeline.storage import get_storage
 

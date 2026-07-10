@@ -42,7 +42,25 @@ class IbkrConnector:
         }
 
     def fetch_cdc_kwargs(self) -> dict:
-        return {}
+        flex_token = resolve_secret("IBKR_FLEX_TOKEN")
+        if not flex_token:
+            logger.debug("Skipping IBKR CDC: IBKR_FLEX_TOKEN not set")
+            return {}
+        # Prefer a dedicated CDC query ID, fall back to the snapshot query ID
+        flex_query_id = resolve_secret("IBKR_FLEX_CDC_QUERY_ID") or resolve_secret(
+            "IBKR_FLEX_QUERY_ID"
+        )
+        if not flex_query_id:
+            logger.debug("Skipping IBKR CDC: no Flex query ID available")
+            return {}
+        return {
+            "token": flex_token,
+            "query_id": flex_query_id,
+            "base_url": get_env(
+                "IBKR_FLEX_BASE_URL",
+                "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
+            ),
+        }
 
     def required_secrets(self) -> list[str]:
         return ["IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID"]
@@ -79,7 +97,17 @@ class IbkrConnector:
         )
 
     def fetch_cdc(self, **kwargs: Any) -> pa.Table:
-        return fetch.fetch_cdc(**kwargs)
+        return fetch.fetch_cdc_via_flex(
+            token=kwargs["token"],
+            query_id=kwargs["query_id"],
+            base_url=kwargs.get(
+                "base_url",
+                "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
+            ),
+            timeout=kwargs.get("timeout", 30.0),
+            retries=kwargs.get("retries", 6),
+            delay=kwargs.get("delay", 3.0),
+        )
 
     def transform_snapshot(
         self, raw: pa.Table, fernet_key: bytes, **kwargs: Any

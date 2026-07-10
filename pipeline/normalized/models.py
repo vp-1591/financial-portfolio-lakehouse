@@ -1,4 +1,4 @@
-"""PyArrow schemas for the 7 normalized tables."""
+"""PyArrow schemas for normalized tables."""
 
 from __future__ import annotations
 
@@ -53,43 +53,40 @@ xtb_snapshot_normalized_schema = pa.schema(
     ]
 )
 
-# --- CDC schemas (3) ---
+# --- CDC schema (broker-neutral) ---
 
-trading212_cdc_normalized_schema = pa.schema(
+cdc_events_normalized_schema = pa.schema(
     [
+        # Non-nullable core columns (every CDC row must have these)
         pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+        pa.field("broker", pa.string()),
         pa.field("account_id", pa.string()),
-        pa.field("event_type", pa.string()),  # ORDER, DIVIDEND, TRANSACTION
         pa.field("event_id", pa.string()),
+        pa.field("source", pa.string()),
+        pa.field(
+            "event_type", pa.string()
+        ),  # TRADE, DIVIDEND, DEPOSIT, WITHDRAWAL, FEE, TAX, INTEREST, TRANSFER, ADJUSTMENT, UNKNOWN
+        pa.field("raw_event_type", pa.string()),  # Broker-native type/status/category
+        pa.field("event_datetime", pa.string()),
+        pa.field("currency", pa.string()),
+        pa.field(
+            "cash_amount", pa.binary()
+        ),  # Fernet-encrypted; signed cash impact in native currency
+        # Nullable trade/security columns
+        pa.field("settle_date", pa.string()),
         pa.field("ticker", pa.string()),
         pa.field("isin", pa.string()),
-        pa.field("currency", pa.string()),
-        pa.field("value", pa.binary()),  # Fernet-encrypted
+        pa.field("description", pa.string()),
         pa.field("quantity", pa.binary()),  # Fernet-encrypted
-        pa.field("event_date", pa.string()),
-    ]
-)
-
-xtb_cdc_normalized_schema = pa.schema(
-    [
-        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-        pa.field("account_id", pa.string()),
-        pa.field("operation_id", pa.string()),
-        pa.field("operation_type", pa.string()),
-        pa.field("amount", pa.binary()),  # Fernet-encrypted
-        pa.field("currency", pa.string()),
-        pa.field("comment", pa.string()),
-        pa.field("operation_date", pa.string()),
-    ]
-)
-
-ibkr_cdc_normalized_schema = pa.schema(
-    [
-        # Minimal schema — full columns added when IBKR CDC fetcher is implemented
-        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-        pa.field("account_id", pa.string()),
-        pa.field("payload", pa.binary()),  # Fernet-encrypted
-        pa.field("source", pa.string()),
+        pa.field("price", pa.binary()),  # Fernet-encrypted
+        pa.field("side", pa.string()),
+        pa.field("gross_amount", pa.binary()),  # Fernet-encrypted
+        pa.field("fee_amount", pa.binary()),  # Fernet-encrypted
+        pa.field("tax_amount", pa.binary()),  # Fernet-encrypted
+        pa.field("net_amount", pa.binary()),  # Fernet-encrypted
+        pa.field("base_currency", pa.string()),
+        pa.field("fx_rate_to_base", pa.binary()),  # Fernet-encrypted
+        pa.field("amount_base", pa.binary()),  # Fernet-encrypted
     ]
 )
 

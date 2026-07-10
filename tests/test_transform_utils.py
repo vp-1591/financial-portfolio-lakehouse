@@ -300,31 +300,36 @@ class TestBuildNormalizedTable:
         assert decrypt_float(encrypted_value, fernet_key) == 1000.0
 
     def test_multiple_encrypt_columns(self, fernet_key: bytes) -> None:
-        from pipeline.normalized.models import trading212_cdc_normalized_schema
+        from pipeline.normalized.models import cdc_events_normalized_schema
 
         now = datetime(2024, 1, 1, tzinfo=timezone.utc)
         records = [
             {
                 "fetched_at": now,
+                "broker": "Trading 212",
                 "account_id": "T212-ABC",
-                "event_type": "ORDER",
                 "event_id": "1",
+                "source": "/equity/history/orders",
+                "event_type": "TRADE",
+                "raw_event_type": "ORDER",
+                "event_datetime": "2024-01-01",
+                "currency": "USD",
+                "cash_amount": 1800.0,
                 "ticker": "AAPL",
                 "isin": "US0378331005",
-                "currency": "USD",
-                "value": 1800.0,
                 "quantity": 10.0,
-                "event_date": "2024-01-01",
             }
         ]
         result = build_normalized_table(
             records,
-            trading212_cdc_normalized_schema,
+            cdc_events_normalized_schema,
             fernet_key,
-            encrypt_columns=["value", "quantity"],
+            encrypt_columns=["cash_amount", "quantity"],
         )
         assert result.num_rows == 1
-        assert decrypt_float(result.column("value")[0].as_py(), fernet_key) == 1800.0
+        assert (
+            decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key) == 1800.0
+        )
         assert decrypt_float(result.column("quantity")[0].as_py(), fernet_key) == 10.0
 
     def test_no_encrypt_columns(self, fernet_key: bytes) -> None:

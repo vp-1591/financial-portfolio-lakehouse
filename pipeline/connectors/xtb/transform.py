@@ -14,7 +14,7 @@ from pipeline.connectors.xtb.parser import (
     load_positions_from_bytes,
 )
 from pipeline.normalized.models import (
-    xtb_cdc_normalized_schema,
+    cdc_events_normalized_schema,
     xtb_snapshot_normalized_schema,
 )
 
@@ -59,8 +59,31 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     )
 
 
+# XTB operation_type → normalized event_type mapping
+_XTB_EVENT_TYPE_MAP: dict[str, str] = {
+    "Deposit": "DEPOSIT",
+    "Withdrawal": "WITHDRAWAL",
+    "Fee": "FEE",
+    "Interest": "INTEREST",
+    "Dividend": "DIVIDEND",
+    "Transfer": "TRANSFER",
+    "Stock purchase": "TRADE",
+    "Stock sale": "TRADE",
+    "Open position": "TRADE",
+    "Close position": "TRADE",
+    "Profit/loss adjustment": "ADJUSTMENT",
+    "Currency exchange": "TRANSFER",
+    "Correction": "ADJUSTMENT",
+}
+
+
+def _classify_xtb_event_type(raw_type: str) -> str:
+    """Map an XTB operation_type to a normalized event_type."""
+    return _XTB_EVENT_TYPE_MAP.get(raw_type, "UNKNOWN")
+
+
 def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
-    """Transform raw XTB CDC data into the normalized CDC schema.
+    """Transform raw XTB CDC data into the broker-neutral CDC events schema.
 
     The raw payload is expected to contain .xlsx bytes (the original
     XTB report file). This function decrypts the payload, parses the
@@ -78,19 +101,22 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             records.append(
                 {
                     "fetched_at": row.fetched_at,
+                    "broker": "XTB",
                     "account_id": op.account_id,
-                    "operation_id": op.operation_id,
-                    "operation_type": op.operation_type,
-                    "amount": op.amount,
+                    "event_id": op.operation_id,
+                    "source": row.source,
+                    "event_type": _classify_xtb_event_type(op.operation_type),
+                    "raw_event_type": op.operation_type,
+                    "event_datetime": op.operation_date,
                     "currency": op.currency,
-                    "comment": op.comment,
-                    "operation_date": op.operation_date,
+                    "cash_amount": op.amount,
+                    "description": op.comment,
                 }
             )
 
     return build_normalized_table(
         records,
-        xtb_cdc_normalized_schema,
+        cdc_events_normalized_schema,
         fernet_key,
-        encrypt_columns=["amount"],
+        encrypt_columns=["cash_amount"],
     )

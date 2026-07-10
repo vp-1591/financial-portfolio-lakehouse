@@ -262,3 +262,35 @@ def parse_conversion_rates(root: ET.Element) -> dict[str, float]:
         if from_ccy and rate:
             rates[from_ccy] = rate
     return rates
+
+
+def parse_trades(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse <Trade> elements from a Flex XML response."""
+    trades: list[dict[str, Any]] = []
+    for trade in root.iter("Trade"):
+        trades.append(dict(trade.attrib))
+    return trades
+
+
+def parse_cash_transactions(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse <CashTransaction> elements from a Flex XML response."""
+    transactions: list[dict[str, Any]] = []
+    for ct in root.iter("CashTransaction"):
+        transactions.append(dict(ct.attrib))
+    return transactions
+
+
+def parse_transfers(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse <Transfer> elements from a Flex XML response."""
+    transfers: list[dict[str, Any]] = []
+    for transfer in root.iter("Transfer"):
+        transfers.append(dict(transfer.attrib))
+    return transfers
+
+
+def parse_transaction_fees(root: ET.Element) -> list[dict[str, Any]]:
+    """Parse <TransactionFee> elements from a Flex XML response."""
+    fees: list[dict[str, Any]] = []
+    for fee in root.iter("TransactionFee"):
+        fees.append(dict(fee.attrib))
+    return fees

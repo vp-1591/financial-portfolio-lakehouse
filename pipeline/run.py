@@ -163,20 +163,25 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
         )
 
     # Try CDC
-    try:
-        raw_cdc = connector.fetch_cdc(**cdc_kwargs)
-        cdc_path = get_raw_path(connector.name, "cdc")
-        get_storage().backend.ensure_parent(cdc_path)
-        count = ingest_raw(raw_cdc, cdc_path, fernet_key)
-        logger.debug("%s CDC: %d rows written", connector.display_name, count)
-    except NotImplementedError:
-        logger.debug("%s CDC: not implemented", connector.display_name)
-    except Exception as exc:
-        error_occurred = True
-        print(
-            f"  Error fetching {connector.display_name} CDC: {exc}",
-            file=sys.stderr,
+    if not cdc_kwargs:
+        logger.debug(
+            "Skipping %s CDC: required secrets not configured", connector.display_name
         )
+    else:
+        try:
+            raw_cdc = connector.fetch_cdc(**cdc_kwargs)
+            cdc_path = get_raw_path(connector.name, "cdc")
+            get_storage().backend.ensure_parent(cdc_path)
+            count = ingest_raw(raw_cdc, cdc_path, fernet_key)
+            logger.debug("%s CDC: %d rows written", connector.display_name, count)
+        except NotImplementedError:
+            logger.debug("%s CDC: not implemented", connector.display_name)
+        except Exception as exc:
+            error_occurred = True
+            print(
+                f"  Error fetching {connector.display_name} CDC: {exc}",
+                file=sys.stderr,
+            )
 
     return 1 if error_occurred else 0
 
@@ -212,11 +217,6 @@ def transform_connector(connector, fernet_key: bytes) -> int:
             norm_path = config.normalized_path(f"{connector.name}_{layer}")
             config.backend.ensure_parent(norm_path)
 
-            if normalized.num_rows == 0:
-                logger.debug(
-                    "%s %s: no data to transform", connector.display_name, layer
-                )
-                continue
             write_deltalake(
                 norm_path,
                 normalized,
@@ -401,7 +401,16 @@ def cmd_full(args: argparse.Namespace) -> int:
     result = cmd_consolidate(args)
     if result != 0:
         return result
+    # Consolidate CDC events after snapshot consolidation
+    _consolidate_cdc()
     return cmd_allocate(args)
+
+
+def _consolidate_cdc() -> None:
+    """Consolidate broker CDC events into a unified table."""
+    from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
+
+    consolidate_cdc_events()
 
 
 def cmd_run_connector(args: argparse.Namespace) -> int:
@@ -442,6 +451,7 @@ def cmd_run_consolidate_allocate(args: argparse.Namespace) -> int:
     rc = cmd_consolidate(args)
     if rc:
         return rc
+    _consolidate_cdc()
     return cmd_allocate(args)
 
 

@@ -106,3 +106,91 @@ def ibkr_normalized_snapshot(
         },
         schema=ibkr_snapshot_normalized_schema,
     )
+
+
+def ibkr_raw_cdc(
+    account_id: str = "U123456",
+    fernet_key: bytes | None = None,
+) -> pa.Table:
+    """Build a raw IBKR CDC table with an encrypted Flex XML payload.
+
+    Default data includes a Trade, a CashTransaction (dividend),
+    a CashTransaction (bond interest), a Transfer, and a TransactionFee.
+    """
+    if fernet_key is None:
+        fernet_key = generate_key()
+
+    xml_str = (
+        '<FlexQueryResponse queryName="test_cdc" type="AF">'
+        '<FlexStatements count="1">'
+        f'<FlexStatement accountId="{account_id}" fromDate="20260101" toDate="20260625">'
+        "<AccountInformation>"
+        f'<AccountInformation accountId="{account_id}" currency="EUR"/>'
+        "</AccountInformation>"
+        "<Trades>"
+        f'<Trade accountId="{account_id}" symbol="AAPL" description="Apple Inc"'
+        ' isin="US0378331005" currency="USD" fxRateToBase="0.9"'
+        ' assetClass="STK" dateTime="2026-01-15 10:30:00"'
+        ' tradeDate="20260115" settleDateTarget="20260117"'
+        ' quantity="10" tradePrice="150.0" proceeds="-1500.0"'
+        ' ibCommission="-1.0" ibCommissionCurrency="USD" netCash="-1501.0"'
+        ' buySell="BUY" transactionType="ExTrade"'
+        f' ibExecutionId="e001" tradeId="T001" transactionId="TX001"'
+        ' taxes="0.0" conid="265598" securityId="US0378331005"'
+        ' multiplier="1" openCloseIndicator="O"/>'
+        "</Trades>"
+        "<CashTransactions>"
+        f'<CashTransaction accountId="{account_id}" symbol="VWCE"'
+        ' description="Vanguard FTSE All-World UCITS ETF"'
+        ' isin="IE00BK5BQT80" currency="EUR" fxRateToBase="1.0"'
+        ' dateTime="2026-03-01 00:00:00" settleDate="20260304"'
+        ' amount="42.50" type="Dividends" dividendType="Qualified"'
+        ' tradeId="" transactionId="CT001" code=""'
+        ' assetClass="STK" conid="23897068" securityId="IE00BK5BQT80"/>'
+        f'<CashTransaction accountId="{account_id}" symbol="TLT"'
+        ' description="iShares 20+ Year Treasury Bond ETF"'
+        ' isin="US4642874848" currency="USD" fxRateToBase="0.9"'
+        ' dateTime="2026-04-01 00:00:00" settleDate="20260404"'
+        ' amount="35.00" type="Bond Interest" dividendType=""'
+        ' tradeId="" transactionId="CT002" code=""'
+        ' assetClass="STK" conid="7697096" securityId="US4642874848"/>'
+        "</CashTransactions>"
+        "<Transfers>"
+        f'<Transfer accountId="{account_id}" symbol="MSFT"'
+        ' description="Microsoft Corp" currency="USD" fxRateToBase="0.9"'
+        ' assetClass="STK" dateTime="2026-02-10 12:00:00" settleDate="20260212"'
+        ' type="ACATS" direction="IN" quantity="5" transferPrice="400.0"'
+        ' positionAmount="2000.0" positionAmountInBase="1800.0"'
+        ' cashTransfer="0.0" transactionId="TR001"'
+        ' conid="277883" securityId="US5949181045"/>'
+        "</Transfers>"
+        "<TransactionFees>"
+        f'<TransactionFee accountId="{account_id}" symbol="AAPL"'
+        ' description="Apple Inc" currency="USD" fxRateToBase="0.9"'
+        ' assetClass="STK" date="2026-01-15" reportDate="20260115"'
+        ' settleDate="20260117" taxDescription="SEC Fee"'
+        ' taxAmount="0.05" orderId="O001" tradeId="T001"'
+        ' tradePrice="150.0" source="TRADE" code=""'
+        ' conid="265598" securityId="US0378331005" quantity="10"/>'
+        "</TransactionFees>"
+        "</FlexStatement>"
+        "</FlexStatements>"
+        "</FlexQueryResponse>"
+    )
+
+    now = datetime.now(timezone.utc)
+    xml_bytes = xml_str.encode("utf-8")
+    encrypted_payload = encrypt(xml_bytes, fernet_key)
+    payload_hash = hashlib.sha256(xml_bytes).hexdigest()
+
+    return pa.table(
+        {
+            "fetched_at": [now],
+            "broker": ["IBKR"],
+            "source": ["flex_cdc"],
+            "payload": [encrypted_payload],
+            "payload_hash": [payload_hash],
+            "source_file": [""],
+        },
+        schema=RAW_SCHEMA,
+    )

@@ -369,11 +369,14 @@ class TestTransformCDC:
         result = transform_cdc(raw, fernet_key)
         assert result.num_rows >= 1
 
-        op_types = result.column("operation_type").to_pylist()
-        assert "Deposit" in op_types
+        event_types = result.column("event_type").to_pylist()
+        assert "DEPOSIT" in event_types
 
-        amounts = result.column("amount").to_pylist()
-        decrypted = [decrypt_float(v, fernet_key) for v in amounts]
+        raw_types = result.column("raw_event_type").to_pylist()
+        assert "Deposit" in raw_types
+
+        cash_amounts = result.column("cash_amount").to_pylist()
+        decrypted = [decrypt_float(v, fernet_key) for v in cash_amounts]
         assert any(v == pytest.approx(200.0, rel=0.01) for v in decrypted)
 
 

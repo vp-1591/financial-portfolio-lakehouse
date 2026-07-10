@@ -530,3 +530,236 @@ class TestConnectorFlexDispatch:
 
         assert result.num_rows >= 1
         assert "EQUITY" in result.column("position_type").to_pylist()
+
+
+class TestCdcFetch:
+    """Tests for IBKR CDC fetch via Flex Web Service."""
+
+    def test_fetch_cdc_produces_raw_table_with_flex_cdc_source(self) -> None:
+        """fetch_cdc_via_flex produces a raw table with source='flex_cdc'."""
+        from unittest.mock import MagicMock, patch
+
+        from pipeline.connectors.ibkr.fetch import fetch_cdc_via_flex
+
+        # Build a minimal Flex XML response
+        xml_str = (
+            '<FlexQueryResponse queryName="test_cdc" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U123456" fromDate="20260101" toDate="20260625">'
+            "<Trades>"
+            '<Trade accountId="U123456" symbol="AAPL" quantity="10"/>'
+            "</Trades>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+
+        mock_client = MagicMock(spec=IbkrFlexClient)
+        mock_client.request_report.return_value = "REF123"
+        root = ET.fromstring(xml_str)
+        mock_client.fetch_report.return_value = root
+
+        with patch(
+            "pipeline.connectors.ibkr.fetch.IbkrFlexClient", return_value=mock_client
+        ):
+            result = fetch_cdc_via_flex(token="test_token", query_id="test_query")
+
+        assert result.num_rows == 1
+        assert result.column("broker")[0].as_py() == "IBKR"
+        assert result.column("source")[0].as_py() == "flex_cdc"
+        assert result.column("payload")[0].as_py() is not None
+
+    def test_fetch_cdc_kwargs_with_dedicated_query_id(self, monkeypatch) -> None:
+        """When IBKR_FLEX_CDC_QUERY_ID is set, it takes precedence."""
+        from pipeline.connectors.registry import get
+
+        connector = get("ibkr")
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
+        monkeypatch.setenv("IBKR_FLEX_CDC_QUERY_ID", "cdc_query_456")
+        monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
+
+        kwargs = connector.fetch_cdc_kwargs()
+        assert kwargs["token"] == "token123"
+        assert kwargs["query_id"] == "cdc_query_456"
+
+    def test_fetch_cdc_kwargs_falls_back_to_snapshot_query_id(
+        self, monkeypatch
+    ) -> None:
+        """When IBKR_FLEX_CDC_QUERY_ID is not set, fall back to IBKR_FLEX_QUERY_ID."""
+        from pipeline.connectors.registry import get
+
+        connector = get("ibkr")
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
+        monkeypatch.delenv("IBKR_FLEX_CDC_QUERY_ID", raising=False)
+        monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
+
+        kwargs = connector.fetch_cdc_kwargs()
+        assert kwargs["token"] == "token123"
+        assert kwargs["query_id"] == "snapshot_query_789"
+
+    def test_fetch_cdc_kwargs_returns_empty_when_no_token(self, monkeypatch) -> None:
+        """When IBKR_FLEX_TOKEN is not set, returns empty dict."""
+        from pipeline.connectors.registry import get
+
+        connector = get("ibkr")
+        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+
+        kwargs = connector.fetch_cdc_kwargs()
+        assert kwargs == {}
+
+
+class TestCdcTransform:
+    """Tests for IBKR CDC transform using broker-neutral schema."""
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    def test_transform_cdc_produces_trade_and_dividend_rows(
+        self, fernet_key: bytes
+    ) -> None:
+        """IBKR CDC transform produces TRADE and DIVIDEND events from Flex XML."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows >= 5  # Trade + Dividend + BondInterest + Transfer + Fee
+        event_types = result.column("event_type").to_pylist()
+        assert "TRADE" in event_types
+        assert "DIVIDEND" in event_types
+        assert "INTEREST" in event_types
+        assert "TRANSFER" in event_types
+        assert "FEE" in event_types
+
+        # All rows should have broker="IBKR"
+        brokers = result.column("broker").to_pylist()
+        assert all(b == "IBKR" for b in brokers)
+
+    def test_transform_cdc_event_id_stability(self, fernet_key: bytes) -> None:
+        """Deterministic event IDs are consistent across repeated transforms."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        result1 = transform_cdc(raw, fernet_key)
+        result2 = transform_cdc(raw, fernet_key)
+
+        ids1 = result1.column("event_id").to_pylist()
+        ids2 = result2.column("event_id").to_pylist()
+        assert ids1 == ids2
+
+    def test_transform_cdc_encrypts_value_columns(self, fernet_key: bytes) -> None:
+        """IBKR CDC transform encrypts value columns correctly."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+        from pipeline.crypto import decrypt_float
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        # Find the TRADE row and check encrypted columns
+        event_types = result.column("event_type").to_pylist()
+        trade_idx = event_types.index("TRADE")
+
+        # netCash should be encrypted binary
+        cash_amount_raw = result.column("cash_amount")[trade_idx].as_py()
+        assert isinstance(cash_amount_raw, bytes)  # Encrypted
+        cash = decrypt_float(cash_amount_raw, fernet_key)
+        assert cash == pytest.approx(-1501.0)  # netCash from Trade
+
+    def test_transform_cdc_skips_snapshot_source(self, fernet_key: bytes) -> None:
+        """IBKR CDC transform skips rows with source='flex' (snapshot data)."""
+        from tests.fixtures.ibkr import ibkr_raw_positions
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        raw = ibkr_raw_positions(fernet_key=fernet_key)  # source="flex"
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 0
+
+
+class TestClassifyIbkrCashType:
+    """Tests for IBKR CashTransaction type → normalized event_type mapping."""
+
+    def test_dividends(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Dividends", 42.5) == "DIVIDEND"
+
+    def test_payment_in_lieue(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("PaymentInLieue", 10.0) == "DIVIDEND"
+
+    def test_withholding_tax(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Withholding Tax", -5.0) == "TAX"
+
+    def test_871m_withholding(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("871(m) Withholding", -3.0) == "TAX"
+
+    def test_deposits_positive_is_deposit(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Deposits & Withdrawals", 1000.0) == "DEPOSIT"
+
+    def test_deposits_zero_is_deposit(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Deposits & Withdrawals", 0.0) == "DEPOSIT"
+
+    def test_deposits_negative_is_withdrawal(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert (
+            _classify_ibkr_cash_type("Deposits & Withdrawals", -500.0) == "WITHDRAWAL"
+        )
+
+    def test_broker_interest(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Broker Interest", 12.0) == "INTEREST"
+
+    def test_bond_interest(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Bond Interest", 25.0) == "INTEREST"
+
+    def test_broker_fees(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Broker Fees", -2.0) == "FEE"
+
+    def test_other_fees(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Other Fees", -1.0) == "FEE"
+
+    def test_commission_adjustments(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Commission Adjustments", -0.5) == "FEE"
+
+    def test_other_income(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Other Income", 5.0) == "ADJUSTMENT"
+
+    def test_price_adjustments(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Price Adjustments", 10.0) == "ADJUSTMENT"
+
+    def test_unknown_type_falls_through(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("SomeNewType", 42.0) == "UNKNOWN"

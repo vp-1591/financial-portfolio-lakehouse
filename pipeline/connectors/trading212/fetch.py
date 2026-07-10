@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timezone
 
 import pyarrow as pa
 
 from pipeline.connectors.trading212.client import Trading212Client
 from pipeline.raw.models import RAW_SCHEMA
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_snapshot(
@@ -111,8 +114,9 @@ def fetch_cdc(
         client.captured_responses.clear()
         try:
             fetch_method()
-        except Exception:
-            continue  # Skip CDC endpoints that fail
+        except Exception as exc:
+            logger.warning("Trading 212 CDC endpoint %s failed: %s", endpoint_name, exc)
+            continue
 
         for path, raw_bytes in client.captured_responses:
             fetched_ats.append(now)
