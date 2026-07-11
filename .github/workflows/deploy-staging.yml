@@ -56,6 +56,7 @@ jobs:
           docker run --rm ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tags.outputs.env_tag }} --help
 
       - name: Trigger demo pipeline
+        id: trigger-pipeline
         run: |
           # Resolve the latest demo task definition ARNs dynamically.
           # ECS task definition families follow the pattern portfolio-pipeline-demo-{name}.
@@ -82,7 +83,92 @@ jobs:
               demo: true
             }')
 
-          aws stepfunctions start-execution \
+          execution_arn=$(aws stepfunctions start-execution \
             --state-machine-arn ${{ secrets.DEMO_STATE_MACHINE_ARN }} \
             --name "staging-$(echo ${{ github.sha }} | cut -c1-7)-$(date +%Y%m%d%H%M%S)" \
-            --input "$input_json"
+            --input "$input_json" \
+            --query 'executionArn' \
+            --output text)
+
+          echo "execution_arn=$execution_arn" >> "$GITHUB_OUTPUT"
+          echo "Step Function execution started: $execution_arn"
+
+      - name: Wait for demo pipeline
+        id: wait-pipeline
+        run: |
+          EXECUTION_ARN="${{ steps.trigger-pipeline.outputs.execution_arn }}"
+          TIMEOUT=900   # 15 minutes
+          INTERVAL=30
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            STATUS=$(aws stepfunctions describe-execution \
+              --execution-arn "$EXECUTION_ARN" \
+              --query 'status' \
+              --output text)
+
+            case $STATUS in
+              SUCCEEDED)
+                echo "Step Function execution succeeded"
+                exit 0
+                ;;
+              FAILED|TIMED_OUT|ABORTED)
+                echo "::error::Step Function execution failed with status: $STATUS"
+                # Print execution history for diagnostics
+                echo "=== Execution History ==="
+                aws stepfunctions get-execution-history \
+                  --execution-arn "$EXECUTION_ARN" \
+                  --query 'events[?type==`TaskFailed` || type==`ExecutionFailed`].{name:name, error:error, cause:cause}' \
+                  --output table || true
+                exit 1
+                ;;
+              RUNNING)
+                echo "Step Function still running ($ELAPSED/${TIMEOUT}s elapsed)..."
+                sleep $INTERVAL
+                ELAPSED=$((ELAPSED + INTERVAL))
+                ;;
+              *)
+                echo "::error::Unexpected Step Function status: $STATUS"
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "::error::Step Function execution timed out after ${TIMEOUT}s"
+          exit 1
+
+      - name: Print container logs on failure
+        if: failure()
+        run: |
+          EXECUTION_ARN="${{ steps.trigger-pipeline.outputs.execution_arn }}"
+          if [ -z "$EXECUTION_ARN" ]; then
+            echo "No execution ARN available — cannot fetch logs"
+            exit 0
+          fi
+
+          # Get the execution start time to scope the log query
+          START_MS=$(aws stepfunctions describe-execution \
+            --execution-arn "$EXECUTION_ARN" \
+            --query 'startDate' \
+            --output text | xargs -I{} date -d {} +%s%3N 2>/dev/null || echo "0")
+
+          # Connector names that run in the CI-triggered pipeline (excludes XTB,
+          # which is triggered by S3 file arrival instead)
+          CONNECTORS="ibkr trading212 consolidate-allocate"
+
+          for NAME in $CONNECTORS; do
+            LOG_GROUP="/ecs/portfolio-pipeline-demo-${NAME}"
+            echo "=== Container logs: ${NAME} ==="
+            echo "Log group: ${LOG_GROUP}"
+            if aws logs filter-log-events \
+              --log-group-name "$LOG_GROUP" \
+              --start-time "$START_MS" \
+              --limit 500 \
+              --query 'events[].message' \
+              --output text 2>/dev/null; then
+              echo ""
+            else
+              echo "(no log events found or log group does not exist)"
+              echo ""
+            fi
+          done

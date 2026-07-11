@@ -231,3 +231,8 @@ output "task_role_name" {
   description = "Name of the task IAM role (empty string if a shared role is provided)."
   value       = var.task_role_arn != null ? "" : aws_iam_role.task[0].name
 }
+
+output "log_group_arn" {
+  description = "ARN of the CloudWatch log group for this task."
+  value       = aws_cloudwatch_log_group.task.arn
+}
