@@ -115,7 +115,8 @@ def ibkr_raw_cdc(
     """Build a raw IBKR CDC table with an encrypted Flex XML payload.
 
     Default data includes a Trade, a CashTransaction (dividend),
-    a CashTransaction (bond interest), a Transfer, and a TransactionFee.
+    a CashTransaction (bond interest), a CashTransaction (deposit),
+    a CashTransaction (withdrawal), a Transfer, and a TransactionFee.
     """
     if fernet_key is None:
         fernet_key = generate_key()
@@ -154,6 +155,20 @@ def ibkr_raw_cdc(
         ' amount="35.00" type="Bond Interest Received" dividendType=""'
         ' tradeId="" transactionId="CT002" code=""'
         ' assetClass="STK" conid="7697096" securityId="US4642874848"/>'
+        f'<CashTransaction accountId="{account_id}" symbol=""'
+        ' description="Deposit EUR"'
+        ' isin="" currency="EUR" fxRateToBase="1.0"'
+        ' dateTime="2026-05-01 00:00:00" settleDate="20260504"'
+        ' amount="5000.00" type="Deposits &amp; Withdrawals" dividendType=""'
+        ' tradeId="" transactionId="CT003" code=""'
+        ' assetClass="" conid="" securityId=""/>'
+        f'<CashTransaction accountId="{account_id}" symbol=""'
+        ' description="Withdrawal EUR"'
+        ' isin="" currency="EUR" fxRateToBase="1.0"'
+        ' dateTime="2026-05-15 00:00:00" settleDate="20260518"'
+        ' amount="-2000.00" type="Deposits &amp; Withdrawals" dividendType=""'
+        ' tradeId="" transactionId="CT004" code=""'
+        ' assetClass="" conid="" securityId=""/>'
         "</CashTransactions>"
         "<Transfers>"
         f'<Transfer accountId="{account_id}" symbol="MSFT"'

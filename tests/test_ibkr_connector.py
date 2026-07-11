@@ -626,11 +626,15 @@ class TestCdcTransform:
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
 
-        assert result.num_rows >= 5  # Trade + Dividend + BondInterest + Transfer + Fee
+        assert (
+            result.num_rows >= 7
+        )  # Trade + Dividend + Interest + Deposit + Withdrawal + Transfer + Fee
         event_types = result.column("event_type").to_pylist()
         assert "TRADE" in event_types
         assert "DIVIDEND" in event_types
         assert "INTEREST" in event_types
+        assert "DEPOSIT" in event_types
+        assert "WITHDRAWAL" in event_types
         assert "TRANSFER" in event_types
         assert "FEE" in event_types
 
