@@ -626,11 +626,15 @@ class TestCdcTransform:
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
 
-        assert result.num_rows >= 5  # Trade + Dividend + BondInterest + Transfer + Fee
+        assert (
+            result.num_rows >= 7
+        )  # Trade + Dividend + Interest + Deposit + Withdrawal + Transfer + Fee
         event_types = result.column("event_type").to_pylist()
         assert "TRADE" in event_types
         assert "DIVIDEND" in event_types
         assert "INTEREST" in event_types
+        assert "DEPOSIT" in event_types
+        assert "WITHDRAWAL" in event_types
         assert "TRANSFER" in event_types
         assert "FEE" in event_types
 
@@ -724,15 +728,25 @@ class TestClassifyIbkrCashType:
             _classify_ibkr_cash_type("Deposits & Withdrawals", -500.0) == "WITHDRAWAL"
         )
 
-    def test_broker_interest(self) -> None:
+    def test_broker_interest_received(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
-        assert _classify_ibkr_cash_type("Broker Interest", 12.0) == "INTEREST"
+        assert _classify_ibkr_cash_type("Broker Interest Received", 12.0) == "INTEREST"
 
-    def test_bond_interest(self) -> None:
+    def test_broker_interest_paid(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
-        assert _classify_ibkr_cash_type("Bond Interest", 25.0) == "INTEREST"
+        assert _classify_ibkr_cash_type("Broker Interest Paid", -5.0) == "INTEREST"
+
+    def test_bond_interest_received(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Bond Interest Received", 25.0) == "INTEREST"
+
+    def test_bond_interest_paid(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Bond Interest Paid", -5.0) == "INTEREST"
 
     def test_broker_fees(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
