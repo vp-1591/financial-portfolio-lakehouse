@@ -826,3 +826,33 @@ class TestCdcTransform:
 
         assert result.num_rows == 0
         assert result.schema == cdc_events_normalized_schema
+
+    def test_transform_cdc_order_missing_optional_fields(
+        self, fernet_key: bytes
+    ) -> None:
+        """Orders missing optional struct fields (e.g. filledQuantity) don't crash.
+
+        The real T212 API may omit fields like filledQuantity/filledValue
+        from order objects.  Polars struct.field() raises
+        StructFieldNotFoundError on absent fields, so the transform must
+        pre-fill missing keys with None.
+        """
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        # Build an order event without filledQuantity or filledValue on
+        # the order object — this is exactly what the real API returns
+        # when those fields are not populated.
+        event = self._make_order_event()
+        del event["order"]["filledQuantity"]
+        del event["order"]["filledValue"]
+
+        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        # quantity falls back to fill.quantity (10.0)
+        qty = decrypt_float(result.column("quantity")[0].as_py(), fernet_key)
+        assert qty == pytest.approx(10.0)
+        # gross_amount falls back to order.value (1500.0)
+        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
+        assert gross == pytest.approx(1500.0)

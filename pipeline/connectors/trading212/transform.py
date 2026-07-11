@@ -161,6 +161,81 @@ _T212_FEE_NAMES = frozenset(
 
 _T212_TAX_NAMES = frozenset({"FRENCH_TRANSACTION_TAX"})
 
+# Expected struct fields for nested objects in T212 CDC events.
+# Polars infers struct schemas from data — if a field is absent from all
+# events, struct.field() raises StructFieldNotFoundError.  These sets are
+# used by _ensure_struct_fields() to backfill missing keys with None so
+# that Polars always infers a complete schema.
+_ORDER_STRUCT_FIELDS = {
+    "id",
+    "createdAt",
+    "currency",
+    "filledQuantity",
+    "filledValue",
+    "instrument",
+    "quantity",
+    "side",
+    "ticker",
+    "value",
+}
+
+_FILL_STRUCT_FIELDS = {
+    "id",
+    "filledAt",
+    "quantity",
+    "price",
+    "walletImpact",
+}
+
+_WALLET_IMPACT_FIELDS = {
+    "currency",
+    "fxRate",
+    "netValue",
+    "realisedProfitLoss",
+    "taxes",
+}
+
+_INSTRUMENT_FIELDS = {
+    "ticker",
+    "isin",
+    "name",
+    "currency",
+}
+
+
+def _ensure_struct_fields(
+    d: dict | None, fields: set[str], nested: dict[str, set[str]] | None = None
+) -> None:
+    """Add missing keys with None values to ensure consistent Polars struct schemas.
+
+    When Polars creates a DataFrame from dicts, it infers struct schemas from
+    the data.  If a field is absent from all events, ``struct.field()`` raises
+    ``StructFieldNotFoundError``.  This helper pre-populates missing keys with
+    ``None`` so Polars always infers the complete schema.
+
+    Parameters
+    ----------
+    d:
+        The dict to patch.  Modified in-place; if None, nothing happens.
+    fields:
+        Top-level field names that must exist in *d*.
+    nested:
+        Mapping of field name → expected sub-fields.  If *d[field]* is a
+        dict, its missing keys are backfilled with None.
+    """
+    if d is None:
+        return
+    for field in fields:
+        if field not in d:
+            d[field] = None
+    if nested:
+        for field, sub_fields in nested.items():
+            inner = d.get(field)
+            if isinstance(inner, dict):
+                for sub in sub_fields:
+                    if sub not in inner:
+                        inner[sub] = None
+
 
 def _extract_fee_amount(taxes: list | None) -> float:
     """Sum fee-class tax entries from fill.walletImpact.taxes."""
@@ -228,6 +303,11 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
     nested values explicitly — no silent ``None`` from ``dict.get()`` on
     wrong nesting levels.
 
+    Before creating the DataFrame, events are pre-processed via
+    ``_ensure_struct_fields()`` to backfill any optional API fields with
+    None.  This prevents ``StructFieldNotFoundError`` when the real API
+    data omits fields like ``filledQuantity`` or ``filledValue``.
+
     Tax extraction from ``fill.walletImpact.taxes`` (a nested list of
     structs) is pre-computed in Python because Polars ``map_elements``
     does not reliably pass scalar list-of-struct values to UDFs.
@@ -235,6 +315,21 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
     # Pre-compute tax amounts from nested structures before DataFrame construction
     fee_amounts = [_extract_fee_amount(_get_taxes(e)) for e in events]
     tax_amounts = [_extract_tax_amount(_get_taxes(e)) for e in events]
+
+    # Ensure all expected struct fields exist so Polars infers complete schemas.
+    # The T212 API may omit optional fields (e.g. filledQuantity) when they
+    # are not applicable, causing struct.field() to fail if absent.
+    for event in events:
+        _ensure_struct_fields(
+            event.get("order"),
+            _ORDER_STRUCT_FIELDS,
+            nested={"instrument": _INSTRUMENT_FIELDS},
+        )
+        _ensure_struct_fields(
+            event.get("fill"),
+            _FILL_STRUCT_FIELDS,
+            nested={"walletImpact": _WALLET_IMPACT_FIELDS},
+        )
 
     df = pl.DataFrame(events)
 
@@ -301,6 +396,10 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
     flat.  The ``type`` field is stored as ``raw_event_type`` for
     diagnostics; ``event_type`` is always ``DIVIDEND``.
     """
+    # Ensure nested instrument struct has all expected fields.
+    for event in events:
+        _ensure_struct_fields(event.get("instrument"), _INSTRUMENT_FIELDS)
+
     df = pl.DataFrame(events)
 
     instrument = pl.col("instrument")
