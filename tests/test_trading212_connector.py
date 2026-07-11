@@ -511,42 +511,42 @@ class TestCdcFetch:
             assert result.num_rows == 0
 
 
-class TestUnwrapT212Events:
-    """Tests for _unwrap_t212_events helper."""
+class TestUnwrapEvents:
+    """Tests for _unwrap_events helper (moved from transform_utils)."""
 
     def test_bare_list_returns_as_is(self) -> None:
-        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+        from pipeline.connectors.transform_utils import _unwrap_events
 
         events = [{"id": 1}, {"id": 2}]
-        assert _unwrap_t212_events(events) is events
+        assert _unwrap_events(events) is events
 
     def test_paginated_dict_extracts_items(self) -> None:
-        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+        from pipeline.connectors.transform_utils import _unwrap_events
 
         payload = {"items": [{"id": 1}], "nextPagePath": None}
-        assert _unwrap_t212_events(payload) == [{"id": 1}]
+        assert _unwrap_events(payload) == [{"id": 1}]
 
     def test_paginated_dict_empty_items(self) -> None:
-        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+        from pipeline.connectors.transform_utils import _unwrap_events
 
         payload = {"items": [], "nextPagePath": None}
-        assert _unwrap_t212_events(payload) == []
+        assert _unwrap_events(payload) == []
 
     def test_dict_without_items_returns_empty(self) -> None:
-        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+        from pipeline.connectors.transform_utils import _unwrap_events
 
-        assert _unwrap_t212_events({"error": "not found"}) == []
+        assert _unwrap_events({"error": "not found"}) == []
 
     def test_non_dict_non_list_returns_empty(self) -> None:
-        from pipeline.connectors.trading212.transform import _unwrap_t212_events
+        from pipeline.connectors.transform_utils import _unwrap_events
 
-        assert _unwrap_t212_events("string") == []
-        assert _unwrap_t212_events(42) == []
-        assert _unwrap_t212_events(None) == []
+        assert _unwrap_events("string") == []
+        assert _unwrap_events(42) == []
+        assert _unwrap_events(None) == []
 
 
 class TestCdcTransform:
-    """Tests for the T212 CDC transform using broker-neutral schema."""
+    """Tests for the T212 CDC transform using Polars-native field extraction."""
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
@@ -577,52 +577,141 @@ class TestCdcTransform:
             schema=RAW_SCHEMA,
         )
 
+    # -- Realistic nested order fixture matching the T212 API spec --
+
+    @staticmethod
+    def _make_order_event(**overrides) -> dict:
+        """Build a realistic HistoricalOrder event with nested order/fill."""
+        order = {
+            "id": 12345,
+            "ticker": "AAPL_US_EQ",
+            "side": "BUY",
+            "currency": "USD",
+            "createdAt": "2024-01-15T10:30:00Z",
+            "instrument": {
+                "ticker": "AAPL_US_EQ",
+                "isin": "US0378331007",
+                "name": "Apple Inc.",
+                "currency": "USD",
+            },
+            "filledQuantity": 10,
+            "value": 1500.0,
+            "filledValue": 1500.0,
+        }
+        fill = {
+            "id": 67890,
+            "quantity": 10,
+            "price": 150.0,
+            "filledAt": "2024-01-15T10:30:01Z",
+            "walletImpact": {
+                "currency": "USD",
+                "fxRate": 1.0,
+                "netValue": 1500.0,
+                "realisedProfitLoss": 0,
+                "taxes": [],
+            },
+        }
+        event = {"order": order, "fill": fill}
+        # Apply overrides at the event level
+        event.update(overrides)
+        return event
+
     def test_transform_cdc_orders_produces_trade_events(
         self, fernet_key: bytes
     ) -> None:
-        """T212 orders are transformed into TRADE events with broker-neutral schema."""
+        """T212 orders are transformed into TRADE events with all fields populated."""
         from pipeline.connectors.trading212.transform import transform_cdc
 
-        events = [
-            {
-                "id": "12345",
-                "ticker": "AAPL",
-                "currency": "USD",
-                "price": 150.0,
-                "quantity": 10,
-                "createdDate": "2024-01-15T10:30:00Z",
-            }
-        ]
+        events = [self._make_order_event()]
         raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
         result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.schema == cdc_events_normalized_schema
+
+        # Core non-nullable fields
         assert result.column("event_type")[0].as_py() == "TRADE"
         assert result.column("raw_event_type")[0].as_py() == "ORDER"
         assert result.column("broker")[0].as_py() == "Trading 212"
         assert result.column("event_id")[0].as_py() == "12345"
-        assert result.column("ticker")[0].as_py() == "AAPL"
+        assert result.column("event_datetime")[0].as_py() == "2024-01-15T10:30:00Z"
         assert result.column("currency")[0].as_py() == "USD"
+
+        # Nullable trade fields — now populated via nested struct access
+        assert result.column("ticker")[0].as_py() == "AAPL_US_EQ"
+        assert result.column("isin")[0].as_py() == "US0378331007"
+        assert result.column("description")[0].as_py() == "Apple Inc."
+        assert result.column("side")[0].as_py() == "BUY"
+
+        # Encrypted monetary fields
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
-        assert cash == pytest.approx(150.0)
+        assert cash == pytest.approx(1500.0)  # netValue, not price
         qty = decrypt_float(result.column("quantity")[0].as_py(), fernet_key)
         assert qty == pytest.approx(10.0)
+        price = decrypt_float(result.column("price")[0].as_py(), fernet_key)
+        assert price == pytest.approx(150.0)
+        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
+        assert gross == pytest.approx(1500.0)  # filledValue
+        net = decrypt_float(result.column("net_amount")[0].as_py(), fernet_key)
+        assert net == pytest.approx(1500.0)
+        fx = decrypt_float(result.column("fx_rate_to_base")[0].as_py(), fernet_key)
+        assert fx == pytest.approx(1.0)
+
+        # Base currency
+        assert result.column("base_currency")[0].as_py() == "USD"
+
+    def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
+        """T212 orders with walletImpact.taxes correctly split fees and taxes."""
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        event = self._make_order_event()
+        event["fill"]["walletImpact"]["taxes"] = [
+            {"name": "CURRENCY_CONVERSION_FEE", "quantity": 3.0, "currency": "EUR"},
+            {"name": "FRENCH_TRANSACTION_TAX", "quantity": 1.5, "currency": "EUR"},
+        ]
+        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        fee = decrypt_float(result.column("fee_amount")[0].as_py(), fernet_key)
+        assert fee == pytest.approx(3.0)  # CURRENCY_CONVERSION_FEE
+        tax = decrypt_float(result.column("tax_amount")[0].as_py(), fernet_key)
+        assert tax == pytest.approx(1.5)  # FRENCH_TRANSACTION_TAX
+
+    def test_transform_cdc_order_sell_side(self, fernet_key: bytes) -> None:
+        """T212 SELL orders correctly map the side field."""
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        event = self._make_order_event()
+        event["order"]["side"] = "SELL"
+        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.column("side")[0].as_py() == "SELL"
 
     def test_transform_cdc_dividends_produces_dividend_events(
         self, fernet_key: bytes
     ) -> None:
-        """T212 dividends are transformed into DIVIDEND events."""
+        """T212 dividends are transformed into DIVIDEND events with nested instrument."""
         from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [
             {
                 "reference": "DIV-001",
                 "ticker": "VWCE",
-                "isin": "IE00BK5BQT80",
-                "currency": "EUR",
+                "instrument": {
+                    "ticker": "VWCE",
+                    "isin": "IE00BK5BQT80",
+                    "name": "Vanguard FTSE All-World",
+                    "currency": "USD",
+                },
                 "amount": 42.50,
+                "currency": "EUR",
+                "grossAmountPerShare": 0.425,
                 "paidOn": "2024-03-01",
+                "quantity": 100,
+                "tickerCurrency": "USD",
+                "type": "ORDINARY",
             }
         ]
         raw = self._build_raw_cdc_table(events, "/equity/history/dividends", fernet_key)
@@ -630,10 +719,19 @@ class TestCdcTransform:
 
         assert result.num_rows == 1
         assert result.column("event_type")[0].as_py() == "DIVIDEND"
-        assert result.column("raw_event_type")[0].as_py() == "DIVIDEND"
+        assert result.column("raw_event_type")[0].as_py() == "ORDINARY"
         assert result.column("isin")[0].as_py() == "IE00BK5BQT80"
+        assert result.column("ticker")[0].as_py() == "VWCE"
+        assert result.column("description")[0].as_py() == "Vanguard FTSE All-World"
+
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(42.50)
+        qty = decrypt_float(result.column("quantity")[0].as_py(), fernet_key)
+        assert qty == pytest.approx(100.0)
+        price = decrypt_float(result.column("price")[0].as_py(), fernet_key)
+        assert price == pytest.approx(0.425)
+        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
+        assert gross == pytest.approx(42.5)  # price * quantity
 
     def test_transform_cdc_transactions_classifies_event_types(
         self, fernet_key: bytes
@@ -660,6 +758,31 @@ class TestCdcTransform:
         assert result.column("raw_event_type")[0].as_py() == "DEPOSIT"
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(1000.0)
+        net = decrypt_float(result.column("net_amount")[0].as_py(), fernet_key)
+        assert net == pytest.approx(1000.0)
+        assert result.column("base_currency")[0].as_py() == "EUR"
+
+    def test_transform_cdc_transaction_withdraw_type(self, fernet_key: bytes) -> None:
+        """T212 WITHDRAW transactions are mapped to WITHDRAWAL event type."""
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        events = [
+            {
+                "reference": "TX-002",
+                "type": "WITHDRAW",
+                "currency": "PLN",
+                "amount": -500.0,
+                "dateTime": "2024-02-01T12:00:00Z",
+            }
+        ]
+        raw = self._build_raw_cdc_table(
+            events, "/equity/history/transactions", fernet_key
+        )
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        assert result.column("event_type")[0].as_py() == "WITHDRAWAL"
+        assert result.column("raw_event_type")[0].as_py() == "WITHDRAW"
 
     def test_transform_cdc_empty_events_produces_empty_table(
         self, fernet_key: bytes
@@ -669,8 +792,6 @@ class TestCdcTransform:
 
         events: list[dict] = []
         raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
-        # Empty list means iter_raw_payloads yields nothing useful
-        # but the raw table has a payload with []
         result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 0
@@ -680,17 +801,7 @@ class TestCdcTransform:
         """Paginated T212 responses (dict with 'items') are unwrapped correctly."""
         from pipeline.connectors.trading212.transform import transform_cdc
 
-        # Simulate the paginated response format: {"items": [...], "nextPagePath": null}
-        events = [
-            {
-                "id": "99",
-                "ticker": "VWCE",
-                "currency": "EUR",
-                "price": 100.0,
-                "quantity": 5,
-                "createdDate": "2024-06-01T12:00:00Z",
-            }
-        ]
+        events = [self._make_order_event()]
         paginated_payload = {"items": events, "nextPagePath": None}
         raw = self._build_raw_cdc_table(
             paginated_payload, "/equity/history/orders", fernet_key
@@ -699,7 +810,7 @@ class TestCdcTransform:
 
         assert result.num_rows == 1
         assert result.column("event_type")[0].as_py() == "TRADE"
-        assert result.column("ticker")[0].as_py() == "VWCE"
+        assert result.column("ticker")[0].as_py() == "AAPL_US_EQ"
 
     def test_transform_cdc_paginated_dict_with_empty_items(
         self, fernet_key: bytes
