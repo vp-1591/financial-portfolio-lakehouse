@@ -1,8 +1,9 @@
 """Shared utilities for bronze → silver (raw → normalized) transforms.
 
 Provides helpers to decrypt, parse, and iterate raw Delta table rows,
-and to build normalized PyArrow tables from row dicts using Polars for
-column encryption and schema casting.
+build normalized PyArrow tables from row dicts using Polars for column
+encryption and schema casting, and finalize Polars DataFrames into
+typed PyArrow tables with encryption.
 """
 
 from __future__ import annotations
@@ -193,6 +194,119 @@ def build_normalized_table(
         )
 
     df = pl.DataFrame(records)
+
+    # Encrypt specified float columns to binary Fernet tokens.
+    for col_name in encrypt_columns:
+        if col_name in df.columns:
+            df = df.with_columns(
+                pl.col(col_name)
+                .map_elements(
+                    lambda v, _key=fernet_key: (
+                        encrypt_float(v, _key) if v is not None else None
+                    ),
+                    return_dtype=pl.Binary,
+                )
+                .alias(col_name),
+            )
+
+    # Ensure all schema columns are present; fill missing with null.
+    for field in schema:
+        if field.name not in df.columns:
+            df = df.with_columns(pl.lit(None).alias(field.name))
+
+    # Reorder columns to match schema order.
+    df = df.select([field.name for field in schema])
+
+    # Convert to PyArrow and cast to target schema.
+    arrow_table = df.to_arrow()
+    return arrow_table.cast(schema)
+
+
+def decrypt_cdc_payloads(
+    raw: pa.Table, fernet_key: bytes
+) -> list[tuple[datetime, str, list[dict]]]:
+    """Decrypt and parse CDC payloads, returning event lists ready for transform.
+
+    Replaces :func:`iter_raw_payloads` for CDC transforms.  Instead of
+    yielding one :class:`DecodedRow` at a time, returns a list of
+    ``(fetched_at, source, events)`` tuples where *events* is the unwrapped
+    list of event dicts from each payload.  This allows callers to construct
+    Polars DataFrames directly from the event dicts.
+
+    Paginated responses (``{"items": [...], "nextPagePath": ...}``) are
+    automatically unwrapped.
+    """
+    fetched_ats = raw.column("fetched_at").to_pylist()
+    sources = raw.column("source").to_pylist()
+    payloads = raw.column("payload").to_pylist()
+
+    results: list[tuple[datetime, str, list[dict]]] = []
+
+    for i in range(len(fetched_ats)):
+        fetched_at = coerce_fetched_at(fetched_ats[i])
+        source = str(sources[i] or "")
+        payload_bytes = payloads[i]
+
+        decrypted = decode_payload(payload_bytes, fernet_key)
+        if decrypted is None:
+            continue
+
+        parsed = parse_json(decrypted)
+        if parsed is None:
+            continue
+
+        events = _unwrap_events(parsed)
+        if events:
+            results.append((fetched_at, source, events))
+
+    return results
+
+
+def _unwrap_events(payload: object) -> list[dict]:
+    """Unwrap a CDC API response into a list of event dicts.
+
+    Handles both bare JSON lists and paginated dicts with
+    ``{"items": [...], "nextPagePath": ...}``.
+    """
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict) and "items" in payload:
+        items = payload["items"]
+        if isinstance(items, list):
+            return items
+    return []
+
+
+def finalize_table(
+    df: pl.DataFrame,
+    schema: pa.Schema,
+    fernet_key: bytes,
+    encrypt_columns: list[str] | None = None,
+) -> pa.Table:
+    """Finalize a Polars DataFrame into a typed PyArrow table with encryption.
+
+    Like :func:`build_normalized_table` but starts from a Polars DataFrame
+    instead of a list of dicts.  Encrypts specified float columns via
+    ``encrypt_float``, fills missing columns with null, and casts to the
+    target schema.
+
+    Parameters
+    ----------
+    df:
+        Polars DataFrame with column names matching *schema* field names.
+        Values for columns listed in *encrypt_columns* must be plain floats
+        (not yet encrypted).
+    schema:
+        Target PyArrow schema.  Encrypted columns must be ``pa.binary()``
+        in the schema but ``float`` in the DataFrame.
+    fernet_key:
+        Fernet key for encrypting float columns.
+    encrypt_columns:
+        Column names whose float values should be Fernet-encrypted to binary.
+        Defaults to an empty list (no encryption).
+    """
+    if encrypt_columns is None:
+        encrypt_columns = []
 
     # Encrypt specified float columns to binary Fernet tokens.
     for col_name in encrypt_columns:
