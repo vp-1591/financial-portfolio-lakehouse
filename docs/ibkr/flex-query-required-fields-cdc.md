@@ -123,9 +123,8 @@ match the Flex Query editor checkboxes exactly (see
 ### IBKR Cash Transaction `type` → normalized `event_type` mapping
 
 The `type` attribute values below are the exact strings IBKR puts in the XML.
-They differ from the Flex Query editor sub-section names — for example, both
-"Broker Interest Paid" and "Broker Interest Received" sub-sections produce
-`type="Broker Interest"` elements (distinguished by the sign of `amount`).
+The Flex API uses the sub-section name directly (e.g. `"Broker Interest Received"`,
+`"Broker Interest Paid"`) rather than a simplified base form.
 
 | IBKR `type` value        | Normalized `event_type` | Notes |
 |--------------------------|--------------------------|-------|
@@ -135,8 +134,10 @@ They differ from the Flex Query editor sub-section names — for example, both
 | `871(m) Withholding`     | `TAX`                    | US withholding on dividend equivalents. |
 | `Deposits & Withdrawals` (positive) | `DEPOSIT`      | Sign of `amount` determines direction. |
 | `Deposits & Withdrawals` (negative) | `WITHDRAWAL`   | |
-| `Broker Interest`        | `INTEREST`               | Covers both "Paid" and "Received" sub-sections. |
-| `Bond Interest`          | `INTEREST`               | Covers both "Paid" and "Received" sub-sections. |
+| `Broker Interest Received` | `INTEREST`             | |
+| `Broker Interest Paid`   | `INTEREST`               | |
+| `Bond Interest Received` | `INTEREST`               | |
+| `Bond Interest Paid`     | `INTEREST`               | |
 | `Broker Fees`            | `FEE`                    | |
 | `Other Fees`             | `FEE`                    | |
 | `Other Income`           | `ADJUSTMENT`             | |

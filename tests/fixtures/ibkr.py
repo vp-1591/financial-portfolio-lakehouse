@@ -151,7 +151,7 @@ def ibkr_raw_cdc(
         ' description="iShares 20+ Year Treasury Bond ETF"'
         ' isin="US4642874848" currency="USD" fxRateToBase="0.9"'
         ' dateTime="2026-04-01 00:00:00" settleDate="20260404"'
-        ' amount="35.00" type="Bond Interest" dividendType=""'
+        ' amount="35.00" type="Bond Interest Received" dividendType=""'
         ' tradeId="" transactionId="CT002" code=""'
         ' assetClass="STK" conid="7697096" securityId="US4642874848"/>'
         "</CashTransactions>"

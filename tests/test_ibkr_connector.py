@@ -724,15 +724,25 @@ class TestClassifyIbkrCashType:
             _classify_ibkr_cash_type("Deposits & Withdrawals", -500.0) == "WITHDRAWAL"
         )
 
-    def test_broker_interest(self) -> None:
+    def test_broker_interest_received(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
-        assert _classify_ibkr_cash_type("Broker Interest", 12.0) == "INTEREST"
+        assert _classify_ibkr_cash_type("Broker Interest Received", 12.0) == "INTEREST"
 
-    def test_bond_interest(self) -> None:
+    def test_broker_interest_paid(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
-        assert _classify_ibkr_cash_type("Bond Interest", 25.0) == "INTEREST"
+        assert _classify_ibkr_cash_type("Broker Interest Paid", -5.0) == "INTEREST"
+
+    def test_bond_interest_received(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Bond Interest Received", 25.0) == "INTEREST"
+
+    def test_bond_interest_paid(self) -> None:
+        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
+
+        assert _classify_ibkr_cash_type("Bond Interest Paid", -5.0) == "INTEREST"
 
     def test_broker_fees(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
