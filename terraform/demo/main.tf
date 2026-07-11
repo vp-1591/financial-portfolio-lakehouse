@@ -471,6 +471,14 @@ locals {
     S3_PREFIX_DEMO  = var.s3_prefix
     AWS_REGION      = var.aws_region
   }
+
+  # Log group ARNs for all demo tasks (with :* suffix for log-stream access) —
+  # used in the CI/CD IAM policy so the deploy workflow can read container logs
+  # when a Step Function execution fails.
+  cicd_log_group_arns = concat(
+    [for k, v in module.connector_task : "${v.log_group_arn}:*"],
+    ["${module.consolidate_allocate.log_group_arn}:*"],
+  )
 }
 
 module "connector_task" {
@@ -562,8 +570,14 @@ module "orchestrator" {
 # The deploy workflow authenticates as the demo IAM user and needs to:
 #   - Describe ECS task definitions (to resolve the latest ARN at runtime)
 #   - Start Step Functions executions (to trigger the demo orchestrator)
+#   - Describe Step Functions executions (to poll for completion status)
+#   - Get Step Functions execution history (to diagnose failures)
+#   - Read CloudWatch Logs (to print container logs on failure)
 # ecs:DescribeTaskDefinition does not support resource-level ARNs, so it must
 # be granted on "*". states:StartExecution is scoped to the demo state machine.
+# states:DescribeExecution and states:GetExecutionHistory are scoped to
+# executions of the demo state machine (ARN differs from stateMachine: to
+# execution:). CloudWatch Logs permissions are scoped to demo task log groups.
 data "aws_iam_policy_document" "pipeline_demo_cicd" {
   statement {
     sid    = "ECSDescribeTaskDef"
@@ -583,6 +597,27 @@ data "aws_iam_policy_document" "pipeline_demo_cicd" {
     resources = [
       module.orchestrator.state_machine_arn,
     ]
+  }
+
+  statement {
+    sid    = "SFNDescribeExecution"
+    effect = "Allow"
+    actions = [
+      "states:DescribeExecution",
+      "states:GetExecutionHistory",
+    ]
+    resources = [
+      "${replace(module.orchestrator.state_machine_arn, ":stateMachine:", ":execution:")}:*",
+    ]
+  }
+
+  statement {
+    sid    = "CloudWatchLogRead"
+    effect = "Allow"
+    actions = [
+      "logs:FilterLogEvents",
+    ]
+    resources = local.cicd_log_group_arns
   }
 }
 
