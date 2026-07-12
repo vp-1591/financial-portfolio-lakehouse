@@ -7,8 +7,10 @@
 #   - IAM role for Step Functions (used by per-environment state machines)
 #
 # This repository is shared between staging and production deployments.
-# Staging images are tagged `git-<sha>` and `staging-latest`.
-# Production images are tagged `<version>` and `production-latest`.
+# Staging images are tagged `staging-latest`.
+# Production images are tagged `production-latest`.
+# Tags are mutable: each push moves the tag to a new image, and the old image
+# becomes untagged. The lifecycle policy expires untagged images after 7 days.
 #
 # Apply order:
 #   1. shared/ apply — creates ECR + IAM policy + cluster + SFN role
@@ -37,12 +39,6 @@ variable "ecr_repository_name" {
   description = "Name of the ECR repository for the pipeline Docker image."
   type        = string
   default     = "investment-portfolio-pipeline"
-}
-
-variable "keep_tagged_images" {
-  description = "Maximum number of tagged images to retain in ECR."
-  type        = number
-  default     = 10
 }
 
 variable "expire_untagged_days" {
@@ -95,7 +91,10 @@ resource "aws_ecr_repository" "pipeline" {
 }
 
 # Expire untagged images after N days to prevent unbounded storage growth.
-# Keep at most N tagged images so old versions are cleaned up.
+# With only two mutable tags (staging-latest, production-latest), each push
+# moves the tag to a new image and the old image becomes untagged. This rule
+# cleans up those untagged images. No count-based rule is needed since there
+# are never more than 2 tagged images at any time.
 resource "aws_ecr_lifecycle_policy" "pipeline" {
   repository = aws_ecr_repository.pipeline.name
 
@@ -109,18 +108,6 @@ resource "aws_ecr_lifecycle_policy" "pipeline" {
           countType   = "sinceImagePushed"
           countUnit   = "days"
           countNumber = var.expire_untagged_days
-        }
-        action = {
-          type = "expire"
-        }
-      },
-      {
-        rulePriority = 2
-        description  = "Keep at most ${var.keep_tagged_images} tagged images"
-        selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = var.keep_tagged_images
         }
         action = {
           type = "expire"
