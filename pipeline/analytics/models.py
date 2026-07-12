@@ -1,4 +1,4 @@
-"""PyArrow schema for the analytics table."""
+"""PyArrow schemas for analytics tables."""
 
 from __future__ import annotations
 
@@ -13,5 +13,17 @@ portfolio_allocation_schema = pa.schema(
         pa.field("identifier", pa.string()),
         pa.field("security_currency", pa.string()),
         pa.field("description", pa.string()),
+    ]
+)
+
+data_quality_schema = pa.schema(
+    [
+        pa.field("checked_at", pa.timestamp("us", tz="UTC")),
+        pa.field("table_name", pa.string()),
+        pa.field("check_name", pa.string()),
+        pa.field("status", pa.string()),  # PASS | FAIL | WARN
+        pa.field("details", pa.string()),
+        pa.field("threshold", pa.string(), nullable=True),
+        pa.field("actual", pa.string(), nullable=True),
     ]
 )
