@@ -73,6 +73,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0060 | Fix T212 CDC Transform for Nested JSON Structures | 2026-07-11 | active | — |
 | 0061 | Handle Missing Struct Fields in T212 CDC Transform | 2026-07-11 | active | — |
 | 0062 | Track Step Function Execution Status in Deploy Workflow | 2026-07-11 | active | — |
+| 0063 | Data Quality Framework | 2026-07-12 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

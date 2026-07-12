@@ -390,6 +390,18 @@ def get_raw_path(connector_name: str, layer: str) -> str:
     return config.raw_path(f"{connector_name}_{layer}")
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Run data quality checks against normalized and analytics tables."""
+    from pipeline.analytics.quality import run_validation
+    from pipeline.crypto import load_key
+
+    return run_validation(
+        fernet_key=load_key(),
+        freshness_days=args.freshness_days,
+        fail_on_warn=args.fail_on_warn,
+    )
+
+
 def cmd_full(args: argparse.Namespace) -> int:
     """Run the full pipeline: fetch → transform → consolidate → allocate."""
     result = cmd_fetch(args)
@@ -599,6 +611,25 @@ def main() -> int:
         help="CSV file with ticker,isin columns",
     )
 
+    # validate
+    validate_parser = subparsers.add_parser(
+        "validate",
+        parents=[common_parser],
+        help="Run data quality checks against pipeline tables",
+    )
+    validate_parser.add_argument(
+        "--freshness-days",
+        type=int,
+        default=7,
+        help="Maximum age in days for data to be considered fresh (default: 7)",
+    )
+    validate_parser.add_argument(
+        "--fail-on-warn",
+        action="store_true",
+        default=False,
+        help="Exit non-zero on WARN results (default: only FAIL exits non-zero)",
+    )
+
     # full
     full_parser = subparsers.add_parser(
         "full",
@@ -705,6 +736,7 @@ def main() -> int:
         "transform": cmd_transform,
         "consolidate": cmd_consolidate,
         "allocate": cmd_allocate,
+        "validate": cmd_validate,
         "full": cmd_full,
         "query": cmd_query,
         "upload-xtb": cmd_upload_xtb,
