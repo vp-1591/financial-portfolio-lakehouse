@@ -1,5 +1,7 @@
 # ADR 0049: Deployment Model — Branch/Tag Environment Strategy
 
+> **Superseded by [ADR 0063](./0063-simplify-ecr-tagging-strategy.md)** — The `git-<sha>` and `<version>` ECR tags have been removed. Only `staging-latest` and `production-latest` remain.
+
 ## Context
 
 The roadmap (`docs/roadmap-productionization.md`) defines a branch/tag-based
