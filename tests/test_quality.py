@@ -145,6 +145,9 @@ def _setup_storage(tmp_path: Path) -> None:
         "normalized/cdc_events",
         "analytics/portfolio_allocation",
         "analytics/data_quality",
+        "analytics/dividend_income",
+        "analytics/interest_income",
+        "analytics/cash_flow_summary",
     ]:
         (data / subdir).mkdir(parents=True, exist_ok=True)
 

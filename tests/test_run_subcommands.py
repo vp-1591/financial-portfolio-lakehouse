@@ -1,7 +1,7 @@
-"""Tests for run-connector and run-consolidate-allocate subcommands.
+"""Tests for run-connector and run-consolidate-analytics subcommands.
 
 Verifies the extracted ``fetch_connector``/``transform_connector`` helpers,
-the ``cmd_run_connector``/``cmd_run_consolidate_allocate`` commands, and
+the ``cmd_run_connector``/``cmd_run_consolidate_analytics`` commands, and
 regression of existing ``cmd_fetch``/``cmd_transform``/``cmd_full`` paths.
 """
 
@@ -17,7 +17,7 @@ from pipeline.crypto import generate_key
 from pipeline.run import (
     cmd_fetch,
     cmd_full,
-    cmd_run_consolidate_allocate,
+    cmd_run_consolidate_analytics,
     cmd_run_connector,
     cmd_transform,
     fetch_connector,
@@ -31,7 +31,7 @@ from pipeline.run import (
 
 
 class TestArgparseDispatch:
-    """run-connector and run-consolidate-allocate are present in the commands dict."""
+    """run-connector and run-consolidate-analytics are present in the commands dict."""
 
     def test_run_connector_in_commands_dict(self) -> None:
 
@@ -44,8 +44,8 @@ class TestArgparseDispatch:
         # Verify cmd_run_connector is callable
         assert callable(cmd_run_connector)
 
-    def test_run_consolidate_allocate_in_commands_dict(self) -> None:
-        assert callable(cmd_run_consolidate_allocate)
+    def test_run_consolidate_analytics_in_commands_dict(self) -> None:
+        assert callable(cmd_run_consolidate_analytics)
 
     def test_run_connector_ibkr_resolves(self) -> None:
         """run-connector ibkr resolves via get("ibkr")."""
@@ -232,17 +232,17 @@ class TestCmdRunConnector:
 
 
 # ---------------------------------------------------------------------------
-# cmd_run_consolidate_allocate
+# cmd_run_consolidate_analytics
 # ---------------------------------------------------------------------------
 
 
-class TestCmdRunConsolidateAllocate:
-    """cmd_run_consolidate_allocate runs consolidate then allocate."""
+class TestCmdRunConsolidateAnalytics:
+    """cmd_run_consolidate_analytics runs consolidate then analytics."""
 
-    @patch("pipeline.run.cmd_allocate", return_value=0)
+    @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
-    def test_calls_consolidate_then_allocate(
-        self, mock_consolidate: MagicMock, mock_allocate: MagicMock
+    def test_calls_consolidate_then_analytics(
+        self, mock_consolidate: MagicMock, mock_analytics: MagicMock
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -250,15 +250,15 @@ class TestCmdRunConsolidateAllocate:
             isin=[],
             isin_map_file=[],
         )
-        rc = cmd_run_consolidate_allocate(args)
+        rc = cmd_run_consolidate_analytics(args)
         assert rc == 0
         mock_consolidate.assert_called_once_with(args)
-        mock_allocate.assert_called_once_with(args)
+        mock_analytics.assert_called_once_with(args)
 
-    @patch("pipeline.run.cmd_allocate", return_value=0)
+    @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=1)
-    def test_consolidate_failure_skips_allocate(
-        self, mock_consolidate: MagicMock, mock_allocate: MagicMock
+    def test_consolidate_failure_skips_analytics(
+        self, mock_consolidate: MagicMock, mock_analytics: MagicMock
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -266,9 +266,9 @@ class TestCmdRunConsolidateAllocate:
             isin=[],
             isin_map_file=[],
         )
-        rc = cmd_run_consolidate_allocate(args)
+        rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
-        mock_allocate.assert_not_called()
+        mock_analytics.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +336,9 @@ class TestCmdTransformRegression:
 
 
 class TestCmdFullRegression:
-    """cmd_full chains fetch → transform → consolidate → allocate."""
+    """cmd_full chains fetch → transform → consolidate → analytics."""
 
-    @patch("pipeline.run.cmd_allocate", return_value=0)
+    @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
     @patch("pipeline.run.cmd_transform", return_value=0)
     @patch("pipeline.run.cmd_fetch", return_value=0)
@@ -347,7 +347,7 @@ class TestCmdFullRegression:
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
         mock_consolidate: MagicMock,
-        mock_allocate: MagicMock,
+        mock_analytics: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             xtb_file=None,
@@ -361,9 +361,9 @@ class TestCmdFullRegression:
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
         mock_consolidate.assert_called_once()
-        mock_allocate.assert_called_once()
+        mock_analytics.assert_called_once()
 
-    @patch("pipeline.run.cmd_allocate", return_value=0)
+    @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
     @patch("pipeline.run.cmd_transform", return_value=0)
     @patch("pipeline.run.cmd_fetch", return_value=1)
@@ -372,7 +372,7 @@ class TestCmdFullRegression:
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
         mock_consolidate: MagicMock,
-        mock_allocate: MagicMock,
+        mock_analytics: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             xtb_file=None,
@@ -385,4 +385,4 @@ class TestCmdFullRegression:
         assert rc == 1
         mock_transform.assert_not_called()
         mock_consolidate.assert_not_called()
-        mock_allocate.assert_not_called()
+        mock_analytics.assert_not_called()
