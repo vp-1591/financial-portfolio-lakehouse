@@ -8,6 +8,7 @@ optionally opens a browser.
 
 from __future__ import annotations
 
+import html
 import logging
 import sys
 import webbrowser
@@ -152,10 +153,10 @@ def _dq_summary(dq) -> tuple[str, str]:
         cls = badge_class.get(row["status"], "")
         rows.append(
             f"<tr><td>{row['checked_at']}</td>"
-            f"<td>{row['table_name']}</td>"
+            f"<td>{html.escape(str(row['table_name']))}</td>"
             f"<td>{row['check_name']}</td>"
             f"<td><span class='badge {cls}'>{row['status']}</span></td>"
-            f"<td>{row['details']}</td>"
+            f"<td>{html.escape(str(row['details']))}</td>"
             f"<td>{row.get('threshold', '') or ''}</td>"
             f"<td>{row.get('actual', '') or ''}</td></tr>"
         )
