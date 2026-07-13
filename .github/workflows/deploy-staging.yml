@@ -106,11 +106,29 @@ jobs:
                 ;;
               FAILED|TIMED_OUT|ABORTED)
                 echo "::error::Step Function execution failed with status: $STATUS"
-                # Print execution history for diagnostics
+                # Print execution history for diagnostics.
+                # ECS RunTask failures surface as TaskFailed events, but the error
+                # and cause are nested inside taskFailedEventDetails — not at the
+                # top level of the event object. Projecting top-level error/cause
+                # returns None for these events.
                 echo "=== Execution History ==="
+
+                echo "--- Task Failures ---"
                 aws stepfunctions get-execution-history \
                   --execution-arn "$EXECUTION_ARN" \
-                  --query 'events[?type==`TaskFailed` || type==`ExecutionFailed`].{name:name, error:error, cause:cause}' \
+                  --query 'events[?type==`TaskFailed`].{id:id, error:taskFailedEventDetails.error, cause:taskFailedEventDetails.cause}' \
+                  --output table || true
+
+                echo "--- Task Timeouts ---"
+                aws stepfunctions get-execution-history \
+                  --execution-arn "$EXECUTION_ARN" \
+                  --query 'events[?type==`TaskTimedOut`].{id:id, error:taskTimedOutEventDetails.error, cause:taskTimedOutEventDetails.cause}' \
+                  --output table || true
+
+                echo "--- Execution Failure ---"
+                aws stepfunctions get-execution-history \
+                  --execution-arn "$EXECUTION_ARN" \
+                  --query 'events[?type==`ExecutionFailed`].{id:id, error:executionFailedEventDetails.error, cause:executionFailedEventDetails.cause}' \
                   --output table || true
                 exit 1
                 ;;
