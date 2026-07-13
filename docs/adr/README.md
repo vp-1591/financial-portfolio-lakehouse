@@ -76,6 +76,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0063 | Simplify ECR Tagging Strategy | 2026-07-12 | active | — |
 | 0064 | Data Quality Framework | 2026-07-12 | active | — |
 | 0065 | CDC Analytics Tables and Unified Analytics Command | 2026-07-12 | active | — |
+| 0066 | Portfolio Holdings Gold Table and Report Generation | 2026-07-13 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

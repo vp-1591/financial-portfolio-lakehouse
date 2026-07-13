@@ -43,17 +43,17 @@ capital) is not possible without market data. This roadmap focuses on what CDC
 
 ## Success criteria
 
-- [ ] `pipeline report` subcommand generates a self-contained HTML file that
+- [x] `pipeline report` subcommand generates a self-contained HTML file that
   opens in a browser and displays at least: portfolio allocation summary,
   passive income timeline, and cash flow breakdown
-- [ ] Data quality checks run after `allocate` and produce a
+- [x] Data quality checks run after `allocate` and produce a
   PASS/FAIL/WARN summary covering schema validation, null checks on required
   fields, row count stability, freshness, and reconciliation
-- [ ] Report includes a data quality section showing validation results
-- [ ] All new code has tests; `ruff check --fix .` and `ruff format .` pass
-- [ ] Running `pipeline report` on demo data produces a visible report without
+- [x] Report includes a data quality section showing validation results
+- [x] All new code has tests; `ruff check --fix .` and `ruff format .` pass
+- [x] Running `pipeline report` on demo data produces a visible report without
   errors
-- [ ] New analytics tables (`dividend_income`, `cash_flow_summary`) are queryable
+- [x] New analytics tables (`dividend_income`, `cash_flow_summary`) are queryable
   via the existing `pipeline query` subcommand
 
 ## Alternatives considered
@@ -146,14 +146,14 @@ charts in the report and are queryable independently via `pipeline query`.
 
 ---
 
-### Phase 3 — Report generation *[status: planned]*
+### Phase 3 — Report generation *[status: done]*
 
 Build the self-contained HTML report using Jinja2 templates and Plotly charts.
 Includes portfolio summary from the current snapshot and CDC-based charts.
 
 **Scope:**
-- [ ] Add `plotly` and `jinja2` to project dependencies
-- [ ] HTML report template with sections:
+- [x] Add `plotly` and `jinja2` to project dependencies
+- [x] HTML report template with sections:
   - **Portfolio summary**: current total value, allocation by broker, by
     currency, by position type (EQUITY/CASH)
   - **Passive income timeline**: stacked bar chart of dividends + interest by
@@ -161,14 +161,20 @@ Includes portfolio summary from the current snapshot and CDC-based charts.
   - **Cash flow breakdown**: bar chart of deposits, withdrawals, dividends,
     fees, taxes by month, powered by `cash_flow_summary`
   - **Data quality section**: pass/fail summary from Phase 1 validation
-- [ ] `pipeline report` subcommand that generates the HTML file locally
+- [x] `pipeline report` subcommand that generates the HTML file locally
   (runs as a CLI command; no server or automated delivery)
-- [ ] `pipeline report` reuses existing S3 credentials (`S3_BUCKET`,
+- [x] `pipeline report` reuses existing S3 credentials (`S3_BUCKET`,
   `AWS_ACCESS_KEY_ID`, etc.) to read analytics Delta tables — no new
   credential mechanism
-- [ ] Report output path configurable via CLI flag (default: `data/report.html`)
-- [ ] All chart data derived from analytics Delta tables (no raw/normalized
+- [x] Report output path configurable via CLI flag (default: `data/report.html`)
+- [x] All chart data derived from analytics Delta tables (no raw/normalized
   table queries in the report — gold layer is the single source of truth)
+
+**Note:** Phase 3 also introduces a fourth gold table, `portfolio_holdings`,
+sourced from `consolidated_holdings` + per-broker snapshots. It is technically
+analytics-layer scope (Phase 2-adjacent) but was added as part of Phase 3 because
+the portfolio summary section needs absolute value and position_type that no
+existing gold table carries. Tracked in ADR 0066.
 
 **Out of scope:**
 - Portfolio value over time chart — requires market data (future roadmap)

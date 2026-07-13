@@ -383,6 +383,17 @@ def cmd_analytics(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+    # Build portfolio_holdings gold table (enriches consolidated holdings
+    # with native currency, position type from broker snapshots).
+    from pipeline.analytics.holdings import build_portfolio_holdings
+
+    try:
+        build_portfolio_holdings(fernet_key=fernet_key)
+    except FileNotFoundError as exc:
+        logger.warning("portfolio_holdings skipped: %s", exc)
+    except Exception as exc:
+        logger.warning("portfolio_holdings failed: %s", exc)
+
     # Build CDC analytics tables.  These are optional — if cdc_events
     # doesn't exist yet, log a warning and continue.
     from pipeline.analytics.cdc_tables import (
@@ -423,6 +434,21 @@ def cmd_validate(args: argparse.Namespace) -> int:
         freshness_days=args.freshness_days,
         fail_on_warn=args.fail_on_warn,
     )
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Generate a self-contained HTML portfolio report from analytics tables."""
+    from pipeline.report import generate_report
+
+    try:
+        return generate_report(
+            output_path=args.output,
+            base_currency=args.base_currency,
+            open_browser=args.open,
+        )
+    except Exception as exc:
+        print(f"Error generating report: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_full(args: argparse.Namespace) -> int:
@@ -653,6 +679,31 @@ def main() -> int:
         help="Exit non-zero on WARN results (default: only FAIL exits non-zero)",
     )
 
+    # report
+    report_parser = subparsers.add_parser(
+        "report",
+        parents=[common_parser],
+        help="Generate a self-contained HTML portfolio report",
+    )
+    report_parser.add_argument(
+        "--output",
+        type=str,
+        default="data/report.html",
+        help="Output HTML file path (default: data/report.html)",
+    )
+    report_parser.add_argument(
+        "--base-currency",
+        type=str,
+        default=None,
+        help="Base currency label for display (default: inferred from data)",
+    )
+    report_parser.add_argument(
+        "--open",
+        action="store_true",
+        default=False,
+        help="Open the generated report in the default browser",
+    )
+
     # full
     full_parser = subparsers.add_parser(
         "full",
@@ -760,6 +811,7 @@ def main() -> int:
         "consolidate": cmd_consolidate,
         "analytics": cmd_analytics,
         "validate": cmd_validate,
+        "report": cmd_report,
         "full": cmd_full,
         "query": cmd_query,
         "upload-xtb": cmd_upload_xtb,

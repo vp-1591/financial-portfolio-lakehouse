@@ -16,6 +16,24 @@ portfolio_allocation_schema = pa.schema(
     ]
 )
 
+portfolio_holdings_schema = pa.schema(
+    [
+        pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
+        pa.field("broker", pa.string()),
+        pa.field("ticker", pa.string()),
+        pa.field("currency", pa.string()),  # native holding currency (from snapshot)
+        pa.field("value", pa.float64()),  # decrypted native-currency value
+        pa.field(
+            "value_base", pa.float64()
+        ),  # base-currency value (from consolidated_holdings)
+        pa.field("base_currency", pa.string()),  # == consolidated_holdings.currency
+        pa.field("position_type", pa.string()),  # EQUITY | CASH | UNKNOWN
+        pa.field("identifier", pa.string()),
+        pa.field("security_currency", pa.string()),
+        pa.field("description", pa.string()),
+    ]
+)
+
 data_quality_schema = pa.schema(
     [
         pa.field("checked_at", pa.timestamp("us", tz="UTC")),
