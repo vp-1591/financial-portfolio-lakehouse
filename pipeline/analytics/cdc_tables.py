@@ -65,7 +65,9 @@ def _add_period_columns(df: pl.DataFrame) -> pl.DataFrame:
     """Add ``period_month`` (YYYY-MM) and ``period_quarter`` (YYYY-QN) from ``event_datetime``.
 
     Handles broker-specific date formats:
-    - IBKR: ``2026-03-01 00:00:00``
+    - IBKR compact datetime: ``20260702;022904``
+    - IBKR compact date: ``20260204``
+    - IBKR SQL datetime: ``2026-03-01 00:00:00``
     - XTB / date-only: ``2024-01-15``
     - T212 ISO: ``2024-01-15T10:30:00Z``
     """
@@ -75,9 +77,23 @@ def _add_period_columns(df: pl.DataFrame) -> pl.DataFrame:
         pl.col("event_datetime").str.replace("Z", "+00:00").alias("event_datetime")
     )
 
+    # Replace semicolons in IBKR compact datetime format (e.g. "20260702;022904")
+    # with spaces so that str.strptime can parse it with %Y%m%d %H%M%S.
+    # Polars does not support semicolons as literal separators in format strings.
+    df = df.with_columns(
+        pl.col("event_datetime").str.replace(";", " ").alias("event_datetime")
+    )
+
     # Parse each format separately to avoid Polars SchemaError when combining
     # timezone-aware and timezone-naive datetimes in a single column.
     # All parsed values are converted to UTC to produce a consistent type.
+    # Compact formats are tried first since they are more specific.
+    parsed_ibkr_compact_dt = pl.col("event_datetime").str.strptime(
+        pl.Datetime("us", "UTC"), "%Y%m%d %H%M%S", strict=False
+    )
+    parsed_ibkr_compact_date = pl.col("event_datetime").str.strptime(
+        pl.Datetime("us", "UTC"), "%Y%m%d", strict=False
+    )
     parsed_ibkr = pl.col("event_datetime").str.strptime(
         pl.Datetime("us", "UTC"), "%Y-%m-%d %H:%M:%S", strict=False
     )
@@ -88,8 +104,16 @@ def _add_period_columns(df: pl.DataFrame) -> pl.DataFrame:
         pl.Datetime("us", "UTC"), "%Y-%m-%d", strict=False
     )
 
-    # Coalesce: try IBKR format first, then ISO, then date-only.
-    parsed = pl.coalesce([parsed_ibkr, parsed_iso, parsed_date]).alias("_event_dt")
+    # Coalesce: try each format, first match wins.
+    parsed = pl.coalesce(
+        [
+            parsed_ibkr_compact_dt,
+            parsed_ibkr_compact_date,
+            parsed_ibkr,
+            parsed_iso,
+            parsed_date,
+        ]
+    ).alias("_event_dt")
 
     df = df.with_columns(parsed)
 

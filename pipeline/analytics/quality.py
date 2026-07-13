@@ -36,6 +36,9 @@ from pipeline.analytics.models import (
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     consolidated_holdings_schema,
+    ibkr_snapshot_normalized_schema,
+    trading212_snapshot_normalized_schema,
+    xtb_snapshot_normalized_schema,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,22 +67,36 @@ class CheckResult:
 # ---------------------------------------------------------------------------
 
 TABLE_SCHEMAS: dict[str, pa.Schema] = {
+    # Silver tables
     "consolidated_holdings": consolidated_holdings_schema,
     "cdc_events": cdc_events_normalized_schema,
+    "ibkr_snapshot": ibkr_snapshot_normalized_schema,
+    "trading212_snapshot": trading212_snapshot_normalized_schema,
+    "xtb_snapshot": xtb_snapshot_normalized_schema,
+    "ibkr_cdc": cdc_events_normalized_schema,
+    "trading212_cdc": cdc_events_normalized_schema,
+    "xtb_cdc": cdc_events_normalized_schema,
+    # Gold tables
     "portfolio_allocation": portfolio_allocation_schema,
     "portfolio_holdings": portfolio_holdings_schema,
-    "data_quality": data_quality_schema,
     "dividend_income": dividend_income_schema,
     "interest_income": interest_income_schema,
     "cash_flow_summary": cash_flow_summary_schema,
 }
 
 FRESHNESS_COLUMNS: dict[str, str] = {
+    # Silver tables
     "consolidated_holdings": "fetched_at",
     "cdc_events": "fetched_at",
+    "ibkr_snapshot": "fetched_at",
+    "trading212_snapshot": "fetched_at",
+    "xtb_snapshot": "fetched_at",
+    "ibkr_cdc": "fetched_at",
+    "trading212_cdc": "fetched_at",
+    "xtb_cdc": "fetched_at",
+    # Gold tables
     "portfolio_allocation": "calculated_at",
     "portfolio_holdings": "calculated_at",
-    "data_quality": "checked_at",
     "dividend_income": "calculated_at",
     "interest_income": "calculated_at",
     "cash_flow_summary": "calculated_at",
@@ -89,6 +106,7 @@ FRESHNESS_COLUMNS: dict[str, str] = {
 # fields as nullable for compatibility, so we maintain an explicit registry of
 # semantically required fields instead of relying on the PyArrow nullable flag.
 REQUIRED_FIELDS: dict[str, list[str]] = {
+    # Silver tables
     "consolidated_holdings": [
         "fetched_at",
         "broker",
@@ -103,6 +121,46 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "event_type",
         "cash_amount",
     ],
+    "ibkr_snapshot": [
+        "fetched_at",
+        "account_id",
+        "currency",
+        "value",
+    ],
+    "trading212_snapshot": [
+        "fetched_at",
+        "account_id",
+        "currency",
+        "value",
+    ],
+    "xtb_snapshot": [
+        "fetched_at",
+        "account_id",
+        "currency",
+        "value",
+    ],
+    "ibkr_cdc": [
+        "fetched_at",
+        "broker",
+        "event_id",
+        "event_type",
+        "cash_amount",
+    ],
+    "trading212_cdc": [
+        "fetched_at",
+        "broker",
+        "event_id",
+        "event_type",
+        "cash_amount",
+    ],
+    "xtb_cdc": [
+        "fetched_at",
+        "broker",
+        "event_id",
+        "event_type",
+        "cash_amount",
+    ],
+    # Gold tables
     "portfolio_allocation": [
         "calculated_at",
         "ticker",
@@ -117,12 +175,6 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "value",
         "base_currency",
         "position_type",
-    ],
-    "data_quality": [
-        "checked_at",
-        "table_name",
-        "check_name",
-        "status",
     ],
     "dividend_income": [
         "calculated_at",
@@ -413,8 +465,9 @@ def run_validation(
     fernet_key: bytes | None = None,
     freshness_days: int = 7,
     fail_on_warn: bool = False,
+    tables: list[str] | None = None,
 ) -> int:
-    """Run all quality checks and persist results.
+    """Run quality checks and persist results.
 
     Parameters
     ----------
@@ -425,6 +478,9 @@ def run_validation(
         Maximum age in days for data to be considered fresh.
     fail_on_warn:
         If ``True``, WARN results cause a non-zero exit code.
+    tables:
+        If provided, validate only the named tables.  Unknown names produce a
+        WARN.  When ``None`` (default), validate all registered tables.
 
     Returns
     -------
@@ -442,16 +498,40 @@ def run_validation(
 
         fernet_key = load_key()
 
-    # Tables to validate: name -> (path_func, is_normalized)
-    validated_tables: dict[str, str] = {
+    # Master dict of all validatable tables: name -> Delta table path.
+    # data_quality is excluded — it is the output table, not an input.
+    all_tables: dict[str, str] = {
+        # Silver tables
         "consolidated_holdings": storage.normalized_path("consolidated_holdings"),
         "cdc_events": storage.normalized_path("cdc_events"),
+        "ibkr_snapshot": storage.normalized_path("ibkr_snapshot"),
+        "trading212_snapshot": storage.normalized_path("trading212_snapshot"),
+        "xtb_snapshot": storage.normalized_path("xtb_snapshot"),
+        "ibkr_cdc": storage.normalized_path("ibkr_cdc"),
+        "trading212_cdc": storage.normalized_path("trading212_cdc"),
+        "xtb_cdc": storage.normalized_path("xtb_cdc"),
+        # Gold tables
         "portfolio_allocation": storage.analytics_path("portfolio_allocation"),
         "portfolio_holdings": storage.analytics_path("portfolio_holdings"),
         "dividend_income": storage.analytics_path("dividend_income"),
         "interest_income": storage.analytics_path("interest_income"),
         "cash_flow_summary": storage.analytics_path("cash_flow_summary"),
     }
+
+    # Filter to requested tables (or validate all)
+    if tables is not None:
+        validated_tables: dict[str, str] = {}
+        for name in tables:
+            if name in all_tables:
+                validated_tables[name] = all_tables[name]
+            else:
+                logger.warning("Unknown table name: %s", name)
+        # Include unknown names with a placeholder so they produce a WARN later
+        for name in tables:
+            if name not in all_tables and name not in validated_tables:
+                validated_tables[name] = ""
+    else:
+        validated_tables = all_tables
 
     # Load CDC events for reconciliation (shared across checks)
     cdc_table: pa.Table | None = None
@@ -468,6 +548,16 @@ def run_validation(
     result_metadata: list[tuple[str, str]] = []  # (table_name, check_name)
 
     for table_name, table_path in validated_tables.items():
+        # Handle unknown table names (not in registry)
+        if not table_path:
+            result = CheckResult(
+                status=WARN,
+                details=f"Unknown table name: {table_name}",
+            )
+            all_results.append(result)
+            result_metadata.append((table_name, "table_present"))
+            continue
+
         try:
             dt = DeltaTable(table_path, storage_options=storage_options)
             arrow_table = dt.to_pyarrow_table()

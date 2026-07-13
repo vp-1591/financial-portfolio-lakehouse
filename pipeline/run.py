@@ -31,6 +31,7 @@ import logging
 import sys
 from pathlib import Path
 
+from pipeline.analytics.quality import run_validation
 from pipeline.connectors.registry import all, get
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
@@ -428,13 +429,13 @@ def get_raw_path(connector_name: str, layer: str) -> str:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     """Run data quality checks against normalized and analytics tables."""
-    from pipeline.analytics.quality import run_validation
     from pipeline.crypto import load_key
 
     return run_validation(
         fernet_key=load_key(),
         freshness_days=args.freshness_days,
         fail_on_warn=args.fail_on_warn,
+        tables=args.tables,
     )
 
 
@@ -504,20 +505,49 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     rc = fetch_connector(connector, args, fernet_key)
     if rc:
         return rc
-    return transform_connector(connector, fernet_key)
+    rc = transform_connector(connector, fernet_key)
+    if rc:
+        return rc
+    # Validate connector's normalized tables after transform
+    return run_validation(
+        fernet_key=fernet_key,
+        tables=[f"{connector.name}_snapshot", f"{connector.name}_cdc"],
+    )
 
 
 def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     """Run consolidate then analytics — idempotent full-overwrite steps.
 
     Used by the Step Functions orchestrator after all connector tasks
-    have completed.
+    have completed.  Validates silver tables after consolidate/CDC and gold
+    tables after analytics — a FAIL-level check causes a non-zero exit.
     """
+    fernet_key = load_key()
     rc = cmd_consolidate(args)
     if rc:
         return rc
     _consolidate_cdc()
-    return cmd_analytics(args)
+    # Validate silver tables after consolidate + CDC
+    silver_rc = run_validation(
+        fernet_key=fernet_key,
+        tables=["consolidated_holdings", "cdc_events"],
+    )
+    if silver_rc:
+        return silver_rc
+    analytics_rc = cmd_analytics(args)
+    if analytics_rc:
+        return analytics_rc
+    # Validate gold tables after analytics
+    return run_validation(
+        fernet_key=fernet_key,
+        tables=[
+            "portfolio_allocation",
+            "portfolio_holdings",
+            "dividend_income",
+            "interest_income",
+            "cash_flow_summary",
+        ],
+    )
 
 
 def cmd_upload_xtb(args: argparse.Namespace) -> int:
@@ -684,6 +714,12 @@ def main() -> int:
         action="store_true",
         default=False,
         help="Exit non-zero on WARN results (default: only FAIL exits non-zero)",
+    )
+    validate_parser.add_argument(
+        "--tables",
+        nargs="*",
+        default=None,
+        help="Only validate specified tables (default: all registered tables)",
     )
 
     # report

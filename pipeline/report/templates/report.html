@@ -38,6 +38,7 @@
         <p class="generated-at">Generated: {{ generated_at }}</p>
     </header>
 
+    {% if show_portfolio %}
     <section id="portfolio-summary">
         <h2>Portfolio Summary</h2>
         {% if summary_cards %}
@@ -63,7 +64,9 @@
         {{ charts.allocation_currency | safe }}
         {% endif %}
     </section>
+    {% endif %}
 
+    {% if show_passive %}
     <section id="passive-income">
         <h2>Passive Income Timeline</h2>
         {% if charts.passive_income %}
@@ -75,7 +78,9 @@
         <p class="no-data">No passive income data available.</p>
         {% endif %}
     </section>
+    {% endif %}
 
+    {% if show_cash_flow %}
     <section id="cash-flow">
         <h2>Cash Flow Breakdown</h2>
         {% if charts.cash_flow %}
@@ -84,6 +89,7 @@
         <p class="no-data">No cash flow data available.</p>
         {% endif %}
     </section>
+    {% endif %}
 
     <section id="data-quality">
         <h2>Data Quality</h2>
