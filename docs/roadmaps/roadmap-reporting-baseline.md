@@ -8,6 +8,12 @@ portfolio state and CDC events for historical cash flows. This roadmap also
 includes lightweight data quality checks that validate the data the report
 consumes, resolving the chicken-and-egg between quality gates and a deliverable.
 
+The report is generated locally via a CLI command (`pipeline report`) and
+written to disk. It reads analytics Delta tables from S3 using the same
+credentials the pipeline already uses. Automated delivery (email, S3 upload,
+scheduled execution) is deferred to productionization step 5 — until then,
+running the command and opening the file is the intended workflow.
+
 Who it's for: the portfolio owner — a single place to see portfolio composition,
 passive income, investment friction, and cash flow patterns.
 
@@ -155,8 +161,12 @@ Includes portfolio summary from the current snapshot and CDC-based charts.
   - **Cash flow breakdown**: bar chart of deposits, withdrawals, dividends,
     fees, taxes by month, powered by `cash_flow_summary`
   - **Data quality section**: pass/fail summary from Phase 1 validation
-- [ ] `pipeline report` subcommand that generates the HTML file
-- [ ] Report output path configurable (default: `data/report.html` or similar)
+- [ ] `pipeline report` subcommand that generates the HTML file locally
+  (runs as a CLI command; no server or automated delivery)
+- [ ] `pipeline report` reuses existing S3 credentials (`S3_BUCKET`,
+  `AWS_ACCESS_KEY_ID`, etc.) to read analytics Delta tables — no new
+  credential mechanism
+- [ ] Report output path configurable via CLI flag (default: `data/report.html`)
 - [ ] All chart data derived from analytics Delta tables (no raw/normalized
   table queries in the report — gold layer is the single source of truth)
 
@@ -165,7 +175,9 @@ Includes portfolio summary from the current snapshot and CDC-based charts.
 - Performance chart (value vs. invested capital) — requires market data
 - Asset allocation over time — requires snapshot history or market data
 - Position-type enrichment beyond EQUITY/CASH — deferred to market data roadmap
-- Email delivery — deferred to productionization step 5
+- Automated delivery (email, S3 upload, scheduled execution) — deferred to
+  productionization step 5; until then, report generation is a local CLI
+  command
 - PDF or image export — HTML-only for now
 
 **Links:** ADR 0045 (transform utilities), ADR 0058 (CDC schema)
@@ -188,6 +200,9 @@ roadmaps:
   using market data metadata or LLM-assisted categorization
 
 ### Delivery and automation (productionization step 5)
+
+Until this phase is built, the report is generated locally via `pipeline report`
+and opened from disk. This phase adds automated delivery:
 
 - Email delivery of the generated report
 - Manual trigger support for pipeline and report generation
