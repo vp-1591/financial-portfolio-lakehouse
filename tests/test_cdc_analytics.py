@@ -1028,3 +1028,109 @@ class TestDateParsing:
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.num_rows == 1
         assert result.column("period_month")[0].as_py() == "2024-01"
+
+    def test_ibkr_compact_date_format(self, fernet_key: bytes, tmp_path: Path) -> None:
+        """IBKR compact date '20260204' is parsed to period_month '2026-02'."""
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "INTEREST",
+                    "event_id": "int-1",
+                    "event_datetime": "20260204",
+                    "broker": "IBKR",
+                    "currency": "EUR",
+                    "cash_amount": 12.50,
+                    "base_currency": "EUR",
+                    "amount_base": 12.50,
+                },
+            ],
+        )
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        result = build_interest_income(fernet_key=fernet_key)
+        assert result.num_rows == 1
+        assert result.column("period_month")[0].as_py() == "2026-02"
+
+    def test_ibkr_compact_datetime_format(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """IBKR compact datetime '20260702;022904' is parsed to period_month '2026-07'."""
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "TRADE",
+                    "event_id": "trade-1",
+                    "event_datetime": "20260702;022904",
+                    "broker": "IBKR",
+                    "currency": "USD",
+                    "cash_amount": -1501.0,
+                    "base_currency": "EUR",
+                    "amount_base": -1350.9,
+                },
+            ],
+        )
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        result = build_cash_flow_summary(fernet_key=fernet_key)
+        assert result.num_rows == 1
+        assert result.column("period_month")[0].as_py() == "2026-07"
+
+    def test_ibkr_normalised_iso_parsed(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """IBKR datetime normalised to ISO '2026-02-04T00:00:00Z' is parsed correctly."""
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "INTEREST",
+                    "event_id": "int-1",
+                    "event_datetime": "2026-02-04T00:00:00Z",
+                    "broker": "IBKR",
+                    "currency": "EUR",
+                    "cash_amount": 12.50,
+                    "base_currency": "EUR",
+                    "amount_base": 12.50,
+                },
+            ],
+        )
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        result = build_interest_income(fernet_key=fernet_key)
+        assert result.num_rows == 1
+        assert result.column("period_month")[0].as_py() == "2026-02"

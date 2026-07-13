@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
 
+import polars as pl
 import pyarrow as pa
 
 from pipeline.connectors.ibkr.client import (
@@ -30,6 +33,8 @@ from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     ibkr_snapshot_normalized_schema,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def transform_snapshot(
@@ -302,7 +307,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 _process_ibkr_transaction_fee(fee, fetched_at, base_currency_by_account)
             )
 
-    return build_normalized_table(
+    result = build_normalized_table(
         records,
         cdc_events_normalized_schema,
         fernet_key,
@@ -318,6 +323,28 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             "amount_base",
         ],
     )
+
+    # IBKR Flex CDC queries return the full account history on every fetch.
+    # When multiple raw payloads exist (from repeated pipeline runs), the same
+    # events appear in each payload, producing duplicates.  Dedup by event_id
+    # using Polars, keeping the version from the latest fetched_at.
+    if result.num_rows > 0:
+        df = pl.from_arrow(result)
+        before = df.height
+        df = df.sort("fetched_at", descending=True).unique(subset=["event_id"])
+        after = df.height
+        if before > after:
+            logger.info(
+                "IBKR CDC dedup: removed %d duplicate events (%d → %d)",
+                before - after,
+                before,
+                after,
+            )
+        # Sort by event_id for deterministic row order across runs.
+        df = df.sort("event_id")
+        result = df.to_arrow()
+
+    return result
 
 
 # --- IBKR CDC event type classification ---
@@ -356,6 +383,49 @@ def _deterministic_event_id(source: str, account_id: str, *fields: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
+# IBKR Flex uses compact date/time formats that differ from ISO 8601:
+# - CashTransaction dateTime: "YYYYMMDD" (e.g. "20260204")
+# - Trade dateTime: "YYYYMMDD;HHMMSS" (e.g. "20260702;022904")
+# These regexes normalise them to ISO 8601 so downstream parsing works.
+_IBKR_COMPACT_DATETIME_RE = re.compile(r"^(\d{4})(\d{2})(\d{2});(\d{2})(\d{2})(\d{2})$")
+_IBKR_COMPACT_DATE_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
+
+
+def _normalize_ibkr_datetime(dt_str: str) -> str:
+    """Normalise an IBKR Flex ``dateTime`` string to ISO 8601 format.
+
+    IBKR uses two compact formats not recognised by standard date parsers:
+
+    - ``YYYYMMDD`` — e.g. ``"20260204"`` → ``"2026-02-04T00:00:00Z"``
+    - ``YYYYMMDD;HHMMSS`` — e.g. ``"20260702;022904"`` → ``"2026-07-02T02:29:04Z"``
+
+    Strings that already match standard formats (e.g. ``"2026-03-01 00:00:00"``
+    or ``"2026-03-01"``) are returned unchanged.
+
+    Parameters
+    ----------
+    dt_str:
+        Raw dateTime value from IBKR Flex XML.
+
+    Returns
+    -------
+    str
+        ISO 8601 datetime string, or the original string if no pattern matched.
+    """
+    if not dt_str:
+        return dt_str
+
+    m = _IBKR_COMPACT_DATETIME_RE.match(dt_str)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T{m.group(4)}:{m.group(5)}:{m.group(6)}Z"
+
+    m = _IBKR_COMPACT_DATE_RE.match(dt_str)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T00:00:00Z"
+
+    return dt_str
+
+
 def _process_ibkr_trade(
     trade: dict[str, Any],
     fetched_at: datetime,
@@ -384,7 +454,7 @@ def _process_ibkr_trade(
         "source": "Trade",
         "event_type": "TRADE",
         "raw_event_type": str(trade.get("transactionType", "ExTrade")),
-        "event_datetime": str(trade.get("dateTime", "")),
+        "event_datetime": _normalize_ibkr_datetime(str(trade.get("dateTime", ""))),
         "currency": currency,
         "cash_amount": as_float(trade.get("netCash")),
         "settle_date": str(trade.get("settleDateTarget", "")),
@@ -432,7 +502,7 @@ def _process_ibkr_cash_transaction(
         "source": "CashTransaction",
         "event_type": _classify_ibkr_cash_type(cash_type, amount),
         "raw_event_type": cash_type,
-        "event_datetime": str(ct.get("dateTime", "")),
+        "event_datetime": _normalize_ibkr_datetime(str(ct.get("dateTime", ""))),
         "currency": currency,
         "cash_amount": amount,
         "settle_date": str(ct.get("settleDate", "")),
@@ -472,7 +542,7 @@ def _process_ibkr_transfer(
         "source": "Transfer",
         "event_type": "TRANSFER",
         "raw_event_type": str(transfer.get("type", "")),
-        "event_datetime": str(transfer.get("dateTime", "")),
+        "event_datetime": _normalize_ibkr_datetime(str(transfer.get("dateTime", ""))),
         "currency": currency,
         "cash_amount": cash_transfer,
         "settle_date": str(transfer.get("settleDate", "")),
@@ -514,7 +584,7 @@ def _process_ibkr_transaction_fee(
         "source": "TransactionFee",
         "event_type": "FEE",
         "raw_event_type": str(fee.get("taxDescription", "")),
-        "event_datetime": str(fee.get("date", "")),
+        "event_datetime": _normalize_ibkr_datetime(str(fee.get("date", ""))),
         "currency": currency,
         "cash_amount": tax_amount,
         "settle_date": str(fee.get("settleDate", "")),

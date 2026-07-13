@@ -687,6 +687,81 @@ class TestCdcTransform:
 
         assert result.num_rows == 0
 
+    def test_transform_cdc_deduplicates_across_payloads(
+        self, fernet_key: bytes
+    ) -> None:
+        """When multiple raw payloads contain the same IBKR events, dedup by event_id."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        # Duplicate the payload row with a different fetched_at — simulates
+        # two pipeline runs fetching the same Flex history.
+        import pyarrow as pa
+
+        duplicated = pa.concat_tables([raw, raw])
+
+        result = transform_cdc(duplicated, fernet_key)
+
+        # The same events should appear exactly once, not twice.
+        event_ids = result.column("event_id").to_pylist()
+        assert len(event_ids) == len(set(event_ids)), (
+            f"Duplicate event_ids found: {event_ids}"
+        )
+
+    def test_transform_cdc_normalises_compact_datetime(self, fernet_key: bytes) -> None:
+        """IBKR compact datetime formats are normalised to ISO 8601."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        event_datetimes = result.column("event_datetime").to_pylist()
+        # All event_datetime values should be ISO 8601 (no compact YYYYMMDD formats)
+        for dt in event_datetimes:
+            assert not dt.startswith("2026") or "-" in dt, (
+                f"Compact datetime not normalised: {dt}"
+            )
+
+
+class TestNormalizeIbkrDatetime:
+    """Tests for _normalize_ibkr_datetime helper."""
+
+    def test_compact_date(self) -> None:
+        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
+
+        assert _normalize_ibkr_datetime("20260204") == "2026-02-04T00:00:00Z"
+
+    def test_compact_datetime_with_semicolon(self) -> None:
+        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
+
+        assert _normalize_ibkr_datetime("20260702;022904") == "2026-07-02T02:29:04Z"
+
+    def test_iso_datetime_unchanged(self) -> None:
+        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
+
+        assert _normalize_ibkr_datetime("2026-01-15 10:30:00") == "2026-01-15 10:30:00"
+
+    def test_iso_date_unchanged(self) -> None:
+        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
+
+        assert _normalize_ibkr_datetime("2026-03-01") == "2026-03-01"
+
+    def test_iso_with_tz_unchanged(self) -> None:
+        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
+
+        assert (
+            _normalize_ibkr_datetime("2026-01-15T10:30:00Z") == "2026-01-15T10:30:00Z"
+        )
+
+    def test_empty_string_unchanged(self) -> None:
+        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
+
+        assert _normalize_ibkr_datetime("") == ""
+
 
 class TestClassifyIbkrCashType:
     """Tests for IBKR CashTransaction type → normalized event_type mapping."""
