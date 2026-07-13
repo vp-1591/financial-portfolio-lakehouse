@@ -50,8 +50,12 @@ issues without adding email or SNS alerting.
    Optional `--fail-on-warn` flag escalates WARN to non-zero exit.
 
 6. **Validated tables** — `consolidated_holdings`, `cdc_events`,
-   `portfolio_allocation`. A missing table is logged "skipped, not found" — not
-   a FAIL. The list will extend to new gold tables as they are added.
+   `portfolio_allocation`, `portfolio_holdings`, `data_quality`,
+   `dividend_income`, `interest_income`, `cash_flow_summary`. A missing table
+   is logged "skipped, not found" — not a FAIL. The initial scope was
+   `consolidated_holdings`, `cdc_events`, and `portfolio_allocation`; the list
+   was extended to cover analytics gold tables and the newly introduced
+   `portfolio_holdings` during Phases 2 and 3 of the reporting roadmap.
 
 ## Constraints
 
@@ -81,8 +85,10 @@ issues without adding email or SNS alerting.
   The current structural check only verifies that all brokers in holdings
   appear in CDC events.
 - **Negative**: The `data_quality` table grows unboundedly with each validation
-  run. In practice, this is ~15–25 rows per run (3 tables × 5 checks, minus
-  reconciliation for non-holdings tables) and is unlikely to be a concern.
+  run. In practice, this is ~33 rows per run (8 tables × 4–5 checks, with
+  reconciliation only for `consolidated_holdings`) and is unlikely to be a
+  concern. The initial estimate was ~15–25 rows for 3 tables; the row count
+  grew as Phases 2 and 3 added validated gold tables.
 
 ## Validation
 
