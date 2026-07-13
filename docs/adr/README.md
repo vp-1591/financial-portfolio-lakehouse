@@ -79,6 +79,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0066 | Portfolio Holdings Gold Table and Report Generation | 2026-07-13 | active | — |
 | 0067 | Fix Step Function Failure Logging in Deploy Workflow | 2026-07-13 | active | — |
 | 0068 | Add Gitleaks Secret Scanning to CI | 2026-07-13 | active | — |
+| 0069 | Fix IBKR CDC Triplication and Date Parsing | 2026-07-13 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
