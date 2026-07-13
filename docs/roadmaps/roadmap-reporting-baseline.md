@@ -53,7 +53,7 @@ capital) is not possible without market data. This roadmap focuses on what CDC
 - [x] All new code has tests; `ruff check --fix .` and `ruff format .` pass
 - [x] Running `pipeline report` on demo data produces a visible report without
   errors
-- [x] New analytics tables (`dividend_income`, `cash_flow_summary`) are queryable
+- [x] New analytics tables (`dividend_income`, `interest_income`, `cash_flow_summary`) are queryable
   via the existing `pipeline query` subcommand
 
 ## Alternatives considered
@@ -68,7 +68,7 @@ capital) is not possible without market data. This roadmap focuses on what CDC
 
 ## Phases
 
-### Phase 1 — Data quality framework *[status: planned]*
+### Phase 1 — Data quality framework *[status: done]*
 
 Add lightweight validation that runs after the `allocate` step. Produces a
 structured quality result (pass/fail per check) that the report can display and
@@ -76,19 +76,20 @@ the pipeline can use as a gate.
 
 **Severity model:**
 
-Quality checks produce one of two statuses:
+Quality checks produce one of three statuses:
 
 | Status | When | Pipeline behavior |
 |--------|------|-------------------|
 | **FAIL** | Schema mismatch, required nulls in critical fields | `pipeline validate` exits non-zero → Step Function marks execution FAILED → existing CI visibility (ADR 0062) catches it |
 | **WARN** | Row count drop >50%, stale data, reconciliation mismatch >5% | Pipeline continues, logs warning |
+| **PASS** | Check succeeds | No action needed |
 
 Quality checks are **diagnostic** — they report problems, they don't silently
 drop or filter data.
 
 **Communication:** `pipeline validate` prints a human-readable summary to
 stdout. FAIL causes non-zero exit code (Step Function failure, visible in CI).
-WARN logs a message and continues. Both statuses are stored in the
+WARN logs a message and continues. All statuses (PASS/WARN/FAIL) are stored in the
 `data_quality` table and displayed in the report's data quality section.
 Email/SNS alerting is deferred to productionization step 5.
 
@@ -121,7 +122,7 @@ Email/SNS alerting is deferred to productionization step 5.
 
 ---
 
-### Phase 2 — CDC analytics tables *[status: in progress]*
+### Phase 2 — CDC analytics tables *[status: done]*
 
 Create gold analytics tables from CDC events. These power the cash-flow-based
 charts in the report and are queryable independently via `pipeline query`.
@@ -133,7 +134,7 @@ charts in the report and are queryable independently via `pipeline query`.
   broker
 - [ ] `cash_flow_summary` table: all CDC events aggregated by period and type —
   deposits, withdrawals, dividends, interest, fees, taxes, trades
-- [ ] New `pipeline report-data` (or equivalent) step that generates these
+- [ ] New `pipeline analytics` step that generates these
   tables from `cdc_events` and current snapshot
 - [ ] Unit tests for each table's transformation logic
 
