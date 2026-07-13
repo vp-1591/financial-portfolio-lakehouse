@@ -4,7 +4,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 
 | Field | Value |
 |-------|-------|
-| last-indexed | 2026-07-07T00:00:00+02:00 |
+| last-indexed | 2026-07-13T00:00:00+02:00 |
 
 ## Index
 
@@ -13,7 +13,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0001 | Disable Pytest Cache Provider | 2026-06-15 | active | — |
 | 0002a | Add Consolidate Step and Fix Duplicates | 2026-06-26 | active | — |
 | 0002b | Use Broker-Native Identifiers in Portfolio Report | 2026-06-15 | active | — |
-| 0003 | Medallion Architecture Pipeline | 2026-06-19 | active | — |
+| 0003 | Medallion Architecture Pipeline | 2026-06-19 | drifted | — |
 | 0004 | Pipeline End-to-End Bugfixes | 2026-06-21 | active | — |
 | 0005 | Pipeline End-to-End Bugfixes (Round 2) | 2026-06-21 | active | — |
 | 0006 | Replace IBKR Client Portal Gateway with Flex Web Service | 2026-06-25 | superseded | 0029 |
@@ -62,8 +62,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0049 | Deployment Model — Branch/Tag Environment Strategy | 2026-07-07 | superseded | 0063 |
 | 0050 | Attach ECR Policy to Pipeline User in Terraform | 2026-07-07 | active | — |
 | 0051 | Step Functions Orchestration | 2026-07-08 | superseded | 0052, 0054 |
-| 0052 | Per-Environment State Machines and CI/CD Pipeline Trigger | 2026-07-08 | active | — |
-| 0053 | Per-Environment CI/CD Credentials and IAM Permissions | 2026-07-09 | active | — |
+| 0052 | Per-Environment State Machines and CI/CD Pipeline Trigger | 2026-07-08 | drifted | — |
+| 0053 | Per-Environment CI/CD Credentials and IAM Permissions | 2026-07-09 | drifted | — |
 | 0054 | Public-Subnet ECS — Eliminate Perma-VPC Charges | 2026-07-09 | active | — |
 | 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | active | — |
 | 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |

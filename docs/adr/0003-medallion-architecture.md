@@ -1,5 +1,7 @@
 # 0003: Medallion Architecture Pipeline
 
+> **Drifted** — Pipeline has expanded well beyond the ADR's scope: new modules (s3.py, secrets.py, storage.py, report/, analytics/quality|cdc|holdings|models, normalized/consolidate_cdc, connectors/transform_utils), new CLI commands (validate, report, upload-xtb, run-connector, run-consolidate-analytics), expanded BrokerConnector protocol, and paths.py is now deprecated.
+
 ## Context
 
 The investment portfolio dashboard was a set of CLI scripts that fetch live broker

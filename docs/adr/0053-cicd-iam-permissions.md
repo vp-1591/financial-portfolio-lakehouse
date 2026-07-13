@@ -1,5 +1,7 @@
 # 0053: Per-Environment CI/CD Credentials and IAM Permissions
 
+> **Drifted** — Demo CI/CD policy grants 3 extra permissions not described in the ADR (states:DescribeExecution, states:GetExecutionHistory, logs:FilterLogEvents); image tagging uses only `staging-latest`/`production-latest` without the `git-<sha>`/`<version>` tags described.
+
 ## Context
 
 ADR 0052 added a Step Functions trigger to the deploy workflow that runs
