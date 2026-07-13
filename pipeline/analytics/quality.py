@@ -31,6 +31,7 @@ from pipeline.analytics.models import (
     dividend_income_schema,
     interest_income_schema,
     portfolio_allocation_schema,
+    portfolio_holdings_schema,
 )
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
@@ -66,6 +67,7 @@ TABLE_SCHEMAS: dict[str, pa.Schema] = {
     "consolidated_holdings": consolidated_holdings_schema,
     "cdc_events": cdc_events_normalized_schema,
     "portfolio_allocation": portfolio_allocation_schema,
+    "portfolio_holdings": portfolio_holdings_schema,
     "data_quality": data_quality_schema,
     "dividend_income": dividend_income_schema,
     "interest_income": interest_income_schema,
@@ -76,6 +78,7 @@ FRESHNESS_COLUMNS: dict[str, str] = {
     "consolidated_holdings": "fetched_at",
     "cdc_events": "fetched_at",
     "portfolio_allocation": "calculated_at",
+    "portfolio_holdings": "calculated_at",
     "data_quality": "checked_at",
     "dividend_income": "calculated_at",
     "interest_income": "calculated_at",
@@ -105,6 +108,15 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "ticker",
         "percentage",
         "broker",
+    ],
+    "portfolio_holdings": [
+        "calculated_at",
+        "broker",
+        "ticker",
+        "currency",
+        "value",
+        "base_currency",
+        "position_type",
     ],
     "data_quality": [
         "checked_at",
@@ -435,6 +447,7 @@ def run_validation(
         "consolidated_holdings": storage.normalized_path("consolidated_holdings"),
         "cdc_events": storage.normalized_path("cdc_events"),
         "portfolio_allocation": storage.analytics_path("portfolio_allocation"),
+        "portfolio_holdings": storage.analytics_path("portfolio_holdings"),
         "dividend_income": storage.analytics_path("dividend_income"),
         "interest_income": storage.analytics_path("interest_income"),
         "cash_flow_summary": storage.analytics_path("cash_flow_summary"),

@@ -12,6 +12,7 @@ from deltalake import write_deltalake
 from pipeline.analytics.models import (
     data_quality_schema,
     portfolio_allocation_schema,
+    portfolio_holdings_schema,
 )
 from pipeline.analytics.quality import (
     FAIL,
@@ -136,6 +137,27 @@ def _make_allocation_table() -> pa.Table:
     )
 
 
+def _make_portfolio_holdings_table() -> pa.Table:
+    """Build a minimal portfolio_holdings table."""
+    now = datetime.now(timezone.utc)
+    return pa.table(
+        {
+            "calculated_at": [now],
+            "broker": ["IBKR"],
+            "ticker": ["VWCE"],
+            "currency": ["EUR"],
+            "value": [5000.0],
+            "value_base": [5000.0],
+            "base_currency": ["EUR"],
+            "position_type": ["EQUITY"],
+            "identifier": ["IE00BK5BQT80"],
+            "security_currency": ["EUR"],
+            "description": ["Vanguard FTSE All-World"],
+        },
+        schema=portfolio_holdings_schema,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _setup_storage(tmp_path: Path) -> None:
     """Inject a tmp_path-based StorageConfig for all quality tests."""
@@ -144,6 +166,7 @@ def _setup_storage(tmp_path: Path) -> None:
         "normalized/consolidated_holdings",
         "normalized/cdc_events",
         "analytics/portfolio_allocation",
+        "analytics/portfolio_holdings",
         "analytics/data_quality",
         "analytics/dividend_income",
         "analytics/interest_income",
@@ -432,6 +455,7 @@ class TestRunValidation:
         holdings = _make_holdings_table(fernet_key)
         cdc = _make_cdc_table(fernet_key)
         allocation = _make_allocation_table()
+        portfolio_holdings = _make_portfolio_holdings_table()
 
         write_deltalake(
             storage.normalized_path("consolidated_holdings"),
@@ -442,6 +466,11 @@ class TestRunValidation:
         write_deltalake(
             storage.analytics_path("portfolio_allocation"),
             allocation,
+            mode="overwrite",
+        )
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
             mode="overwrite",
         )
 
@@ -480,11 +509,18 @@ class TestRunValidation:
             storage.normalized_path("cdc_events"), bad_cdc, mode="overwrite"
         )
 
-        # Also need allocation table to not trigger "table not found" WARNs
+        # Also need allocation + portfolio_holdings tables to not trigger
+        # "table not found" WARNs
         allocation = _make_allocation_table()
+        portfolio_holdings = _make_portfolio_holdings_table()
         write_deltalake(
             storage.analytics_path("portfolio_allocation"),
             allocation,
+            mode="overwrite",
+        )
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
             mode="overwrite",
         )
 
@@ -513,6 +549,7 @@ class TestRunValidation:
         holdings = _rows_to_table(holdings_rows, consolidated_holdings_schema)
         cdc = _make_cdc_table(fernet_key)
         allocation = _make_allocation_table()
+        portfolio_holdings = _make_portfolio_holdings_table()
 
         write_deltalake(
             storage.normalized_path("consolidated_holdings"),
@@ -523,6 +560,11 @@ class TestRunValidation:
         write_deltalake(
             storage.analytics_path("portfolio_allocation"),
             allocation,
+            mode="overwrite",
+        )
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
             mode="overwrite",
         )
 
@@ -550,6 +592,7 @@ class TestDataQualityRoundTrip:
         holdings = _make_holdings_table(fernet_key)
         cdc = _make_cdc_table(fernet_key)
         allocation = _make_allocation_table()
+        portfolio_holdings = _make_portfolio_holdings_table()
 
         write_deltalake(
             storage.normalized_path("consolidated_holdings"),
@@ -560,6 +603,11 @@ class TestDataQualityRoundTrip:
         write_deltalake(
             storage.analytics_path("portfolio_allocation"),
             allocation,
+            mode="overwrite",
+        )
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
             mode="overwrite",
         )
 
@@ -577,7 +625,7 @@ class TestDataQualityRoundTrip:
         assert result.schema.equals(data_quality_schema, check_metadata=False)
         assert result.num_rows > 0
         # Should have at least schema + required_nulls + row_count_stability
-        # + freshness for each of the 3 validated tables
+        # + freshness for each validated table
         check_names = set(result.column("check_name").to_pylist())
         assert "schema" in check_names
         assert "required_nulls" in check_names
