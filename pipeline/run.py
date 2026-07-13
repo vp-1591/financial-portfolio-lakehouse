@@ -37,6 +37,7 @@ from pipeline.keygen import main as keygen_main
 from pipeline.secrets import (
     inject_secrets,
     is_enabled,
+    load_env,
 )
 from pipeline.storage import get_storage
 
@@ -239,6 +240,7 @@ def transform_connector(connector, fernet_key: bytes) -> int:
 
 def cmd_fetch(args: argparse.Namespace) -> int:
     """Fetch data from brokers and write to raw Delta tables."""
+    inject_secrets()
     fernet_key = load_key()
 
     for connector in all():
@@ -453,6 +455,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 def cmd_full(args: argparse.Namespace) -> int:
     """Run the full pipeline: fetch → transform → consolidate → analytics."""
+    inject_secrets()
     result = cmd_fetch(args)
     if result != 0:
         return result
@@ -481,6 +484,7 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     connector through fetch and transform in a single process, cutting
     cold starts.
     """
+    inject_secrets()
     connector = get(args.connector)
 
     if not is_enabled(connector.enabled_env_var):
@@ -523,6 +527,7 @@ def cmd_upload_xtb(args: argparse.Namespace) -> int:
     and trigger the XTB fetch → transform → consolidate → analytics
     pipeline automatically.
     """
+    inject_secrets()
     from pipeline.s3 import upload_to_staging
     from pipeline.storage import S3Backend
 
@@ -549,8 +554,10 @@ def cmd_upload_xtb(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    # Load .env and validate available secrets.
-    inject_secrets()
+    # Load .env file silently (no secret warnings).
+    # Commands that need broker/S3 credentials call inject_secrets()
+    # themselves.
+    load_env()
 
     # Shared arguments available to all subcommands via parents.
     common_parser = argparse.ArgumentParser(add_help=False)

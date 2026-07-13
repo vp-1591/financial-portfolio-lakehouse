@@ -37,10 +37,12 @@ Usage::
 
     from pipeline.secrets import (
         inject_secrets, get_secret, get_env, is_enabled,
-        parse_bool, is_demo, resolve_secret,
+        load_env, parse_bool, is_demo, resolve_secret,
     )
 
-    inject_secrets()           # call once at startup (loads .env, validates)
+    load_env()                 # silent .env loading at startup (no warnings)
+    # ... or ...
+    inject_secrets()           # load .env AND validate (logs warnings for missing secrets)
     token = resolve_secret("IBKR_FLEX_TOKEN")  # demo-aware secret lookup
     if is_enabled("IBKR_ENABLED"):              # True unless set to 0/false/no
         ...
@@ -113,12 +115,28 @@ STORAGE_TYPE_LOCAL = "local"
 VALID_STORAGE_TYPES = (STORAGE_TYPE_CLOUD, STORAGE_TYPE_MINIO, STORAGE_TYPE_LOCAL)
 
 
+def load_env() -> None:
+    """Load ``.env`` file if it exists (local dev).
+
+    Call this once at startup so that environment variables from ``.env``
+    are available to all commands.  Does **not** override variables already
+    set in the environment (CI / manual exports).  No warnings or validation
+    are performed — use :func:`inject_secrets` to also check that required
+    secrets are present.
+    """
+    env_file = PROJECT_ROOT / ".env"
+    if env_file.exists():
+        load_dotenv(env_file, override=False)
+        logger.info("Loaded environment variables from %s", env_file)
+
+
 def inject_secrets() -> dict[str, str]:
     """Load ``.env`` and validate available secrets.
 
-    Called once at pipeline startup.  Loads environment variables from
-    the ``.env`` file (if present), then logs warnings for any required
-    secrets that are still missing.
+    Called by commands that actually need broker or S3 credentials
+    (``fetch``, ``full``, ``run-connector``, ``upload-xtb``).  Loads
+    environment variables from the ``.env`` file (if present), then
+    logs warnings for any required secrets that are still missing.
 
     In demo mode (``DEMO=true``), validates ``_DEMO`` variants instead
     of base secrets.  There is no cross-mode fallback.
@@ -130,12 +148,7 @@ def inject_secrets() -> dict[str, str]:
 
     Returns a dict of all available secrets for caller convenience.
     """
-    # Load .env file if it exists (local dev).  Does NOT override
-    # variables already set in the environment (CI / manual exports).
-    env_file = PROJECT_ROOT / ".env"
-    if env_file.exists():
-        load_dotenv(env_file, override=False)
-        logger.info("Loaded environment variables from %s", env_file)
+    load_env()
 
     secrets: dict[str, str] = {}
 
