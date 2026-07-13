@@ -74,7 +74,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0061 | Handle Missing Struct Fields in T212 CDC Transform | 2026-07-11 | active | — |
 | 0062 | Track Step Function Execution Status in Deploy Workflow | 2026-07-11 | active | — |
 | 0063 | Simplify ECR Tagging Strategy | 2026-07-12 | active | — |
-| 0064 | Data Quality Framework | 2026-07-12 | active | — |
+| 0064 | Data Quality Framework | 2026-07-12 | superseded | 0070 |
 | 0065 | CDC Analytics Tables and Unified Analytics Command | 2026-07-12 | active | — |
 | 0066 | Portfolio Holdings Gold Table and Report Generation | 2026-07-13 | active | — |
 | 0067 | Fix Step Function Failure Logging in Deploy Workflow | 2026-07-13 | active | — |

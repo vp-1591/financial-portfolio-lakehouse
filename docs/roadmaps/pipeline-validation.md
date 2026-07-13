@@ -46,26 +46,26 @@ machines), 0062 (SFN status tracking in CI), 0064 (data quality framework),
 
 ## Success criteria
 
-- [ ] Running `cmd_run_connector` (as used by Step Functions) validates that
+- [x] Running `cmd_run_connector` (as used by Step Functions) validates that
   connector's normalized tables after transform. A FAIL-level check causes the
   ECS task to exit non-zero, which fails the Step Function execution.
-- [ ] Running `cmd_run_consolidate_analytics` validates silver tables
+- [x] Running `cmd_run_consolidate_analytics` validates silver tables
   (consolidated_holdings, cdc_events) after consolidate, before analytics runs.
   A FAIL-level check prevents analytics from running.
-- [ ] Running `cmd_run_consolidate_analytics` validates gold tables
+- [x] Running `cmd_run_consolidate_analytics` validates gold tables
   (portfolio_allocation, portfolio_holdings, dividend_income, interest_income,
   cash_flow_summary) after analytics. A FAIL-level check causes non-zero exit.
-- [ ] `pipeline validate` still works as a standalone command with no arguments
+- [x] `pipeline validate` still works as a standalone command with no arguments
   (validate all tables) — no regression.
 - [ ] Demo CI (deploy-staging.yml) shows a red run when any FAIL-level check
   fires, using the existing Step Function status tracking from ADR 0062.
-- [ ] `pipeline report` generates a report even after a failed pipeline run. If
+- [x] `pipeline report` generates a report even after a failed pipeline run. If
   analytics tables are missing or validation has failed for a specific table,
   only the sections that depend on that table are hidden. The Data Quality
   section is always shown.
-- [ ] `pytest tests/test_quality.py` passes with scoped validation and
+- [x] `pytest tests/test_quality.py` passes with scoped validation and
   per-connector table registrations.
-- [ ] No changes to the Step Functions ASL definition — validation is embedded
+- [x] No changes to the Step Functions ASL definition — validation is embedded
   in existing commands, not a new state.
 
 ## Alternatives considered
@@ -79,7 +79,7 @@ machines), 0062 (SFN status tracking in CI), 0064 (data quality framework),
 
 ## Phases
 
-### Phase 1 — Embed validation in pipeline and report on failure *[status: planned]*
+### Phase 1 — Embed validation in pipeline and report on failure *[status: completed]*
 
 Add scoped validation so each pipeline step validates its own outputs. Embed
 validation calls into `cmd_run_connector` and `cmd_run_consolidate_analytics`
@@ -89,32 +89,32 @@ partial data gracefully by hiding only sections whose data is broken or
 missing, always showing the Data Quality section.
 
 **Scope:**
-- [ ] Add `tables: list[str] | None = None` parameter to `run_validation()`.
+- [x] Add `tables: list[str] | None = None` parameter to `run_validation()`.
   When `None`, validate all registered tables (current behavior). When
   specified, validate only the named tables.
-- [ ] Add `--tables` flag to `pipeline validate` CLI subcommand that forwards
+- [x] Add `--tables` flag to `pipeline validate` CLI subcommand that forwards
   to `run_validation(tables=...)`.
-- [ ] Register per-connector normalized table schemas in `TABLE_SCHEMAS`,
+- [x] Register per-connector normalized table schemas in `TABLE_SCHEMAS`,
   `FRESHNESS_COLUMNS`, and `REQUIRED_FIELDS` in `quality.py`. Tables:
   `ibkr_snapshot`, `ibkr_cdc`, `trading212_snapshot`, `trading212_cdc`,
   `xtb_snapshot`, `xtb_cdc`. Schemas come from `pipeline.normalized.models`.
-- [ ] Embed validation in `cmd_run_connector`: after transform, call
+- [x] Embed validation in `cmd_run_connector`: after transform, call
   `run_validation(tables=[f"{connector.name}_snapshot", f"{connector.name}_cdc"])`.
   If exit code is non-zero, return it immediately (connector task fails).
-- [ ] Embed validation in `cmd_run_consolidate_analytics`: after consolidate
+- [x] Embed validation in `cmd_run_consolidate_analytics`: after consolidate
   and CDC consolidation, call
   `run_validation(tables=["consolidated_holdings", "cdc_events"])`. If
   non-zero, return before running analytics. After analytics, call
   `run_validation(tables=["portfolio_allocation", "portfolio_holdings",
   "dividend_income", "interest_income", "cash_flow_summary"])`. If non-zero,
   return it.
-- [ ] Make `pipeline report` handle partial or failed data: when analytics
+- [x] Make `pipeline report` handle partial or failed data: when analytics
   tables are missing or validation results show FAIL-level issues, render only
   the Data Quality section (with check details) instead of showing empty or
   misleading charts.
-- [ ] Update `tests/test_quality.py` to cover scoped validation and
+- [x] Update `tests/test_quality.py` to cover scoped validation and
   per-connector table checks.
-- [ ] Update `tests/test_run_subcommands.py` to verify that
+- [x] Update `tests/test_run_subcommands.py` to verify that
   `cmd_run_connector` and `cmd_run_consolidate_analytics` call validation
   between steps.
 

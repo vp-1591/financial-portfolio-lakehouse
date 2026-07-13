@@ -1,5 +1,7 @@
 # 0064: Data Quality Framework
 
+> **Superseded by [ADR 0070](./0070-embed-validation-in-pipeline-and-selective-report-sections.md)** — ADR 0070 removes `data_quality` from the validated-tables registry (it is the output of validation, not an input) and embeds validation into pipeline commands, superseding the standalone-validate design.
+
 ## Context
 
 The pipeline has no data quality validation. The productionization roadmap (step
