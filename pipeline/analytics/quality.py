@@ -26,7 +26,10 @@ import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
 from pipeline.analytics.models import (
+    cash_flow_summary_schema,
     data_quality_schema,
+    dividend_income_schema,
+    interest_income_schema,
     portfolio_allocation_schema,
 )
 from pipeline.normalized.models import (
@@ -64,6 +67,9 @@ TABLE_SCHEMAS: dict[str, pa.Schema] = {
     "cdc_events": cdc_events_normalized_schema,
     "portfolio_allocation": portfolio_allocation_schema,
     "data_quality": data_quality_schema,
+    "dividend_income": dividend_income_schema,
+    "interest_income": interest_income_schema,
+    "cash_flow_summary": cash_flow_summary_schema,
 }
 
 FRESHNESS_COLUMNS: dict[str, str] = {
@@ -71,6 +77,9 @@ FRESHNESS_COLUMNS: dict[str, str] = {
     "cdc_events": "fetched_at",
     "portfolio_allocation": "calculated_at",
     "data_quality": "checked_at",
+    "dividend_income": "calculated_at",
+    "interest_income": "calculated_at",
+    "cash_flow_summary": "calculated_at",
 }
 
 # Fields that must never be null in each table.  Delta Lake schemas mark all
@@ -102,6 +111,31 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "table_name",
         "check_name",
         "status",
+    ],
+    "dividend_income": [
+        "calculated_at",
+        "period_month",
+        "broker",
+        "currency",
+        "cash_amount",
+        "event_count",
+    ],
+    "interest_income": [
+        "calculated_at",
+        "period_month",
+        "broker",
+        "currency",
+        "cash_amount",
+        "event_count",
+    ],
+    "cash_flow_summary": [
+        "calculated_at",
+        "period_month",
+        "broker",
+        "event_type",
+        "currency",
+        "cash_amount",
+        "event_count",
     ],
 }
 
@@ -401,6 +435,9 @@ def run_validation(
         "consolidated_holdings": storage.normalized_path("consolidated_holdings"),
         "cdc_events": storage.normalized_path("cdc_events"),
         "portfolio_allocation": storage.analytics_path("portfolio_allocation"),
+        "dividend_income": storage.analytics_path("dividend_income"),
+        "interest_income": storage.analytics_path("interest_income"),
+        "cash_flow_summary": storage.analytics_path("cash_flow_summary"),
     }
 
     # Load CDC events for reconciliation (shared across checks)

@@ -27,3 +27,51 @@ data_quality_schema = pa.schema(
         pa.field("actual", pa.string(), nullable=True),
     ]
 )
+
+# --- CDC analytics tables (gold layer) ---
+
+dividend_income_schema = pa.schema(
+    [
+        pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
+        pa.field("period_month", pa.string()),  # YYYY-MM
+        pa.field("period_quarter", pa.string()),  # YYYY-QN
+        pa.field("broker", pa.string()),
+        pa.field("ticker", pa.string(), nullable=True),
+        pa.field("isin", pa.string(), nullable=True),
+        pa.field("description", pa.string(), nullable=True),
+        pa.field("currency", pa.string()),
+        pa.field("cash_amount", pa.float64()),
+        pa.field("amount_base", pa.float64(), nullable=True),
+        pa.field("base_currency", pa.string(), nullable=True),
+        pa.field("event_count", pa.int64()),
+    ]
+)
+
+interest_income_schema = pa.schema(
+    [
+        pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
+        pa.field("period_month", pa.string()),  # YYYY-MM
+        pa.field("period_quarter", pa.string()),  # YYYY-QN
+        pa.field("broker", pa.string()),
+        pa.field("currency", pa.string()),
+        pa.field("cash_amount", pa.float64()),
+        pa.field("amount_base", pa.float64(), nullable=True),
+        pa.field("base_currency", pa.string(), nullable=True),
+        pa.field("event_count", pa.int64()),
+    ]
+)
+
+cash_flow_summary_schema = pa.schema(
+    [
+        pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
+        pa.field("period_month", pa.string()),  # YYYY-MM
+        pa.field("period_quarter", pa.string()),  # YYYY-QN
+        pa.field("broker", pa.string()),
+        pa.field("event_type", pa.string()),
+        pa.field("currency", pa.string()),
+        pa.field("cash_amount", pa.float64()),
+        pa.field("amount_base", pa.float64(), nullable=True),
+        pa.field("base_currency", pa.string(), nullable=True),
+        pa.field("event_count", pa.int64()),
+    ]
+)

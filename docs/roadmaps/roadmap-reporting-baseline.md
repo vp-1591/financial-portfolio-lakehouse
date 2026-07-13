@@ -115,7 +115,7 @@ Email/SNS alerting is deferred to productionization step 5.
 
 ---
 
-### Phase 2 — CDC analytics tables *[status: planned]*
+### Phase 2 — CDC analytics tables *[status: in progress]*
 
 Create gold analytics tables from CDC events. These power the cash-flow-based
 charts in the report and are queryable independently via `pipeline query`.
