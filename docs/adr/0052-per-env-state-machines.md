@@ -1,5 +1,7 @@
 # 0052 — Per-Environment State Machines and CI/CD Pipeline Trigger
 
+> **Drifted** — Production deploy now triggers on tag push (ADR says no auto-trigger); demo CI/CD policy grants 3 extra permissions (states:DescribeExecution, states:GetExecutionHistory, logs:FilterLogEvents); image tagging uses only `staging-latest`/`production-latest` without the `git-<sha>`/`<version>` tags described.
+
 ## Context
 
 The Step Functions state machine and EventBridge triggers were defined in `shared/main.tf`, parameterized via `terraform.tfvars`. This meant applying with prod values **overwrites** the demo state machine — both environments couldn't run simultaneously. The roadmap intended `DEMO` to be an environment selector, but the implementation bakes `subnet_ids`, `security_group_ids`, and `task_def_arns` into the ASL definition at `terraform apply` time, not at execution time.

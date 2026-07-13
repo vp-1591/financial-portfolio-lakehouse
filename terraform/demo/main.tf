@@ -514,7 +514,7 @@ module "consolidate_allocate" {
   demo   = true
   cpu    = 256
   memory = 512
-  command = ["run-consolidate-allocate", "--target-currency", "EUR"]
+  command = ["run-consolidate-analytics", "--target-currency", "EUR"]
   environment = merge(local.common_environment, {
     IBKR_ENABLED = "true"
     T212_ENABLED = "true"

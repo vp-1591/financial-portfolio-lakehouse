@@ -5,14 +5,14 @@ Usage::
     python -m pipeline.run fetch
     python -m pipeline.run transform
     python -m pipeline.run consolidate --target-currency EUR
-    python -m pipeline.run allocate --target-currency EUR
+    python -m pipeline.run analytics --target-currency EUR
     python -m pipeline.run full
     python -m pipeline.run keygen
     python -m pipeline.run query "SELECT * FROM portfolio_allocation_analytics"
     python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
     python -m pipeline.run run-connector ibkr
     python -m pipeline.run run-connector xtb --xtb-file s3://bucket/staging/xtb/report.xlsx
-    python -m pipeline.run run-consolidate-allocate --target-currency EUR
+    python -m pipeline.run run-consolidate-analytics --target-currency EUR
 
 Connector enable/disable is controlled by environment variables:
 
@@ -342,8 +342,13 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_allocate(args: argparse.Namespace) -> int:
-    """Calculate portfolio allocation from normalized data."""
+def cmd_analytics(args: argparse.Namespace) -> int:
+    """Build all analytics tables: portfolio allocation and CDC analytics.
+
+    Runs allocation first, then CDC analytics tables (dividend income,
+    interest income, cash flow summary).  If CDC events are not
+    available, logs a warning and continues — allocation still succeeds.
+    """
     import csv
     from pathlib import Path
 
@@ -371,13 +376,42 @@ def cmd_allocate(args: argparse.Namespace) -> int:
 
     try:
         allocate_percentages(fernet_key=fernet_key)
-        return 0
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+    # Build portfolio_holdings gold table (enriches consolidated holdings
+    # with native currency, position type from broker snapshots).
+    from pipeline.analytics.holdings import build_portfolio_holdings
+
+    try:
+        build_portfolio_holdings(fernet_key=fernet_key)
+    except FileNotFoundError as exc:
+        logger.warning("portfolio_holdings skipped: %s", exc)
+    except Exception as exc:
+        logger.warning("portfolio_holdings failed: %s", exc)
+
+    # Build CDC analytics tables.  These are optional — if cdc_events
+    # doesn't exist yet, log a warning and continue.
+    from pipeline.analytics.cdc_tables import (
+        build_cash_flow_summary,
+        build_dividend_income,
+        build_interest_income,
+    )
+
+    try:
+        build_dividend_income(fernet_key=fernet_key)
+        build_interest_income(fernet_key=fernet_key)
+        build_cash_flow_summary(fernet_key=fernet_key)
+    except FileNotFoundError as exc:
+        logger.warning("CDC analytics tables skipped: %s", exc)
+    except Exception as exc:
+        logger.warning("CDC analytics tables failed: %s", exc)
+
+    return 0
 
 
 def get_raw_path(connector_name: str, layer: str) -> str:
@@ -390,8 +424,35 @@ def get_raw_path(connector_name: str, layer: str) -> str:
     return config.raw_path(f"{connector_name}_{layer}")
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Run data quality checks against normalized and analytics tables."""
+    from pipeline.analytics.quality import run_validation
+    from pipeline.crypto import load_key
+
+    return run_validation(
+        fernet_key=load_key(),
+        freshness_days=args.freshness_days,
+        fail_on_warn=args.fail_on_warn,
+    )
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Generate a self-contained HTML portfolio report from analytics tables."""
+    from pipeline.report import generate_report
+
+    try:
+        return generate_report(
+            output_path=args.output,
+            base_currency=args.base_currency,
+            open_browser=args.open,
+        )
+    except Exception as exc:
+        print(f"Error generating report: {exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_full(args: argparse.Namespace) -> int:
-    """Run the full pipeline: fetch → transform → consolidate → allocate."""
+    """Run the full pipeline: fetch → transform → consolidate → analytics."""
     result = cmd_fetch(args)
     if result != 0:
         return result
@@ -403,7 +464,7 @@ def cmd_full(args: argparse.Namespace) -> int:
         return result
     # Consolidate CDC events after snapshot consolidation
     _consolidate_cdc()
-    return cmd_allocate(args)
+    return cmd_analytics(args)
 
 
 def _consolidate_cdc() -> None:
@@ -442,8 +503,8 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     return transform_connector(connector, fernet_key)
 
 
-def cmd_run_consolidate_allocate(args: argparse.Namespace) -> int:
-    """Run consolidate then allocate — idempotent full-overwrite steps.
+def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
+    """Run consolidate then analytics — idempotent full-overwrite steps.
 
     Used by the Step Functions orchestrator after all connector tasks
     have completed.
@@ -452,14 +513,14 @@ def cmd_run_consolidate_allocate(args: argparse.Namespace) -> int:
     if rc:
         return rc
     _consolidate_cdc()
-    return cmd_allocate(args)
+    return cmd_analytics(args)
 
 
 def cmd_upload_xtb(args: argparse.Namespace) -> int:
     """Upload an XTB .xlsx report to S3 staging.
 
     The pipeline's Step Function will detect the file via EventBridge
-    and trigger the XTB fetch → transform → consolidate → allocate
+    and trigger the XTB fetch → transform → consolidate → analytics
     pipeline automatically.
     """
     from pipeline.s3 import upload_to_staging
@@ -571,32 +632,76 @@ def main() -> int:
         help="CSV file with ticker,isin columns",
     )
 
-    # allocate
-    allocate_parser = subparsers.add_parser(
-        "allocate",
+    # analytics
+    analytics_parser = subparsers.add_parser(
+        "analytics",
         parents=[common_parser],
-        help="Calculate portfolio allocation",
+        help="Build all analytics tables (allocation, dividend income, interest income, cash flow summary)",
     )
-    allocate_parser.add_argument(
+    analytics_parser.add_argument(
         "--fx-rate",
         action="append",
         type=parse_fx_rate,
         default=[],
         help="Manual FX rate override as CURRENCY=RATE",
     )
-    allocate_parser.add_argument(
+    analytics_parser.add_argument(
         "--isin",
         action="append",
         type=parse_isin_override,
         default=[],
         help="ISIN override as TICKER=ISIN",
     )
-    allocate_parser.add_argument(
+    analytics_parser.add_argument(
         "--isin-map-file",
         action="append",
         type=str,
         default=[],
         help="CSV file with ticker,isin columns",
+    )
+
+    # validate
+    validate_parser = subparsers.add_parser(
+        "validate",
+        parents=[common_parser],
+        help="Run data quality checks against pipeline tables",
+    )
+    validate_parser.add_argument(
+        "--freshness-days",
+        type=int,
+        default=7,
+        help="Maximum age in days for data to be considered fresh (default: 7)",
+    )
+    validate_parser.add_argument(
+        "--fail-on-warn",
+        action="store_true",
+        default=False,
+        help="Exit non-zero on WARN results (default: only FAIL exits non-zero)",
+    )
+
+    # report
+    report_parser = subparsers.add_parser(
+        "report",
+        parents=[common_parser],
+        help="Generate a self-contained HTML portfolio report",
+    )
+    report_parser.add_argument(
+        "--output",
+        type=str,
+        default="data/report.html",
+        help="Output HTML file path (default: data/report.html)",
+    )
+    report_parser.add_argument(
+        "--base-currency",
+        type=str,
+        default=None,
+        help="Base currency label for display (default: inferred from data)",
+    )
+    report_parser.add_argument(
+        "--open",
+        action="store_true",
+        default=False,
+        help="Open the generated report in the default browser",
     )
 
     # full
@@ -664,27 +769,27 @@ def main() -> int:
         help="Path to XTB Excel report, or an s3:// URI (can be specified multiple times)",
     )
 
-    # run-consolidate-allocate
-    run_consolidate_allocate_parser = subparsers.add_parser(
-        "run-consolidate-allocate",
+    # run-consolidate-analytics
+    run_consolidate_analytics_parser = subparsers.add_parser(
+        "run-consolidate-analytics",
         parents=[common_parser],
-        help="Run consolidate then allocate (orchestrator task)",
+        help="Run consolidate then analytics (orchestrator task)",
     )
-    run_consolidate_allocate_parser.add_argument(
+    run_consolidate_analytics_parser.add_argument(
         "--fx-rate",
         action="append",
         type=parse_fx_rate,
         default=[],
         help="Manual FX rate override as CURRENCY=RATE",
     )
-    run_consolidate_allocate_parser.add_argument(
+    run_consolidate_analytics_parser.add_argument(
         "--isin",
         action="append",
         type=parse_isin_override,
         default=[],
         help="ISIN override as TICKER=ISIN",
     )
-    run_consolidate_allocate_parser.add_argument(
+    run_consolidate_analytics_parser.add_argument(
         "--isin-map-file",
         action="append",
         type=str,
@@ -704,12 +809,14 @@ def main() -> int:
         "fetch": cmd_fetch,
         "transform": cmd_transform,
         "consolidate": cmd_consolidate,
-        "allocate": cmd_allocate,
+        "analytics": cmd_analytics,
+        "validate": cmd_validate,
+        "report": cmd_report,
         "full": cmd_full,
         "query": cmd_query,
         "upload-xtb": cmd_upload_xtb,
         "run-connector": cmd_run_connector,
-        "run-consolidate-allocate": cmd_run_consolidate_allocate,
+        "run-consolidate-analytics": cmd_run_consolidate_analytics,
     }
 
     return commands[args.command](args)

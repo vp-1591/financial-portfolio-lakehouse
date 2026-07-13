@@ -106,7 +106,7 @@ locals {
             ContainerOverrides = [
               {
                 Name    = "pipeline"
-                Command = ["run-consolidate-allocate", "--target-currency", "EUR"]
+                Command = ["run-consolidate-analytics", "--target-currency", "EUR"]
               }
             ]
           }
