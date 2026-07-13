@@ -17,6 +17,7 @@ from pipeline.secrets import (
     inject_secrets,
     is_demo,
     is_enabled,
+    load_env,
     parse_bool,
     resolve_aws_credentials,
     resolve_secret,
@@ -88,6 +89,59 @@ class TestInjectSecrets:
         secrets = inject_secrets()
         # No S3 vars — should not error
         assert "S3_BUCKET" not in secrets
+
+
+class TestLoadEnv:
+    """Test load_env() silently loads .env without warnings."""
+
+    def setup_method(self):
+        """Reset module-level state before each test."""
+        import pipeline.storage
+
+        pipeline.storage._config = None
+
+    def teardown_method(self):
+        """Clean up env vars after each test."""
+        import pipeline.storage
+
+        pipeline.storage._config = None
+
+    def test_load_env_loads_dotenv(self, tmp_path, monkeypatch):
+        """load_env loads variables from .env file without warnings."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("IBKR_FLEX_TOKEN=from-dotenv\n")
+        monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
+        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+        load_env()
+        assert get_secret("IBKR_FLEX_TOKEN") == "from-dotenv"
+
+    def test_load_env_no_warnings(self, tmp_path, monkeypatch, caplog):
+        """load_env does not log warnings about missing secrets."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("SOME_OTHER_VAR=hello\n")
+        monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
+        for name in REQUIRED_SECRETS:
+            monkeypatch.delenv(name, raising=False)
+        load_env()
+        warnings = [m for m in caplog.messages if "secret" in m.lower()]
+        assert not warnings, f"Expected no warnings from load_env, got: {warnings}"
+
+    def test_load_env_idempotent(self, tmp_path, monkeypatch):
+        """Calling load_env twice is safe and produces the same result."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("T212_API_KEY=from-dotenv\n")
+        monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
+        monkeypatch.delenv("T212_API_KEY", raising=False)
+        load_env()
+        load_env()
+        assert get_secret("T212_API_KEY") == "from-dotenv"
+
+    def test_load_env_no_dotenv_file(self, tmp_path, monkeypatch, caplog):
+        """load_env does nothing when no .env file exists."""
+        monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
+        load_env()
+        # No "Loaded environment" message — silently skipped
+        assert not any("Loaded environment" in m for m in caplog.messages)
 
 
 class TestGetSecret:
