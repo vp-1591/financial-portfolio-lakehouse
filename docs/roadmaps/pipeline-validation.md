@@ -6,15 +6,18 @@ Embed data quality validation into the Step Functions pipeline so that corrupted
 silver data cannot silently propagate into gold tables, and both demo and prod
 CI fail visibly when quality checks fail. Validation runs inside existing ECS
 tasks (not as separate tasks) to avoid container startup overhead. When the
-pipeline has failed, `pipeline report` still generates a usable report showing
-only the Data Quality section.
+pipeline has failed, `pipeline report` still generates a usable report, hiding
+only the sections whose data is broken or missing and always showing the Data
+Quality section.
 
 ## Current state
 
 The data quality framework exists (ADR 0064) with `pipeline validate` as a
 standalone CLI command that checks 7 tables (2 silver, 5 gold) across 5 check
 types (schema, required nulls, row-count stability, freshness, reconciliation).
-Results persist to the `data_quality` Delta table in append mode.
+Results persist to the `data_quality` Delta table in append mode. Note: after
+Phase 1, the default scope expands to 13 tables (7 silver + 5 gold, excluding
+`data_quality` which is the output table).
 
 However, **validation is not wired into the Step Functions pipeline**. ADR 0051
 explicitly deferred "Data quality gates (Phase 3)" and ADR 0064 deliberately
@@ -57,8 +60,9 @@ machines), 0062 (SFN status tracking in CI), 0064 (data quality framework),
 - [ ] Demo CI (deploy-staging.yml) shows a red run when any FAIL-level check
   fires, using the existing Step Function status tracking from ADR 0062.
 - [ ] `pipeline report` generates a report even after a failed pipeline run. If
-  analytics tables are missing or validation failed, the report shows only the
-  Data Quality section with check results, not empty or misleading charts.
+  analytics tables are missing or validation has failed for a specific table,
+  only the sections that depend on that table are hidden. The Data Quality
+  section is always shown.
 - [ ] `pytest tests/test_quality.py` passes with scoped validation and
   per-connector table registrations.
 - [ ] No changes to the Step Functions ASL definition — validation is embedded
@@ -81,8 +85,8 @@ Add scoped validation so each pipeline step validates its own outputs. Embed
 validation calls into `cmd_run_connector` and `cmd_run_consolidate_analytics`
 at the appropriate points, respecting the FAIL/WARN semantics from ADR 0064
 (FAIL → non-zero exit, WARN → log warning). Make `pipeline report` handle
-partial data gracefully by showing only the Data Quality section when analytics
-tables are missing or validation has failed.
+partial data gracefully by hiding only sections whose data is broken or
+missing, always showing the Data Quality section.
 
 **Scope:**
 - [ ] Add `tables: list[str] | None = None` parameter to `run_validation()`.
@@ -92,10 +96,10 @@ tables are missing or validation has failed.
   to `run_validation(tables=...)`.
 - [ ] Register per-connector normalized table schemas in `TABLE_SCHEMAS`,
   `FRESHNESS_COLUMNS`, and `REQUIRED_FIELDS` in `quality.py`. Tables:
-  `ibkr_holdings`, `ibkr_cdc`, `t212_holdings`, `t212_cdc`, `xtb_holdings`,
-  `xtb_cdc`. Schemas come from `pipeline.normalized.models`.
+  `ibkr_snapshot`, `ibkr_cdc`, `trading212_snapshot`, `trading212_cdc`,
+  `xtb_snapshot`, `xtb_cdc`. Schemas come from `pipeline.normalized.models`.
 - [ ] Embed validation in `cmd_run_connector`: after transform, call
-  `run_validation(tables=[f"{connector.name}_holdings", f"{connector.name}_cdc"])`.
+  `run_validation(tables=[f"{connector.name}_snapshot", f"{connector.name}_cdc"])`.
   If exit code is non-zero, return it immediately (connector task fails).
 - [ ] Embed validation in `cmd_run_consolidate_analytics`: after consolidate
   and CDC consolidation, call

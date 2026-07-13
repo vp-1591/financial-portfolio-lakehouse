@@ -313,3 +313,87 @@ class TestCmdReport:
 
         assert result == 0
         assert (tmp_path / "data" / "report.html").exists()
+
+    def test_failed_table_hides_its_section(self, tmp_path: Path):
+        """Report hides sections whose dependency tables have FAIL in DQ."""
+        fernet_key = generate_key()
+        _build_all_gold_tables(fernet_key)
+        _write_minimal_cdc_tables(fernet_key)
+
+        # Overwrite data_quality with a FAIL for portfolio_holdings
+        from pipeline.analytics.models import data_quality_schema
+
+        config = get_storage()
+        now = datetime.now(timezone.utc)
+        dq_fail = pa.table(
+            {
+                "checked_at": [now],
+                "table_name": ["portfolio_holdings"],
+                "check_name": ["schema"],
+                "status": ["FAIL"],
+                "details": ["Schema mismatch"],
+                "threshold": [None],
+                "actual": [None],
+            },
+            schema=data_quality_schema,
+        )
+        write_deltalake(
+            config.analytics_path("data_quality"), dq_fail, mode="overwrite"
+        )
+
+        output = str(tmp_path / "report.html")
+        args = _make_args(output)
+        result = cmd_report(args)
+
+        assert result == 0
+        html = Path(output).read_text(encoding="utf-8")
+        # Portfolio-summary section is hidden (portfolio_holdings has FAIL)
+        assert 'id="portfolio-summary"' not in html
+        # Passive-income and cash-flow sections are still shown
+        assert 'id="passive-income"' in html
+        assert 'id="cash-flow"' in html
+        # Data quality section is always shown
+        assert 'id="data-quality"' in html
+
+    def test_all_tables_failed_shows_only_dq(self, tmp_path: Path):
+        """Report shows only the DQ section when all analytics tables are
+        empty/failed."""
+        from pipeline.analytics.models import data_quality_schema
+
+        config = get_storage()
+        now = datetime.now(timezone.utc)
+        # Write only a DQ table with FAILs for all gold tables
+        dq_fail = pa.table(
+            {
+                "checked_at": [now] * 5,
+                "table_name": [
+                    "portfolio_holdings",
+                    "portfolio_allocation",
+                    "dividend_income",
+                    "interest_income",
+                    "cash_flow_summary",
+                ],
+                "check_name": ["schema"] * 5,
+                "status": ["FAIL"] * 5,
+                "details": ["Schema mismatch"] * 5,
+                "threshold": [None] * 5,
+                "actual": [None] * 5,
+            },
+            schema=data_quality_schema,
+        )
+        write_deltalake(
+            config.analytics_path("data_quality"), dq_fail, mode="overwrite"
+        )
+
+        output = str(tmp_path / "report.html")
+        args = _make_args(output)
+        result = cmd_report(args)
+
+        assert result == 0
+        html = Path(output).read_text(encoding="utf-8")
+        # All analytics sections hidden
+        assert 'id="portfolio-summary"' not in html
+        assert 'id="passive-income"' not in html
+        assert 'id="cash-flow"' not in html
+        # DQ section always shown
+        assert 'id="data-quality"' in html

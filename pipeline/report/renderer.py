@@ -170,10 +170,26 @@ def _dq_summary(dq) -> tuple[str, str]:
     return summary_html, table_html
 
 
+def _dq_failed_tables(dq) -> set[str]:
+    """Return set of table names that have at least one FAIL in *dq*.
+
+    Returns an empty set if *dq* is empty.
+    """
+    import polars as pl
+
+    if dq.is_empty():
+        return set()
+    failed = dq.filter(pl.col("status") == "FAIL")
+    return set(failed["table_name"].to_list())
+
+
 def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     """Load gold tables, build charts, render HTML, write to *output_path*.
 
     Returns the HTML string.
+
+    Sections whose dependency tables are empty or have FAIL-level DQ checks
+    are hidden from the report.  The Data Quality section is always shown.
     """
     tables = load_all()
     holdings = tables["portfolio_holdings"]
@@ -183,54 +199,77 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     cash_flow = tables["cash_flow_summary"]
     dq = tables["data_quality"]
 
-    # Check if we have any data at all
-    has_data = any(not t.is_empty() for t in tables.values())
-    if not has_data:
+    # Determine which sections are visible based on data presence and DQ status.
+    # A section is hidden when ALL its dependency tables are empty OR when any
+    # dependency table has a FAIL in the DQ results.
+    failed = _dq_failed_tables(dq)
+    show_portfolio = (not holdings.is_empty() or not allocation.is_empty()) and not (
+        failed & {"portfolio_holdings", "portfolio_allocation"}
+    )
+    show_passive = (not dividends.is_empty() or not interest.is_empty()) and not (
+        failed & {"dividend_income", "interest_income"}
+    )
+    show_cash_flow = not cash_flow.is_empty() and "cash_flow_summary" not in failed
+
+    # Raise only if there is truly nothing to show (no data, no DQ)
+    if not any([show_portfolio, show_passive, show_cash_flow]) and dq.is_empty():
         raise RuntimeError(
             "No analytics tables found. Run 'pipeline analytics' and "
             "'pipeline validate' first to populate gold tables."
         )
 
     # --- Portfolio summary ---
-    # Prefer portfolio_holdings for absolute values; fall back to allocation only
-    use_holdings = not holdings.is_empty()
-    base_cur = base_currency
-    if use_holdings and not base_cur:
-        base_cur = holdings["base_currency"][0]
-
     summary_cards: list[dict[str, str]] = []
-    if use_holdings:
-        total = holdings["value_base"].sum()
-        summary_cards.append(
-            {"label": "Total Value", "value": f"{total:,.2f} {base_cur}"}
-        )
-
     summary_table_html = ""
-    if use_holdings:
-        summary_table_html = _summary_table(holdings)
-    elif not allocation.is_empty():
-        summary_table_html = "<p><em>Portfolio holdings not available; showing allocation percentages only.</em></p>"
-        # Fall back: render allocation table
-        rows_html = []
-        for row in allocation.sort("percentage", descending=True).iter_rows(named=True):
-            rows_html.append(
-                f"<tr><td>{row['ticker']}</td><td>{row['broker']}</td>"
-                f"<td>{row['percentage']:.2f}%</td></tr>"
+    base_cur = base_currency
+
+    if show_portfolio:
+        use_holdings = not holdings.is_empty()
+        if use_holdings and not base_cur:
+            base_cur = holdings["base_currency"][0]
+
+        if use_holdings:
+            total = holdings["value_base"].sum()
+            summary_cards.append(
+                {"label": "Total Value", "value": f"{total:,.2f} {base_cur}"}
             )
-        summary_table_html += (
-            "<table><tr><th>Ticker</th><th>Broker</th><th>%</th></tr>"
-            + "".join(rows_html)
-            + "</table>"
-        )
+
+        if use_holdings:
+            summary_table_html = _summary_table(holdings)
+        elif not allocation.is_empty():
+            summary_table_html = "<p><em>Portfolio holdings not available; showing allocation percentages only.</em></p>"
+            rows_html = []
+            for row in allocation.sort("percentage", descending=True).iter_rows(
+                named=True
+            ):
+                rows_html.append(
+                    f"<tr><td>{row['ticker']}</td><td>{row['broker']}</td>"
+                    f"<td>{row['percentage']:.2f}%</td></tr>"
+                )
+            summary_table_html += (
+                "<table><tr><th>Ticker</th><th>Broker</th><th>%</th></tr>"
+                + "".join(rows_html)
+                + "</table>"
+            )
 
     # --- Charts ---
-    fig_allocation_broker = allocation_by_broker(holdings) if use_holdings else None
-    fig_allocation_type = (
-        allocation_by_position_type(holdings) if use_holdings else None
+    fig_allocation_broker = (
+        allocation_by_broker(holdings)
+        if show_portfolio and not holdings.is_empty()
+        else None
     )
-    fig_allocation_currency = allocation_by_currency(holdings) if use_holdings else None
-    fig_passive = passive_income_timeline(dividends, interest)
-    fig_cash_flow = cash_flow_breakdown(cash_flow)
+    fig_allocation_type = (
+        allocation_by_position_type(holdings)
+        if show_portfolio and not holdings.is_empty()
+        else None
+    )
+    fig_allocation_currency = (
+        allocation_by_currency(holdings)
+        if show_portfolio and not holdings.is_empty()
+        else None
+    )
+    fig_passive = passive_income_timeline(dividends, interest) if show_passive else None
+    fig_cash_flow = cash_flow_breakdown(cash_flow) if show_cash_flow else None
     fig_dq = data_quality_chart(dq)
 
     # Collect non-None figures for inline-plotlyjs handling
@@ -278,9 +317,11 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
             charts[name] = None
 
     # --- Passive income table ---
-    passive_income_table_html = _passive_income_table(dividends, interest)
+    passive_income_table_html = (
+        _passive_income_table(dividends, interest) if show_passive else ""
+    )
 
-    # --- Data quality ---
+    # --- Data quality (always shown) ---
     dq_summary_html, dq_table_html = _dq_summary(dq)
 
     # --- Render template ---
@@ -298,6 +339,9 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
         passive_income_table_html=passive_income_table_html,
         dq_summary_html=dq_summary_html,
         dq_table_html=dq_table_html,
+        show_portfolio=show_portfolio,
+        show_passive=show_passive,
+        show_cash_flow=show_cash_flow,
     )
 
     # Write to file

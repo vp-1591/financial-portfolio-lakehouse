@@ -29,6 +29,7 @@ from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     consolidated_holdings_schema,
+    ibkr_snapshot_normalized_schema,
 )
 from pipeline.storage import LocalBackend, StorageConfig, get_storage, use_storage
 
@@ -165,6 +166,12 @@ def _setup_storage(tmp_path: Path) -> None:
     for subdir in [
         "normalized/consolidated_holdings",
         "normalized/cdc_events",
+        "normalized/ibkr_snapshot",
+        "normalized/ibkr_cdc",
+        "normalized/trading212_snapshot",
+        "normalized/trading212_cdc",
+        "normalized/xtb_snapshot",
+        "normalized/xtb_cdc",
         "analytics/portfolio_allocation",
         "analytics/portfolio_holdings",
         "analytics/data_quality",
@@ -631,3 +638,116 @@ class TestDataQualityRoundTrip:
         assert "required_nulls" in check_names
         assert "row_count_stability" in check_names
         assert "freshness" in check_names
+
+
+# ---------------------------------------------------------------------------
+# Scoped validation tests
+# ---------------------------------------------------------------------------
+
+
+def _make_ibkr_snapshot_table(fernet_key: bytes) -> pa.Table:
+    """Build a minimal ibkr_snapshot table."""
+    now = datetime.now(timezone.utc)
+    return pa.table(
+        {
+            "fetched_at": [now],
+            "account_id": ["U123456"],
+            "position_type": ["EQUITY"],
+            "label": ["VWCE"],
+            "asset_class": ["STK"],
+            "currency": ["EUR"],
+            "value": [encrypt_float(5000.0, fernet_key)],
+            "value_currency": ["EUR"],
+            "isin": ["IE00BK5BQT80"],
+            "description": ["Vanguard FTSE All-World"],
+            "security_currency": ["EUR"],
+        },
+        schema=ibkr_snapshot_normalized_schema,
+    )
+
+
+class TestScopedValidation:
+    """Tests for run_validation with the tables parameter."""
+
+    def test_scoped_validates_only_specified_tables(self, tmp_path: Path) -> None:
+        """When tables is specified, only those tables are validated."""
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        # Write only ibkr_snapshot — other tables are missing
+        snapshot = _make_ibkr_snapshot_table(fernet_key)
+        write_deltalake(
+            storage.normalized_path("ibkr_snapshot"), snapshot, mode="overwrite"
+        )
+
+        exit_code = run_validation(
+            fernet_key=fernet_key,
+            freshness_days=30,
+            tables=["ibkr_snapshot"],
+        )
+        assert exit_code == 0
+
+        # Verify only ibkr_snapshot checks were written to data_quality
+        from deltalake import DeltaTable
+
+        dq_dt = DeltaTable(storage.analytics_path("data_quality"))
+        result = dq_dt.to_pyarrow_table()
+        table_names = set(result.column("table_name").to_pylist())
+        assert table_names == {"ibkr_snapshot"}
+
+    def test_unknown_table_name_warns(self, tmp_path: Path) -> None:
+        """An unknown table name in tables list produces a WARN result."""
+        fernet_key = generate_key()
+        exit_code = run_validation(
+            fernet_key=fernet_key,
+            freshness_days=30,
+            tables=["nonexistent_table"],
+        )
+        # WARN without fail_on_warn → exit 0
+        assert exit_code == 0
+
+        from deltalake import DeltaTable
+
+        storage = get_storage()
+        dq_dt = DeltaTable(storage.analytics_path("data_quality"))
+        result = dq_dt.to_pyarrow_table()
+        statuses = result.column("status").to_pylist()
+        assert "WARN" in statuses
+        details = result.column("details").to_pylist()
+        assert any("Unknown table name" in d for d in details)
+
+    def test_per_connector_schema_pass(self, tmp_path: Path) -> None:
+        """Per-connector snapshot schema check passes on valid data."""
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        snapshot = _make_ibkr_snapshot_table(fernet_key)
+        write_deltalake(
+            storage.normalized_path("ibkr_snapshot"), snapshot, mode="overwrite"
+        )
+
+        exit_code = run_validation(
+            fernet_key=fernet_key,
+            freshness_days=30,
+            tables=["ibkr_snapshot"],
+        )
+        assert exit_code == 0
+
+    def test_per_connector_schema_fail_on_dropped_column(self, tmp_path: Path) -> None:
+        """Per-connector schema check fails when a column is missing."""
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        # Write snapshot with a missing column
+        snapshot = _make_ibkr_snapshot_table(fernet_key)
+        bad_snapshot = snapshot.drop_columns(["currency"])
+        write_deltalake(
+            storage.normalized_path("ibkr_snapshot"), bad_snapshot, mode="overwrite"
+        )
+
+        exit_code = run_validation(
+            fernet_key=fernet_key,
+            freshness_days=30,
+            tables=["ibkr_snapshot"],
+        )
+        assert exit_code == 1

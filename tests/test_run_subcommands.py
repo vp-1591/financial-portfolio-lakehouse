@@ -172,6 +172,7 @@ class TestCmdRunConnector:
         rc = cmd_run_connector(args)
         assert rc == 0
 
+    @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=0)
     @patch("pipeline.run.load_key", return_value=b"test-key")
@@ -182,13 +183,19 @@ class TestCmdRunConnector:
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
+        mock_validate: MagicMock,
     ) -> None:
         args = argparse.Namespace(connector="ibkr")
         rc = cmd_run_connector(args)
         assert rc == 0
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
+        mock_validate.assert_called_once_with(
+            fernet_key=b"test-key",
+            tables=["ibkr_snapshot", "ibkr_cdc"],
+        )
 
+    @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=1)
     @patch("pipeline.run.load_key", return_value=b"test-key")
@@ -199,12 +206,32 @@ class TestCmdRunConnector:
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
+        mock_validate: MagicMock,
     ) -> None:
-        """If fetch_connector returns non-zero, transform is skipped."""
+        """If fetch_connector returns non-zero, transform and validate are skipped."""
         args = argparse.Namespace(connector="ibkr")
         rc = cmd_run_connector(args)
         assert rc == 1
         mock_transform.assert_not_called()
+        mock_validate.assert_not_called()
+
+    @patch("pipeline.run.run_validation", return_value=1)
+    @patch("pipeline.run.transform_connector", return_value=0)
+    @patch("pipeline.run.fetch_connector", return_value=0)
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    @patch("pipeline.run.is_enabled", return_value=True)
+    def test_validation_failure_returns_nonzero(
+        self,
+        mock_enabled: MagicMock,
+        mock_key: MagicMock,
+        mock_fetch: MagicMock,
+        mock_transform: MagicMock,
+        mock_validate: MagicMock,
+    ) -> None:
+        """If run_validation returns non-zero, cmd_run_connector returns it."""
+        args = argparse.Namespace(connector="ibkr")
+        rc = cmd_run_connector(args)
+        assert rc == 1
 
     def test_xtb_without_file_returns_1(self, monkeypatch) -> None:
         """XTB without --xtb-file in dedicated subcommand returns 1."""
@@ -213,6 +240,7 @@ class TestCmdRunConnector:
         rc = cmd_run_connector(args)
         assert rc == 1
 
+    @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=0)
     @patch("pipeline.run.load_key", return_value=b"test-key")
@@ -223,10 +251,15 @@ class TestCmdRunConnector:
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
+        mock_validate: MagicMock,
     ) -> None:
         args = argparse.Namespace(connector="xtb", xtb_file=["report.xlsx"])
         rc = cmd_run_connector(args)
         assert rc == 0
+        mock_validate.assert_called_once_with(
+            fernet_key=b"test-key",
+            tables=["xtb_snapshot", "xtb_cdc"],
+        )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
 
@@ -237,12 +270,18 @@ class TestCmdRunConnector:
 
 
 class TestCmdRunConsolidateAnalytics:
-    """cmd_run_consolidate_analytics runs consolidate then analytics."""
+    """cmd_run_consolidate_analytics runs consolidate, validates silver, then analytics."""
 
+    @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
-    def test_calls_consolidate_then_analytics(
-        self, mock_consolidate: MagicMock, mock_analytics: MagicMock
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_calls_consolidate_validate_silver_then_analytics(
+        self,
+        mock_key: MagicMock,
+        mock_consolidate: MagicMock,
+        mock_analytics: MagicMock,
+        mock_validate: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -254,11 +293,33 @@ class TestCmdRunConsolidateAnalytics:
         assert rc == 0
         mock_consolidate.assert_called_once_with(args)
         mock_analytics.assert_called_once_with(args)
+        # run_validation called twice: silver then gold
+        assert mock_validate.call_count == 2
+        mock_validate.assert_any_call(
+            fernet_key=b"test-key",
+            tables=["consolidated_holdings", "cdc_events"],
+        )
+        mock_validate.assert_any_call(
+            fernet_key=b"test-key",
+            tables=[
+                "portfolio_allocation",
+                "portfolio_holdings",
+                "dividend_income",
+                "interest_income",
+                "cash_flow_summary",
+            ],
+        )
 
+    @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=1)
+    @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_consolidate_failure_skips_analytics(
-        self, mock_consolidate: MagicMock, mock_analytics: MagicMock
+        self,
+        mock_key: MagicMock,
+        mock_consolidate: MagicMock,
+        mock_analytics: MagicMock,
+        mock_validate: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -269,6 +330,50 @@ class TestCmdRunConsolidateAnalytics:
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
         mock_analytics.assert_not_called()
+        mock_validate.assert_not_called()
+
+    @patch("pipeline.run.cmd_analytics", return_value=0)
+    @patch("pipeline.run.run_validation", return_value=1)
+    @patch("pipeline.run.cmd_consolidate", return_value=0)
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_silver_validation_failure_skips_analytics(
+        self,
+        mock_key: MagicMock,
+        mock_consolidate: MagicMock,
+        mock_validate: MagicMock,
+        mock_analytics: MagicMock,
+    ) -> None:
+        """Silver validation failure prevents analytics from running."""
+        args = argparse.Namespace(
+            target_currency="EUR",
+            fx_rate=[],
+            isin=[],
+            isin_map_file=[],
+        )
+        rc = cmd_run_consolidate_analytics(args)
+        assert rc == 1
+        mock_analytics.assert_not_called()
+
+    @patch("pipeline.run.cmd_analytics", return_value=0)
+    @patch("pipeline.run.run_validation", side_effect=[0, 1])
+    @patch("pipeline.run.cmd_consolidate", return_value=0)
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_gold_validation_failure_returns_nonzero(
+        self,
+        mock_key: MagicMock,
+        mock_consolidate: MagicMock,
+        mock_validate: MagicMock,
+        mock_analytics: MagicMock,
+    ) -> None:
+        """Gold validation failure after analytics returns non-zero."""
+        args = argparse.Namespace(
+            target_currency="EUR",
+            fx_rate=[],
+            isin=[],
+            isin_map_file=[],
+        )
+        rc = cmd_run_consolidate_analytics(args)
+        assert rc == 1
 
 
 # ---------------------------------------------------------------------------
