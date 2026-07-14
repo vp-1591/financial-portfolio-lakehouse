@@ -64,28 +64,26 @@ def allocation_by_position_type(holdings: pl.DataFrame) -> go.Figure:
 
 
 def allocation_by_currency(holdings: pl.DataFrame) -> go.Figure:
-    """Bar chart: portfolio value by native currency."""
+    """Donut chart: portfolio value by instrument trading currency."""
     if holdings.is_empty():
-        return _empty_figure("Allocation by Currency")
+        return _empty_figure("Currency Exposure")
     agg = (
-        holdings.group_by("currency")
+        holdings.group_by("security_currency")
         .agg(pl.col("value_base").sum())
         .sort("value_base", descending=True)
     )
     fig = go.Figure(
         data=[
-            go.Bar(
-                x=agg["currency"].to_list(),
-                y=agg["value_base"].to_list(),
-                text=agg["value_base"].round(2).to_list(),
-                textposition="auto",
+            go.Pie(
+                labels=agg["security_currency"].to_list(),
+                values=agg["value_base"].to_list(),
+                textinfo="label+percent",
+                hole=0.4,
             )
         ],
         layout=go.Layout(
-            title="Allocation by Currency",
-            xaxis_title="Currency",
-            yaxis_title="Value (base)",
-            margin=dict(l=20, r=20, t=40, b=40),
+            title="Currency Exposure",
+            margin=dict(l=20, r=20, t=40, b=20),
         ),
     )
     return fig
