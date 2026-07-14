@@ -93,15 +93,14 @@ def ibkr_normalized_snapshot(
             "position_type": ["EQUITY", "EQUITY", "CASH"],
             "label": ["VWCE", "AAPL", "CASH EUR"],
             "asset_class": ["STK", "STK", "CASH"],
-            "value": [
+            "security_value": [
                 encrypt_float(5000.0, fernet_key),
                 encrypt_float(2700.0, fernet_key),  # 3000 USD * 0.9 EUR/USD
                 encrypt_float(2000.0, fernet_key),
             ],
-            "value_currency": ["EUR", "USD", "EUR"],
+            "security_ccy": ["EUR", "USD", "EUR"],
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
             "description": ["Vanguard FTSE All-World", "Apple Inc", "Cash EUR"],
-            "security_currency": ["EUR", "USD", "EUR"],
         },
         schema=ibkr_snapshot_normalized_schema,
     )

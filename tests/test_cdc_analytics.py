@@ -37,18 +37,17 @@ def _make_cdc_table(
     """Build a cdc_events table from row dicts, encrypting binary columns.
 
     Each row dict should have all required CDC fields.  Encrypted columns
-    (cash_amount, amount_base, fx_rate_to_base, etc.) should contain plain
+    (cash_amount, target_value, target_fx_rate, etc.) should contain plain
     floats — the helper encrypts them automatically.
     """
     now = datetime.now(timezone.utc)
     encrypt_columns = [
         "cash_amount",
-        "amount_base",
-        "fx_rate_to_base",
+        "target_value",
+        "target_fx_rate",
         "gross_amount",
         "fee_amount",
         "tax_amount",
-        "net_amount",
         "quantity",
         "price",
     ]
@@ -64,7 +63,7 @@ def _make_cdc_table(
             "event_type": row.get("event_type", "DIVIDEND"),
             "raw_event_type": row.get("raw_event_type", ""),
             "event_datetime": row.get("event_datetime", "2026-01-15"),
-            "value_currency": row.get("value_currency", "EUR"),
+            "security_ccy": row.get("security_ccy", "EUR"),
         }
         # Add encrypted columns as plain floats — build_normalized_table
         # will encrypt them.
@@ -78,7 +77,7 @@ def _make_cdc_table(
         record["isin"] = row.get("isin")
         record["description"] = row.get("description")
         record["side"] = row.get("side")
-        record["base_currency"] = row.get("base_currency")
+        record["target_ccy"] = row.get("target_ccy")
 
         prepared_rows.append(record)
 
@@ -164,13 +163,13 @@ class TestBuildDividendIncome:
                     "event_type": "DIVIDEND",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
                     "isin": "IE00BK5BQT80",
                     "description": "Vanguard dividend",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 }
             ],
         )
@@ -200,31 +199,31 @@ class TestBuildDividendIncome:
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
                 {
                     "event_type": "INTEREST",
                     "event_id": "int-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 10.0,
-                    "base_currency": "EUR",
-                    "amount_base": 10.0,
+                    "target_ccy": "EUR",
+                    "target_value": 10.0,
                 },
                 {
                     "event_type": "DEPOSIT",
                     "event_id": "dep-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 5000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 5000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 5000.0,
                 },
             ],
         )
@@ -259,39 +258,39 @@ class TestBuildDividendIncome:
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
                     "isin": "IE00BK5BQT80",
                     "description": "Vanguard dividend",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
                 {
                     "event_type": "DIVIDEND",
                     "event_id": "div-2",
                     "event_datetime": "2026-04-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 30.0,
                     "ticker": "VWCE",
                     "isin": "IE00BK5BQT80",
                     "description": "Vanguard dividend",
-                    "base_currency": "EUR",
-                    "amount_base": 30.0,
+                    "target_ccy": "EUR",
+                    "target_value": 30.0,
                 },
                 {
                     "event_type": "DIVIDEND",
                     "event_id": "div-3",
                     "event_datetime": "2026-03-15",
                     "broker": "T212",
-                    "value_currency": "USD",
+                    "security_ccy": "USD",
                     "cash_amount": 100.0,
                     "ticker": "AAPL",
                     "isin": "US0378331005",
                     "description": "Apple dividend",
-                    "base_currency": "EUR",
-                    "amount_base": 90.0,
+                    "target_ccy": "EUR",
+                    "target_value": 90.0,
                 },
             ],
         )
@@ -308,7 +307,7 @@ class TestBuildDividendIncome:
         quarters = set(result.column("period_quarter").to_pylist())
         assert "2026-Q1" in quarters
 
-    def test_sums_cash_amount_and_amount_base(
+    def test_sums_cash_amount_and_target_value(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
         """Two dividends in the same group are summed."""
@@ -331,22 +330,22 @@ class TestBuildDividendIncome:
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
                 {
                     "event_type": "DIVIDEND",
                     "event_id": "div-2",
                     "event_datetime": "2026-03-15",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 10.0,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 10.0,
+                    "target_ccy": "EUR",
+                    "target_value": 10.0,
                 },
             ],
         )
@@ -355,13 +354,13 @@ class TestBuildDividendIncome:
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.num_rows == 1
         assert abs(result.column("cash_amount")[0].as_py() - 52.5) < 0.01
-        assert abs(result.column("amount_base")[0].as_py() - 52.5) < 0.01
+        assert abs(result.column("target_value")[0].as_py() - 52.5) < 0.01
         assert result.column("event_count")[0].as_py() == 2
 
-    def test_handles_null_amount_base_with_fx_rate_fallback(
+    def test_handles_null_target_value_with_fx_rate_fallback(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """When amount_base is null but fx_rate_to_base exists, use cash_amount * fx_rate_to_base."""
+        """When target_value is null but target_fx_rate exists, use cash_amount * target_fx_rate."""
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -381,12 +380,12 @@ class TestBuildDividendIncome:
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "USD",
+                    "security_ccy": "USD",
                     "cash_amount": 100.0,
                     "ticker": "AAPL",
-                    "base_currency": "EUR",
-                    "amount_base": None,  # Null: should fall back to 100 * 0.9 = 90
-                    "fx_rate_to_base": 0.9,
+                    "target_ccy": "EUR",
+                    "target_value": None,  # Null: should fall back to 100 * 0.9 = 90
+                    "target_fx_rate": 0.9,
                 },
             ],
         )
@@ -395,13 +394,13 @@ class TestBuildDividendIncome:
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.num_rows == 1
         assert abs(result.column("cash_amount")[0].as_py() - 100.0) < 0.01
-        # amount_base should be 100 * 0.9 = 90.0
-        assert abs(result.column("amount_base")[0].as_py() - 90.0) < 0.01
+        # target_value should be 100 * 0.9 = 90.0
+        assert abs(result.column("target_value")[0].as_py() - 90.0) < 0.01
 
-    def test_handles_completely_null_amount_base(
+    def test_handles_completely_null_target_value(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """When both amount_base and fx_rate_to_base are null, amount_base stays null."""
+        """When both target_value and target_fx_rate are null, target_value stays null."""
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -421,12 +420,12 @@ class TestBuildDividendIncome:
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "XTB",
-                    "value_currency": "PLN",
+                    "security_ccy": "PLN",
                     "cash_amount": 50.0,
                     "ticker": "CD Projekt",
-                    "base_currency": None,
-                    "amount_base": None,
-                    "fx_rate_to_base": None,
+                    "target_ccy": None,
+                    "target_value": None,
+                    "target_fx_rate": None,
                 },
             ],
         )
@@ -435,7 +434,7 @@ class TestBuildDividendIncome:
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.num_rows == 1
         assert abs(result.column("cash_amount")[0].as_py() - 50.0) < 0.01
-        assert result.column("amount_base")[0].as_py() is None
+        assert result.column("target_value")[0].as_py() is None
 
     def test_writes_delta_table(self, fernet_key: bytes, tmp_path: Path) -> None:
         """The result is written to the analytics Delta table and can be read back."""
@@ -458,11 +457,11 @@ class TestBuildDividendIncome:
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
             ],
         )
@@ -528,10 +527,10 @@ class TestBuildInterestIncome:
                     "event_type": "INTEREST",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 35.0,
-                    "base_currency": "EUR",
-                    "amount_base": 35.0,
+                    "target_ccy": "EUR",
+                    "target_value": 35.0,
                 },
             ],
         )
@@ -561,21 +560,21 @@ class TestBuildInterestIncome:
                     "event_id": "int-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 35.0,
-                    "base_currency": "EUR",
-                    "amount_base": 35.0,
+                    "target_ccy": "EUR",
+                    "target_value": 35.0,
                 },
                 {
                     "event_type": "DIVIDEND",
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
             ],
         )
@@ -608,20 +607,20 @@ class TestBuildInterestIncome:
                     "event_id": "int-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 35.0,
-                    "base_currency": "EUR",
-                    "amount_base": 35.0,
+                    "target_ccy": "EUR",
+                    "target_value": 35.0,
                 },
                 {
                     "event_type": "INTEREST",
                     "event_id": "int-2",
                     "event_datetime": "2026-04-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 20.0,
-                    "base_currency": "EUR",
-                    "amount_base": 20.0,
+                    "target_ccy": "EUR",
+                    "target_value": 20.0,
                 },
             ],
         )
@@ -651,20 +650,20 @@ class TestBuildInterestIncome:
                     "event_id": "int-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 35.0,
-                    "base_currency": "EUR",
-                    "amount_base": 35.0,
+                    "target_ccy": "EUR",
+                    "target_value": 35.0,
                 },
                 {
                     "event_type": "INTEREST",
                     "event_id": "int-2",
                     "event_datetime": "2026-03-15",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 15.0,
-                    "base_currency": "EUR",
-                    "amount_base": 15.0,
+                    "target_ccy": "EUR",
+                    "target_value": 15.0,
                 },
             ],
         )
@@ -673,7 +672,7 @@ class TestBuildInterestIncome:
         result = build_interest_income(fernet_key=fernet_key)
         assert result.num_rows == 1
         assert abs(result.column("cash_amount")[0].as_py() - 50.0) < 0.01
-        assert abs(result.column("amount_base")[0].as_py() - 50.0) < 0.01
+        assert abs(result.column("target_value")[0].as_py() - 50.0) < 0.01
         assert result.column("event_count")[0].as_py() == 2
 
 
@@ -705,10 +704,10 @@ class TestBuildCashFlowSummary:
                     "event_type": "DEPOSIT",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 5000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 5000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 5000.0,
                 },
             ],
         )
@@ -737,10 +736,10 @@ class TestBuildCashFlowSummary:
                 "event_id": f"{etype.lower()}-1",
                 "event_datetime": "2026-03-01",
                 "broker": "IBKR",
-                "value_currency": "EUR",
+                "security_ccy": "EUR",
                 "cash_amount": 100.0,
-                "base_currency": "EUR",
-                "amount_base": 100.0,
+                "target_ccy": "EUR",
+                "target_value": 100.0,
             }
             for etype in event_types
         ]
@@ -774,31 +773,31 @@ class TestBuildCashFlowSummary:
                     "event_id": "dep-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 5000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 5000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 5000.0,
                 },
                 {
                     "event_type": "DEPOSIT",
                     "event_id": "dep-2",
                     "event_datetime": "2026-04-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 3000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 3000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 3000.0,
                 },
                 {
                     "event_type": "DIVIDEND",
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
             ],
         )
@@ -828,20 +827,20 @@ class TestBuildCashFlowSummary:
                     "event_id": "dep-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 5000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 5000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 5000.0,
                 },
                 {
                     "event_type": "DEPOSIT",
                     "event_id": "dep-2",
                     "event_datetime": "2026-03-15",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 2000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 2000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 2000.0,
                 },
             ],
         )
@@ -850,7 +849,7 @@ class TestBuildCashFlowSummary:
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.num_rows == 1
         assert abs(result.column("cash_amount")[0].as_py() - 7000.0) < 0.01
-        assert abs(result.column("amount_base")[0].as_py() - 7000.0) < 0.01
+        assert abs(result.column("target_value")[0].as_py() - 7000.0) < 0.01
 
     def test_event_count_matches_source(
         self, fernet_key: bytes, tmp_path: Path
@@ -875,31 +874,31 @@ class TestBuildCashFlowSummary:
                     "event_id": "dep-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 5000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 5000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 5000.0,
                 },
                 {
                     "event_type": "DEPOSIT",
                     "event_id": "dep-2",
                     "event_datetime": "2026-03-15",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 2000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 2000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 2000.0,
                 },
                 {
                     "event_type": "DIVIDEND",
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
             ],
         )
@@ -946,11 +945,11 @@ class TestDateParsing:
                     "event_id": "div-1",
                     "event_datetime": "2026-03-01 00:00:00",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 42.5,
                     "ticker": "VWCE",
-                    "base_currency": "EUR",
-                    "amount_base": 42.5,
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
                 },
             ],
         )
@@ -982,10 +981,10 @@ class TestDateParsing:
                     "event_id": "dep-1",
                     "event_datetime": "2024-01-15",
                     "broker": "XTB",
-                    "value_currency": "PLN",
+                    "security_ccy": "PLN",
                     "cash_amount": 1000.0,
-                    "base_currency": "EUR",
-                    "amount_base": 230.0,
+                    "target_ccy": "EUR",
+                    "target_value": 230.0,
                 },
             ],
         )
@@ -1016,10 +1015,10 @@ class TestDateParsing:
                     "event_id": "trade-1",
                     "event_datetime": "2024-01-15T10:30:00Z",
                     "broker": "T212",
-                    "value_currency": "USD",
+                    "security_ccy": "USD",
                     "cash_amount": 1500.0,
-                    "base_currency": "EUR",
-                    "amount_base": 1350.0,
+                    "target_ccy": "EUR",
+                    "target_value": 1350.0,
                 },
             ],
         )
@@ -1050,10 +1049,10 @@ class TestDateParsing:
                     "event_id": "int-1",
                     "event_datetime": "20260204",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 12.50,
-                    "base_currency": "EUR",
-                    "amount_base": 12.50,
+                    "target_ccy": "EUR",
+                    "target_value": 12.50,
                 },
             ],
         )
@@ -1086,10 +1085,10 @@ class TestDateParsing:
                     "event_id": "trade-1",
                     "event_datetime": "20260702;022904",
                     "broker": "IBKR",
-                    "value_currency": "USD",
+                    "security_ccy": "USD",
                     "cash_amount": -1501.0,
-                    "base_currency": "EUR",
-                    "amount_base": -1350.9,
+                    "target_ccy": "EUR",
+                    "target_value": -1350.9,
                 },
             ],
         )
@@ -1122,10 +1121,10 @@ class TestDateParsing:
                     "event_id": "int-1",
                     "event_datetime": "2026-02-04T00:00:00Z",
                     "broker": "IBKR",
-                    "value_currency": "EUR",
+                    "security_ccy": "EUR",
                     "cash_amount": 12.50,
-                    "base_currency": "EUR",
-                    "amount_base": 12.50,
+                    "target_ccy": "EUR",
+                    "target_value": 12.50,
                 },
             ],
         )

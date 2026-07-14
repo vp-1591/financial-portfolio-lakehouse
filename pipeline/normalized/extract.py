@@ -60,14 +60,14 @@ def extract_holdings(
 
     df = pl.from_arrow(table)
 
-    # Decrypt value column using Polars map_elements (batch operation)
+    # Decrypt security_value column using Polars map_elements (batch operation)
     df = df.with_columns(
-        pl.col("value")
+        pl.col("security_value")
         .map_elements(
             lambda v: decrypt_float(v, fernet_key),
             return_dtype=pl.Float64,
         )
-        .alias("value_decrypted")
+        .alias("security_value_decrypted")
     )
 
     # Delegate to the connector's extract_holdings method

@@ -25,7 +25,6 @@ from pipeline.connectors.trading212.client import (
     instrument_currency_by_ticker,
     instrument_isin_by_ticker,
     instrument_name_by_ticker,
-    position_currency,
     position_isin,
     position_label,
     position_name,
@@ -36,6 +35,8 @@ from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     trading212_snapshot_normalized_schema,
 )
+
+_SNAPSHOT_ENCRYPT_COLUMNS = ["security_value"]
 
 logger = logging.getLogger(__name__)
 
@@ -89,14 +90,11 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "label": position_label(position),
                 "name": position_name(position, instrument_names),
                 "asset_class": "EQUITY",
-                "value": value,
-                "value_currency": position_currency(
+                "security_value": value,
+                "security_ccy": position_security_currency(
                     position, instrument_currencies, currency
                 ),
                 "isin": position_isin(position, instrument_isins),
-                "security_currency": position_security_currency(
-                    position, instrument_currencies, currency
-                ),
             }
         )
 
@@ -110,10 +108,9 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "label": f"CASH {currency}".rstrip(),
                 "name": f"Cash {currency}".rstrip(),
                 "asset_class": "CASH",
-                "value": cash_balance,
-                "value_currency": currency,
+                "security_value": cash_balance,
+                "security_ccy": currency,
                 "isin": "",
-                "security_currency": currency,
             }
         )
 
@@ -121,7 +118,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         records,
         trading212_snapshot_normalized_schema,
         fernet_key,
-        encrypt_columns=["value"],
+        encrypt_columns=_SNAPSHOT_ENCRYPT_COLUMNS,
     )
 
 
@@ -136,9 +133,8 @@ _CDC_ENCRYPT_COLUMNS = [
     "gross_amount",
     "fee_amount",
     "tax_amount",
-    "net_amount",
-    "fx_rate_to_base",
-    "amount_base",
+    "target_fx_rate",
+    "target_value",
 ]
 
 _T212_TXN_TYPE_MAP = {
@@ -345,14 +341,13 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
     ).cast(pl.Float64)
     # wallet_fx_rate: the rate from wallet currency to security trading currency.
     # E.g. for a PLN wallet buying a USD security, this is the PLN→USD rate.
-    # Kept under the old column name fx_rate_to_base for schema compatibility;
-    # renamed to target_fx_rate in Phase 2.
+    # Consumed here for wallet→security conversion; NOT stored in the output
+    # schema (target_fx_rate is computed later by normalize_currency).
     fx_rate = pl.coalesce([wallet_impact.struct.field("fxRate"), pl.lit(1.0)]).cast(
         pl.Float64
     )
 
     # security_ccy: the instrument's trading currency (e.g. USD for SPYI).
-    # This replaces the old value_currency which was the wallet currency.
     security_ccy = pl.coalesce(
         [instrument.struct.field("currency"), order.struct.field("currency")]
     ).cast(pl.Utf8)
@@ -373,11 +368,7 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         event_datetime=pl.coalesce(
             [order.struct.field("createdAt"), fill.struct.field("filledAt")]
         ),
-        # Phase 1: value_currency is now the security's trading currency,
-        # not the wallet currency.
-        value_currency=security_ccy,
-        # Phase 1: cash_amount is now in security ccy, converted from wallet
-        # ccy using walletImpact.fxRate.
+        security_ccy=security_ccy,
         cash_amount=cash_amount_security_ccy,
         settle_date=pl.coalesce(
             [fill.struct.field("filledAt"), order.struct.field("createdAt")]
@@ -399,18 +390,11 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         ).cast(pl.Float64),
         fee_amount=pl.Series("fee_amount", fee_amounts, dtype=pl.Float64),
         tax_amount=pl.Series("tax_amount", tax_amounts, dtype=pl.Float64),
-        # Phase 1: net_amount is now in security ccy, matching cash_amount.
-        net_amount=cash_amount_security_ccy,
-        # Phase 1: base_currency is now the security's trading currency,
-        # matching value_currency and amount_base.
-        base_currency=security_ccy,
-        # Phase 1: fx_rate_to_base is actually the wallet→security rate.
-        # Kept under old column name; renamed to target_fx_rate in Phase 2.
-        fx_rate_to_base=fx_rate,
-        # Phase 1: amount_base is now the cash amount in security ccy
-        # (= cash_amount for same-ccy trades). Kept under old column name;
-        # renamed to target_value in Phase 2.
-        amount_base=cash_amount_security_ccy,
+        # target_fx_rate, target_value, target_ccy are null for T212 orders;
+        # they are populated by the normalize_currency step.
+        target_fx_rate=pl.lit(None),
+        target_value=pl.lit(None),
+        target_ccy=pl.lit(None),
     )
 
 
@@ -457,7 +441,7 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
         event_type=pl.lit("DIVIDEND"),
         raw_event_type=pl.coalesce([pl.col("type"), pl.lit("DIVIDEND")]),
         event_datetime=pl.col("paidOn").cast(pl.Utf8),
-        value_currency=pl.coalesce([pl.col("currency"), pl.col("tickerCurrency")]),
+        security_ccy=pl.coalesce([pl.col("currency"), pl.col("tickerCurrency")]),
         cash_amount=amount,
         settle_date=pl.col("paidOn").cast(pl.Utf8),
         ticker=pl.coalesce([pl.col("ticker"), instrument.struct.field("ticker")]),
@@ -469,10 +453,11 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
         gross_amount=(price * qty),
         fee_amount=pl.lit(0.0),
         tax_amount=pl.lit(0.0),
-        net_amount=amount,
-        base_currency=pl.col("currency").cast(pl.Utf8),
-        fx_rate_to_base=pl.lit(1.0),
-        amount_base=amount,
+        # target_fx_rate, target_value, target_ccy are null for T212 dividends;
+        # they are populated by the normalize_currency step.
+        target_fx_rate=pl.lit(None),
+        target_value=pl.lit(None),
+        target_ccy=pl.lit(None),
     )
 
 
@@ -499,7 +484,7 @@ def _transform_transactions(
         event_type=event_type,
         raw_event_type=raw_type,
         event_datetime=pl.col("dateTime").cast(pl.Utf8),
-        value_currency=pl.col("currency").cast(pl.Utf8),
+        security_ccy=pl.col("currency").cast(pl.Utf8),
         cash_amount=amount,
         settle_date=pl.lit(""),
         ticker=pl.lit(""),
@@ -511,8 +496,9 @@ def _transform_transactions(
         gross_amount=pl.lit(0.0),
         fee_amount=pl.lit(0.0),
         tax_amount=pl.lit(0.0),
-        net_amount=amount,
-        base_currency=pl.col("currency").cast(pl.Utf8),
-        fx_rate_to_base=pl.lit(1.0),
-        amount_base=amount,
+        # target_fx_rate, target_value, target_ccy are null for T212 transactions;
+        # they are populated by the normalize_currency step.
+        target_fx_rate=pl.lit(None),
+        target_value=pl.lit(None),
+        target_ccy=pl.lit(None),
     )

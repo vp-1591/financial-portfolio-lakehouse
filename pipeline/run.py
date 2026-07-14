@@ -468,6 +468,8 @@ def cmd_full(args: argparse.Namespace) -> int:
         return result
     # Consolidate CDC events after snapshot consolidation
     _consolidate_cdc()
+    # Normalize target currency columns in CDC events
+    _normalize_cdc(args)
     return cmd_analytics(args)
 
 
@@ -476,6 +478,31 @@ def _consolidate_cdc() -> None:
     from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
     consolidate_cdc_events()
+
+
+def _normalize_cdc(args: argparse.Namespace) -> None:
+    """Normalize target currency columns in CDC events.
+
+    Fills in ``target_fx_rate``, ``target_value``, and ``target_ccy``
+    using the CurrencyConverter.  Runs after CDC events are consolidated
+    and before CDC analytics tables are built.
+
+    Silently skips if no CDC data exists.
+    """
+    from pipeline.normalized.normalize import normalize_currency
+
+    manual_rates: dict[str, float] = {}
+    if args.fx_rate:
+        manual_rates.update(dict(args.fx_rate))
+
+    target_currency = getattr(args, "target_currency", "EUR").upper()
+    try:
+        normalize_currency(
+            target_currency=target_currency,
+            manual_rates=manual_rates,
+        )
+    except FileNotFoundError:
+        logger.debug("CDC events table not found; skipping currency normalization")
 
 
 def cmd_run_connector(args: argparse.Namespace) -> int:
@@ -527,6 +554,8 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     if rc:
         return rc
     _consolidate_cdc()
+    # Normalize target currency columns in CDC events
+    _normalize_cdc(args)
     # Validate silver tables after consolidate + CDC
     silver_rc = run_validation(
         fernet_key=fernet_key,

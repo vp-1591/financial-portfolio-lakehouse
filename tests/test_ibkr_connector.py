@@ -345,10 +345,10 @@ class TestFlexTransformSnapshot:
             raw, fernet_key, base_currency_override="CHF"
         )
 
-        # The position has no native currency, so value_currency/security_currency
-        # fall back to the overridden base currency (CHF).
-        currencies = result.column("value_currency").to_pylist()
-        assert all(c == "CHF" for c in currencies)
+        # The position has no native currency, so security_ccy
+        # falls back to "USD" (the default for unknown currencies).
+        currencies = result.column("security_ccy").to_pylist()
+        assert all(c == "USD" for c in currencies)
 
     def test_transform_produces_cash_from_base_summary_fallback(
         self, fernet_key: bytes
@@ -385,7 +385,7 @@ class TestFlexTransformSnapshot:
         labels = result.column("label").to_pylist()
         assert labels[cash_idx] == "CASH USD"
 
-        values = result.column("value").to_pylist()
+        values = result.column("security_value").to_pylist()
         cash_value = decrypt_float(values[cash_idx], fernet_key)
         assert cash_value == pytest.approx(10500.0)
 
@@ -456,7 +456,7 @@ class TestFlexTransformSnapshot:
         labels = result.column("label").to_pylist()
         assert labels[cash_idx] == "CASH CHF"
 
-        currencies = result.column("value_currency").to_pylist()
+        currencies = result.column("security_ccy").to_pylist()
         assert currencies[cash_idx] == "CHF"
 
 
@@ -862,7 +862,7 @@ class TestInjectDemoDeposit:
     def _make_records(
         self,
         account_id: str = "U123456",
-        base_currency: str = "EUR",
+        security_ccy: str = "EUR",
         event_datetime: str = "2026-03-01T00:00:00Z",
     ) -> list[dict]:
         """Build minimal CDC record dicts for testing."""
@@ -877,15 +877,12 @@ class TestInjectDemoDeposit:
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": event_datetime,
-                "value_currency": base_currency,
+                "security_ccy": security_ccy,
                 "cash_amount": 42.50,
                 "settle_date": "2026-03-04",
                 "ticker": "VWCE",
                 "isin": "IE00BK5BQT80",
                 "description": "Vanguard FTSE All-World",
-                "base_currency": base_currency,
-                "fx_rate_to_base": 1.0,
-                "amount_base": 42.50,
             }
         ]
 
@@ -908,10 +905,9 @@ class TestInjectDemoDeposit:
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
         assert deposit["account_id"] == "U123456"
-        assert deposit["value_currency"] == "EUR"
+        assert deposit["security_ccy"] == "EUR"
         assert deposit["cash_amount"] == 1_000_000.0
-        assert deposit["amount_base"] == 1_000_000.0
-        assert deposit["fx_rate_to_base"] == 1.0
+        assert deposit["target_fx_rate"] == 1.0
         assert deposit["source"] == "CashTransaction"
         assert deposit["raw_event_type"] == "Deposits & Withdrawals"
         assert deposit["description"] == "Initial demo account deposit"
@@ -951,7 +947,7 @@ class TestInjectDemoDeposit:
         assert result == []
 
     def test_multi_account_gets_deposit_per_account(self) -> None:
-        """Each unique (account_id, base_currency) pair gets its own deposit."""
+        """Each unique (account_id, security_ccy) pair gets its own deposit."""
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         now = datetime.now(timezone.utc)
@@ -965,15 +961,12 @@ class TestInjectDemoDeposit:
                 "event_type": "TRADE",
                 "raw_event_type": "ExTrade",
                 "event_datetime": "2026-05-01T00:00:00Z",
-                "value_currency": "USD",
+                "security_ccy": "USD",
                 "cash_amount": -100.0,
                 "settle_date": "2026-05-03",
                 "ticker": "AAPL",
                 "isin": "",
                 "description": "Apple Inc",
-                "base_currency": "USD",
-                "fx_rate_to_base": 1.0,
-                "amount_base": -100.0,
             },
             {
                 "fetched_at": now,
@@ -984,15 +977,12 @@ class TestInjectDemoDeposit:
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": "2026-05-10T00:00:00Z",
-                "value_currency": "EUR",
+                "security_ccy": "EUR",
                 "cash_amount": 50.0,
                 "settle_date": "2026-05-13",
                 "ticker": "VWCE",
                 "isin": "",
                 "description": "Vanguard",
-                "base_currency": "EUR",
-                "fx_rate_to_base": 1.0,
-                "amount_base": 50.0,
             },
         ]
 
@@ -1004,8 +994,8 @@ class TestInjectDemoDeposit:
         by_account = {d["account_id"]: d for d in deposits}
         assert "U111" in by_account
         assert "U222" in by_account
-        assert by_account["U111"]["value_currency"] == "USD"
-        assert by_account["U222"]["value_currency"] == "EUR"
+        assert by_account["U111"]["security_ccy"] == "USD"
+        assert by_account["U222"]["security_ccy"] == "EUR"
         # Both deposits dated one day before earliest event (2026-05-01)
         assert by_account["U111"]["event_datetime"] == "2026-04-30T00:00:00Z"
         assert by_account["U222"]["event_datetime"] == "2026-04-30T00:00:00Z"

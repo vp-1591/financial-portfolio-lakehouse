@@ -264,7 +264,7 @@ class TestTransformSnapshot:
         assert "CASH" in types
 
         # Verify encrypted values decrypt correctly
-        values = result.column("value").to_pylist()
+        values = result.column("security_value").to_pylist()
         decrypted = [decrypt_float(v, fernet_key) for v in values]
         assert any(v == pytest.approx(200.0) for v in decrypted)  # VUAA
         assert any(v == pytest.approx(25.0) for v in decrypted)  # CASH EUR
@@ -320,7 +320,7 @@ class TestTransformSnapshot:
         assert "CASH" in types
 
         cash_idx = types.index("CASH")
-        values = result.column("value").to_pylist()
+        values = result.column("security_value").to_pylist()
         cash_amount = decrypt_float(values[cash_idx], fernet_key)
         assert cash_amount == pytest.approx(10500.0)
 
@@ -635,9 +635,9 @@ class TestCdcTransform:
         assert result.column("broker")[0].as_py() == "Trading 212"
         assert result.column("event_id")[0].as_py() == "12345"
         assert result.column("event_datetime")[0].as_py() == "2024-01-15T10:30:00Z"
-        # Phase 1: value_currency is now the security's trading currency (USD),
+        # Phase 1: security_ccy is now the security's trading currency (USD),
         # not the wallet currency.  Same value here since wallet ccy == security ccy.
-        assert result.column("value_currency")[0].as_py() == "USD"
+        assert result.column("security_ccy")[0].as_py() == "USD"
 
         # Nullable trade fields — now populated via nested struct access
         assert result.column("ticker")[0].as_py() == "AAPL_US_EQ"
@@ -654,17 +654,11 @@ class TestCdcTransform:
         assert price == pytest.approx(150.0)
         gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
         assert gross == pytest.approx(1500.0)  # filledValue (still in wallet ccy)
-        net = decrypt_float(result.column("net_amount")[0].as_py(), fernet_key)
-        assert net == pytest.approx(1500.0)  # netValue * fx_rate (in security ccy)
-        fx = decrypt_float(result.column("fx_rate_to_base")[0].as_py(), fernet_key)
-        assert fx == pytest.approx(1.0)
-
-        # Phase 1: base_currency is now the security's trading currency (USD),
-        # not the wallet currency.  Same value here since wallet ccy == security ccy.
-        assert result.column("base_currency")[0].as_py() == "USD"
-
-        amount_base = decrypt_float(result.column("amount_base")[0].as_py(), fernet_key)
-        assert amount_base == pytest.approx(1500.0)  # netValue * fx_rate (security ccy)
+        # target_fx_rate, target_value, target_ccy are null for T212 orders;
+        # they are computed later by normalize_currency.
+        assert result.column("target_fx_rate")[0].as_py() is None
+        assert result.column("target_value")[0].as_py() is None
+        assert result.column("target_ccy")[0].as_py() is None
 
     def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
         """T212 orders with walletImpact.taxes correctly split fees and taxes."""
@@ -705,7 +699,7 @@ class TestCdcTransform:
           - net_value (wallet ccy) = 2000 PLN
           - fx_rate = 0.25 (PLN→USD)
           - cash_amount (security ccy) = 2000 * 0.25 = 500 USD
-          - value_currency = "USD" (security, not "PLN")
+          - security_ccy = "USD" (security, not "PLN")
         """
         from pipeline.connectors.trading212.transform import transform_cdc
 
@@ -733,26 +727,17 @@ class TestCdcTransform:
 
         assert result.num_rows == 1
 
-        # value_currency should be USD (security ccy), not PLN (wallet ccy)
-        assert result.column("value_currency")[0].as_py() == "USD"
-        # base_currency should be USD (security ccy), not PLN (wallet ccy)
-        assert result.column("base_currency")[0].as_py() == "USD"
+        # security_ccy should be USD (security ccy), not PLN (wallet ccy)
+        assert result.column("security_ccy")[0].as_py() == "USD"
 
         # cash_amount should be in security ccy: 2000 PLN * 0.25 PLN→USD = 500 USD
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(500.0)
 
-        # net_amount should match cash_amount (in security ccy)
-        net = decrypt_float(result.column("net_amount")[0].as_py(), fernet_key)
-        assert net == pytest.approx(500.0)
-
-        # fx_rate_to_base stores the wallet→security rate (0.25)
-        fx = decrypt_float(result.column("fx_rate_to_base")[0].as_py(), fernet_key)
-        assert fx == pytest.approx(0.25)
-
-        # amount_base = net_value * fx_rate = 500 USD (same as cash_amount)
-        amount_base = decrypt_float(result.column("amount_base")[0].as_py(), fernet_key)
-        assert amount_base == pytest.approx(500.0)
+        # target_fx_rate, target_value, target_ccy are null for T212 orders;
+        # they are computed later by normalize_currency.
+        assert result.column("target_fx_rate")[0].as_py() is None
+        assert result.column("target_value")[0].as_py() is None
 
     def test_transform_cdc_order_gbx_security_currency(self, fernet_key: bytes) -> None:
         """T212 order for a GBX-denominated security correctly converts wallet amount.
@@ -788,14 +773,13 @@ class TestCdcTransform:
         result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 1
-        assert result.column("value_currency")[0].as_py() == "GBX"
-        assert result.column("base_currency")[0].as_py() == "GBX"
+        assert result.column("security_ccy")[0].as_py() == "GBX"
 
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(7500.0 * 19.949, rel=1e-6)
 
-        amount_base = decrypt_float(result.column("amount_base")[0].as_py(), fernet_key)
-        assert amount_base == pytest.approx(7500.0 * 19.949, rel=1e-6)
+        # target_fx_rate, target_value, target_ccy are null for T212 orders
+        assert result.column("target_value")[0].as_py() is None
 
     def test_transform_cdc_dividend_currency_mismatch_warning(
         self, fernet_key: bytes, caplog: pytest.LogCaptureFixture
@@ -830,8 +814,7 @@ class TestCdcTransform:
             result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 1
-        assert result.column("value_currency")[0].as_py() == "EUR"
-        assert result.column("base_currency")[0].as_py() == "EUR"
+        assert result.column("security_ccy")[0].as_py() == "EUR"
 
         # Verify the currency mismatch warning was logged
         assert any(
@@ -947,9 +930,6 @@ class TestCdcTransform:
         assert result.column("raw_event_type")[0].as_py() == "DEPOSIT"
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(1000.0)
-        net = decrypt_float(result.column("net_amount")[0].as_py(), fernet_key)
-        assert net == pytest.approx(1000.0)
-        assert result.column("base_currency")[0].as_py() == "EUR"
 
     def test_transform_cdc_transaction_withdraw_type(self, fernet_key: bytes) -> None:
         """T212 WITHDRAW transactions are mapped to WITHDRAWAL event type."""

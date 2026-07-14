@@ -117,14 +117,13 @@ def t212_normalized_snapshot(
                 "Cash GBP",
             ],
             "asset_class": ["STK", "STK", "CASH"],
-            "value": [
+            "security_value": [
                 encrypt_float(2500.0, fernet_key),
                 encrypt_float(1800.0, fernet_key),
                 encrypt_float(1500.0, fernet_key),
             ],
-            "value_currency": ["EUR", "USD", "GBP"],
+            "security_ccy": ["EUR", "USD", "GBP"],
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
-            "security_currency": ["EUR", "USD", "GBP"],
         },
         schema=trading212_snapshot_normalized_schema,
     )

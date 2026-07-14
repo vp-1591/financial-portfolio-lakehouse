@@ -17,14 +17,14 @@ def allocation_by_broker(holdings: pl.DataFrame) -> go.Figure:
         return _empty_figure("Portfolio Allocation by Broker")
     agg = (
         holdings.group_by("broker")
-        .agg(pl.col("value_base").sum())
-        .sort("value_base", descending=True)
+        .agg(pl.col("target_value").sum())
+        .sort("target_value", descending=True)
     )
     fig = go.Figure(
         data=[
             go.Pie(
                 labels=agg["broker"].to_list(),
-                values=agg["value_base"].to_list(),
+                values=agg["target_value"].to_list(),
                 textinfo="label+percent",
                 hole=0.4,
             )
@@ -43,14 +43,14 @@ def allocation_by_position_type(holdings: pl.DataFrame) -> go.Figure:
         return _empty_figure("Allocation by Position Type")
     agg = (
         holdings.group_by("position_type")
-        .agg(pl.col("value_base").sum())
-        .sort("value_base", descending=True)
+        .agg(pl.col("target_value").sum())
+        .sort("target_value", descending=True)
     )
     fig = go.Figure(
         data=[
             go.Pie(
                 labels=agg["position_type"].to_list(),
-                values=agg["value_base"].to_list(),
+                values=agg["target_value"].to_list(),
                 textinfo="label+percent",
                 hole=0.4,
             )
@@ -68,15 +68,15 @@ def allocation_by_currency(holdings: pl.DataFrame) -> go.Figure:
     if holdings.is_empty():
         return _empty_figure("Currency Exposure")
     agg = (
-        holdings.group_by("security_currency")
-        .agg(pl.col("value_base").sum())
-        .sort("value_base", descending=True)
+        holdings.group_by("security_ccy")
+        .agg(pl.col("target_value").sum())
+        .sort("target_value", descending=True)
     )
     fig = go.Figure(
         data=[
             go.Pie(
-                labels=agg["security_currency"].to_list(),
-                values=agg["value_base"].to_list(),
+                labels=agg["security_ccy"].to_list(),
+                values=agg["target_value"].to_list(),
                 textinfo="label+percent",
                 hole=0.4,
             )
@@ -99,7 +99,7 @@ def passive_income_timeline(
     if not dividends.is_empty():
         div_agg = (
             dividends.group_by("period_month")
-            .agg(pl.col("amount_base").sum().alias("total"))
+            .agg(pl.col("target_value").sum().alias("total"))
             .sort("period_month")
         )
         traces.append(
@@ -114,7 +114,7 @@ def passive_income_timeline(
     if not interest.is_empty():
         int_agg = (
             interest.group_by("period_month")
-            .agg(pl.col("amount_base").sum().alias("total"))
+            .agg(pl.col("target_value").sum().alias("total"))
             .sort("period_month")
         )
         traces.append(
@@ -149,9 +149,9 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
     if cash_flow.is_empty():
         return _empty_figure("Cash Flow Breakdown")
 
-    # Use amount_base if available, fall back to cash_amount
-    if cash_flow["amount_base"].null_count() < cash_flow.height:
-        value_col = "amount_base"
+    # Use target_value if available, fall back to cash_amount
+    if cash_flow["target_value"].null_count() < cash_flow.height:
+        value_col = "target_value"
     else:
         value_col = "cash_amount"
 

@@ -283,10 +283,10 @@ def consolidate_holdings(
     fetched_ats: list[datetime] = []
     brokers: list[str] = []
     tickers: list[str] = []
-    currencies: list[str] = []
-    values: list[bytes] = []
+    target_ccys: list[str] = []
+    values: list[bytes] = []  # encrypted target_value
     identifiers: list[str] = []
-    security_currencies: list[str] = []
+    security_ccys: list[str] = []
     descriptions: list[str] = []
 
     for holding in holdings:
@@ -303,10 +303,10 @@ def consolidate_holdings(
         fetched_ats.append(now)
         brokers.append(holding.broker)
         tickers.append(holding.ticker)
-        currencies.append(converter.target_currency)
+        target_ccys.append(converter.target_currency)
         values.append(encrypt_float(converted_value, fernet_key))
         identifiers.append(identifier or "-")
-        security_currencies.append(holding.security_currency or "-")
+        security_ccys.append(holding.security_currency or "-")
         descriptions.append(holding.description or "-")
 
     table = pa.table(
@@ -314,10 +314,10 @@ def consolidate_holdings(
             "fetched_at": fetched_ats,
             "broker": brokers,
             "ticker": tickers,
-            "base_currency": currencies,
-            "value": values,
+            "target_ccy": target_ccys,
+            "target_value": values,
             "identifier": identifiers,
-            "security_currency": security_currencies,
+            "security_ccy": security_ccys,
             "description": descriptions,
         },
         schema=consolidated_holdings_schema,

@@ -319,7 +319,7 @@ class TestTransformSnapshot:
         assert "EQUITY" in types
         assert "CASH" in types
 
-        values = result.column("value").to_pylist()
+        values = result.column("security_value").to_pylist()
         decrypted = [decrypt_float(v, fernet_key) for v in values]
         assert any(v == pytest.approx(195.0, rel=0.01) for v in decrypted)
 

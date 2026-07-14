@@ -225,14 +225,13 @@ def _ibkr_normalized_df(fernet_key: bytes) -> pl.DataFrame:
     return pl.DataFrame(
         {
             "label": ["VWCE", "AAPL"],
-            "value_currency": ["EUR", "USD"],
-            "value": [
+            "security_ccy": ["EUR", "USD"],
+            "security_value": [
                 encrypt_float(5000.0, fernet_key),
                 encrypt_float(2700.0, fernet_key),
             ],
             "isin": ["IE00BK5BQT80", "US0378331005"],
             "description": ["Vanguard FTSE All-World", "Apple Inc"],
-            "security_currency": ["EUR", "USD"],
         }
     )
 
@@ -243,13 +242,12 @@ def _t212_normalized_df(fernet_key: bytes) -> pl.DataFrame:
         {
             "label": ["VWCE_DE_EQ", "AAPL_US_EQ"],
             "name": ["Vanguard FTSE All-World UCITS ETF", "Apple Inc"],
-            "value_currency": ["EUR", "USD"],
-            "value": [
+            "security_ccy": ["EUR", "USD"],
+            "security_value": [
                 encrypt_float(2500.0, fernet_key),
                 encrypt_float(1800.0, fernet_key),
             ],
             "isin": ["IE00BK5BQT80", "US0378331005"],
-            "security_currency": ["EUR", "USD"],
         }
     )
 
@@ -260,8 +258,8 @@ def _xtb_normalized_df(fernet_key: bytes) -> pl.DataFrame:
         {
             "label": ["VWCE.DE", "CDR.PL"],
             "name": ["Vanguard FTSE All-World UCITS ETF", "CD Projekt"],
-            "value_currency": ["EUR", "PLN"],
-            "value": [
+            "security_ccy": ["EUR", "PLN"],
+            "security_value": [
                 encrypt_float(1000.0, fernet_key),
                 encrypt_float(2500.0, fernet_key),
             ],
@@ -271,16 +269,16 @@ def _xtb_normalized_df(fernet_key: bytes) -> pl.DataFrame:
 
 
 def _decrypt_df(df: pl.DataFrame, fernet_key: bytes) -> pl.DataFrame:
-    """Add a value_decrypted column to a DataFrame."""
+    """Add a security_value_decrypted column to a DataFrame."""
     from pipeline.crypto import decrypt_float
 
     return df.with_columns(
-        pl.col("value")
+        pl.col("security_value")
         .map_elements(
             lambda v: decrypt_float(v, fernet_key),
             return_dtype=pl.Float64,
         )
-        .alias("value_decrypted")
+        .alias("security_value_decrypted")
     )
 
 
@@ -313,11 +311,10 @@ class TestIbkrExtractHoldings:
         df = pl.DataFrame(
             {
                 "label": ["CASH EUR"],
-                "value_currency": ["EUR"],
-                "value": [encrypt_float(2000.0, fernet_key)],
+                "security_ccy": ["EUR"],
+                "security_value": [encrypt_float(2000.0, fernet_key)],
                 "isin": [""],
                 "description": ["Cash EUR"],
-                "security_currency": ["EUR"],
             }
         )
         df = _decrypt_df(df, fernet_key)
@@ -360,15 +357,15 @@ class TestXtbExtractHoldings:
         assert holdings[0].broker == "XTB"
         assert holdings[0].ticker == "VWCE.DE"
 
-    def test_xtb_security_currency_from_value_currency(self) -> None:
-        """XTB derives security_currency from value_currency, not a dedicated column."""
+    def test_xtb_security_currency_from_security_ccy(self) -> None:
+        """XTB derives security_currency from security_ccy column."""
         fernet_key = generate_key()
         df = _decrypt_df(_xtb_normalized_df(fernet_key), fernet_key)
         connector = get("xtb")
         holdings = connector.extract_holdings(df, fernet_key)
 
-        # XTB schema has no security_currency column;
-        # security_currency should equal value_currency
+        # XTB schema has security_ccy column;
+        # security_currency should match security_ccy
         assert holdings[0].security_currency == "EUR"
         assert holdings[1].security_currency == "PLN"
 
@@ -477,5 +474,5 @@ class TestExtractHoldingsShim:
         holdings = extract_holdings("xtb", path, fernet_key)
         assert len(holdings) >= 2
         assert all(isinstance(h, Holding) for h in holdings)
-        # XTB derives security_currency from value_currency
+        # XTB derives security_currency from security_ccy
         assert all(h.security_currency != "" for h in holdings)

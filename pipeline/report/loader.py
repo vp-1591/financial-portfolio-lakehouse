@@ -20,7 +20,7 @@ _PORTFOLIO_ALLOCATION_COLUMNS = {
     "percentage": pl.Float64,
     "broker": pl.String,
     "identifier": pl.String,
-    "security_currency": pl.String,
+    "security_ccy": pl.String,
     "description": pl.String,
 }
 
@@ -28,13 +28,12 @@ _PORTFOLIO_HOLDINGS_COLUMNS = {
     "calculated_at": pl.Datetime("us", "UTC"),
     "broker": pl.String,
     "ticker": pl.String,
-    "value_currency": pl.String,
-    "value": pl.Float64,
-    "value_base": pl.Float64,
-    "base_currency": pl.String,
+    "security_ccy": pl.String,
+    "security_value": pl.Float64,
+    "target_value": pl.Float64,
+    "target_ccy": pl.String,
     "position_type": pl.String,
     "identifier": pl.String,
-    "security_currency": pl.String,
     "description": pl.String,
 }
 
@@ -46,10 +45,10 @@ _DIVIDEND_INCOME_COLUMNS = {
     "ticker": pl.String,
     "isin": pl.String,
     "description": pl.String,
-    "value_currency": pl.String,
+    "security_ccy": pl.String,
     "cash_amount": pl.Float64,
-    "amount_base": pl.Float64,
-    "base_currency": pl.String,
+    "target_value": pl.Float64,
+    "target_ccy": pl.String,
     "event_count": pl.Int64,
 }
 
@@ -58,10 +57,10 @@ _INTEREST_INCOME_COLUMNS = {
     "period_month": pl.String,
     "period_quarter": pl.String,
     "broker": pl.String,
-    "value_currency": pl.String,
+    "security_ccy": pl.String,
     "cash_amount": pl.Float64,
-    "amount_base": pl.Float64,
-    "base_currency": pl.String,
+    "target_value": pl.Float64,
+    "target_ccy": pl.String,
     "event_count": pl.Int64,
 }
 
@@ -71,10 +70,10 @@ _CASH_FLOW_SUMMARY_COLUMNS = {
     "period_quarter": pl.String,
     "broker": pl.String,
     "event_type": pl.String,
-    "value_currency": pl.String,
+    "security_ccy": pl.String,
     "cash_amount": pl.Float64,
-    "amount_base": pl.Float64,
-    "base_currency": pl.String,
+    "target_value": pl.Float64,
+    "target_ccy": pl.String,
     "event_count": pl.Int64,
 }
 

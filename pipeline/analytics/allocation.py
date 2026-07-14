@@ -67,23 +67,25 @@ def allocate_percentages(
     arrow_table = dt.to_pyarrow_table()
     df = pl.from_arrow(arrow_table)
 
-    # Decrypt value column
+    # Decrypt target_value column
     df = df.with_columns(
-        pl.col("value")
+        pl.col("target_value")
         .map_elements(
             lambda v: decrypt_float(v, fernet_key),
             return_dtype=pl.Float64,
         )
-        .alias("value_decrypted")
+        .alias("target_value_decrypted")
     )
 
     # Calculate percentages
-    net_worth = df["value_decrypted"].sum()
+    net_worth = df["target_value_decrypted"].sum()
     if net_worth == 0:
         raise ValueError("Net worth is zero; cannot calculate percentages.")
 
     df = df.with_columns(
-        (pl.col("value_decrypted") / net_worth * 100).round(4).alias("percentage")
+        (pl.col("target_value_decrypted") / net_worth * 100)
+        .round(4)
+        .alias("percentage")
     )
 
     # Aggregate by ticker + broker (sum duplicates)
@@ -93,7 +95,7 @@ def allocate_percentages(
             [
                 pl.col("percentage").sum(),
                 pl.col("identifier").first(),
-                pl.col("security_currency").first(),
+                pl.col("security_ccy").first(),
                 pl.col("description").first(),
             ]
         )
@@ -111,7 +113,7 @@ def allocate_percentages(
             "percentage": agg["percentage"].to_list(),
             "broker": agg["broker"].to_list(),
             "identifier": agg["identifier"].to_list(),
-            "security_currency": agg["security_currency"].to_list(),
+            "security_ccy": agg["security_ccy"].to_list(),
             "description": agg["description"].to_list(),
         },
         schema=portfolio_allocation_schema,

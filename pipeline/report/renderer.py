@@ -57,34 +57,34 @@ def _summary_table(holdings) -> str:
     if holdings.is_empty():
         return ""
 
-    base_currency = holdings["base_currency"][0]
-    total_value = holdings["value_base"].sum()
+    target_ccy = holdings["target_ccy"][0]
+    total_value = holdings["target_value"].sum()
 
     rows: list[str] = []
     # By broker
     broker_agg = (
         holdings.group_by("broker")
-        .agg(pl.col("value_base").sum().alias("total"))
+        .agg(pl.col("target_value").sum().alias("total"))
         .sort("total", descending=True)
     )
     for row in broker_agg.iter_rows(named=True):
         pct = (row["total"] / total_value * 100) if total_value else 0
         rows.append(
-            f"<tr><td>{row['broker']}</td><td>{row['total']:,.2f} {base_currency}</td>"
+            f"<tr><td>{row['broker']}</td><td>{row['total']:,.2f} {target_ccy}</td>"
             f"<td>{pct:.1f}%</td></tr>"
         )
 
     # By position type
     type_agg = (
         holdings.group_by("position_type")
-        .agg(pl.col("value_base").sum().alias("total"))
+        .agg(pl.col("target_value").sum().alias("total"))
         .sort("total", descending=True)
     )
     type_rows: list[str] = []
     for row in type_agg.iter_rows(named=True):
         pct = (row["total"] / total_value * 100) if total_value else 0
         type_rows.append(
-            f"<tr><td>{row['position_type']}</td><td>{row['total']:,.2f} {base_currency}</td>"
+            f"<tr><td>{row['position_type']}</td><td>{row['total']:,.2f} {target_ccy}</td>"
             f"<td>{pct:.1f}%</td></tr>"
         )
 
@@ -104,20 +104,18 @@ def _passive_income_table(dividends, interest) -> str:
     parts: list[str] = []
 
     if not dividends.is_empty():
-        total_div = dividends["amount_base"].sum()
+        total_div = dividends["target_value"].sum()
         base_curr = (
-            dividends["base_currency"][0]
-            if "base_currency" in dividends.columns
-            else ""
+            dividends["target_ccy"][0] if "target_ccy" in dividends.columns else ""
         )
         parts.append(
             f"<p><strong>Total Dividends:</strong> {total_div:,.2f} {base_curr}</p>"
         )
 
     if not interest.is_empty():
-        total_int = interest["amount_base"].sum()
+        total_int = interest["target_value"].sum()
         base_curr = (
-            interest["base_currency"][0] if "base_currency" in interest.columns else ""
+            interest["target_ccy"][0] if "target_ccy" in interest.columns else ""
         )
         parts.append(
             f"<p><strong>Total Interest:</strong> {total_int:,.2f} {base_curr}</p>"
@@ -226,10 +224,10 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     if show_portfolio:
         use_holdings = not holdings.is_empty()
         if use_holdings and not base_cur:
-            base_cur = holdings["base_currency"][0]
+            base_cur = holdings["target_ccy"][0]
 
         if use_holdings:
-            total = holdings["value_base"].sum()
+            total = holdings["target_value"].sum()
             summary_cards.append(
                 {"label": "Total Value", "value": f"{total:,.2f} {base_cur}"}
             )

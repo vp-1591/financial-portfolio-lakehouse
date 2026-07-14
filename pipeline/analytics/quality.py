@@ -111,8 +111,8 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "fetched_at",
         "broker",
         "ticker",
-        "base_currency",
-        "value",
+        "target_ccy",
+        "target_value",
     ],
     "cdc_events": [
         "fetched_at",
@@ -124,20 +124,20 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
     "ibkr_snapshot": [
         "fetched_at",
         "account_id",
-        "value_currency",
-        "value",
+        "security_ccy",
+        "security_value",
     ],
     "trading212_snapshot": [
         "fetched_at",
         "account_id",
-        "value_currency",
-        "value",
+        "security_ccy",
+        "security_value",
     ],
     "xtb_snapshot": [
         "fetched_at",
         "account_id",
-        "value_currency",
-        "value",
+        "security_ccy",
+        "security_value",
     ],
     "ibkr_cdc": [
         "fetched_at",
@@ -171,16 +171,17 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "calculated_at",
         "broker",
         "ticker",
-        "value_currency",
-        "value",
-        "base_currency",
+        "security_ccy",
+        "security_value",
+        "target_value",
+        "target_ccy",
         "position_type",
     ],
     "dividend_income": [
         "calculated_at",
         "period_month",
         "broker",
-        "value_currency",
+        "security_ccy",
         "cash_amount",
         "event_count",
     ],
@@ -188,7 +189,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "calculated_at",
         "period_month",
         "broker",
-        "value_currency",
+        "security_ccy",
         "cash_amount",
         "event_count",
     ],
@@ -197,7 +198,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "period_month",
         "broker",
         "event_type",
-        "value_currency",
+        "security_ccy",
         "cash_amount",
         "event_count",
     ],
@@ -392,11 +393,11 @@ def check_reconciliation(
         )
 
     # Currency coverage check
-    holdings_currencies = set(holdings_df["base_currency"].unique().to_list())
-    # For CDC, amount_base is encrypted — use value_currency column instead
+    holdings_currencies = set(holdings_df["target_ccy"].unique().to_list())
+    # For CDC, amount_base is encrypted — use security_ccy column instead
     cdc_currencies = (
-        set(cdc_df["value_currency"].unique().to_list())
-        if "value_currency" in cdc_df.columns
+        set(cdc_df["security_ccy"].unique().to_list())
+        if "security_ccy" in cdc_df.columns
         else set()
     )
 

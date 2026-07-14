@@ -24,6 +24,14 @@ def _holdings(rows: list[dict]) -> pl.DataFrame:
     return pl.DataFrame(rows)
 
 
+def _holdings_default_schema() -> dict[str, type]:
+    """Default column types for the holdings helper (matching gold schema)."""
+    return {
+        "security_ccy": pl.String,
+        "target_value": pl.Float64,
+    }
+
+
 def _cash_flow(rows: list[list]) -> pl.DataFrame:
     """Build a minimal cash_flow_summary DataFrame for chart tests."""
     return pl.DataFrame(
@@ -32,14 +40,14 @@ def _cash_flow(rows: list[list]) -> pl.DataFrame:
             "period_month": pl.String,
             "event_type": pl.String,
             "cash_amount": pl.Float64,
-            "amount_base": pl.Float64,
+            "target_value": pl.Float64,
         },
         orient="row",
     )
 
 
 # ---------------------------------------------------------------------------
-# allocation_by_currency – donut chart (security_currency grouping)
+# allocation_by_currency – donut chart (security_ccy grouping)
 # ---------------------------------------------------------------------------
 
 
@@ -50,8 +58,8 @@ class TestAllocationByCurrency:
         """Chart is a go.Pie with hole=0.4 and textinfo=label+percent."""
         df = _holdings(
             [
-                {"security_currency": "USD", "value_base": 1000.0},
-                {"security_currency": "EUR", "value_base": 500.0},
+                {"security_ccy": "USD", "target_value": 1000.0},
+                {"security_ccy": "EUR", "target_value": 500.0},
             ]
         )
         fig = allocation_by_currency(df)
@@ -65,24 +73,24 @@ class TestAllocationByCurrency:
         """Chart title is 'Currency Exposure'."""
         df = _holdings(
             [
-                {"security_currency": "USD", "value_base": 1000.0},
+                {"security_ccy": "USD", "target_value": 1000.0},
             ]
         )
         fig = allocation_by_currency(df)
 
         assert fig.layout.title.text == "Currency Exposure"
 
-    def test_groups_by_security_currency_not_wallet_currency(self) -> None:
-        """T212-style positions with security_currency != currency
-        appear under security_currency, not wallet currency.
+    def test_groups_by_security_ccy_not_wallet_currency(self) -> None:
+        """T212-style positions with security_ccy != currency
+        appear under security_ccy, not wallet currency.
 
         Regression guard: a GBX instrument on a PLN-denominated
         account must appear under 'GBX', not 'PLN'.
         """
         df = _holdings(
             [
-                {"security_currency": "GBX", "value_base": 800.0},
-                {"security_currency": "USD", "value_base": 200.0},
+                {"security_ccy": "GBX", "target_value": 800.0},
+                {"security_ccy": "USD", "target_value": 200.0},
             ]
         )
         fig = allocation_by_currency(df)
@@ -94,12 +102,12 @@ class TestAllocationByCurrency:
         assert "PLN" not in labels
 
     def test_aggregation_sums_same_currency(self) -> None:
-        """Two rows with the same security_currency sum into one slice."""
+        """Two rows with the same security_ccy sum into one slice."""
         df = _holdings(
             [
-                {"security_currency": "USD", "value_base": 300.0},
-                {"security_currency": "USD", "value_base": 700.0},
-                {"security_currency": "EUR", "value_base": 500.0},
+                {"security_ccy": "USD", "target_value": 300.0},
+                {"security_ccy": "USD", "target_value": 700.0},
+                {"security_ccy": "EUR", "target_value": 500.0},
             ]
         )
         fig = allocation_by_currency(df)
@@ -113,8 +121,8 @@ class TestAllocationByCurrency:
         """Empty DataFrame returns _empty_figure with correct title."""
         df = pl.DataFrame(
             {
-                "security_currency": pl.Series([], dtype=pl.String),
-                "value_base": pl.Series([], dtype=pl.Float64),
+                "security_ccy": pl.Series([], dtype=pl.String),
+                "target_value": pl.Series([], dtype=pl.Float64),
             }
         )
         fig = allocation_by_currency(df)
@@ -152,7 +160,7 @@ class TestCashFlowBreakdown:
                 "period_month": pl.Series([], dtype=pl.String),
                 "event_type": pl.Series([], dtype=pl.String),
                 "cash_amount": pl.Series([], dtype=pl.Float64),
-                "amount_base": pl.Series([], dtype=pl.Float64),
+                "target_value": pl.Series([], dtype=pl.Float64),
             }
         )
         fig = cash_flow_breakdown(df)
@@ -160,8 +168,8 @@ class TestCashFlowBreakdown:
         assert fig.layout.title.text == "Cash Flow Breakdown"
         assert len(fig.data) == 0  # empty figure, no traces
 
-    def test_prefers_amount_base_over_cash_amount(self) -> None:
-        """Uses amount_base column when it has non-null values."""
+    def test_prefers_target_value_over_cash_amount(self) -> None:
+        """Uses target_value column when it has non-null values."""
         df = _cash_flow(
             [
                 ["2026-01", "INTEREST", 50.0, 45.0],
@@ -169,24 +177,24 @@ class TestCashFlowBreakdown:
         )
         fig = cash_flow_breakdown(df)
 
-        # amount_base=45.0 should be used, not cash_amount=50.0
+        # target_value=45.0 should be used, not cash_amount=50.0
         trace = next(t for t in fig.data if t.name == "INTEREST")
         assert list(trace.y) == [45.0]
 
     def test_falls_back_to_cash_amount(self) -> None:
-        """Falls back to cash_amount when amount_base is all null."""
+        """Falls back to cash_amount when target_value is all null."""
         df = pl.DataFrame(
             {
                 "period_month": ["2026-01"],
                 "event_type": ["INTEREST"],
                 "cash_amount": [50.0],
-                "amount_base": [None],
+                "target_value": [None],
             },
             schema={
                 "period_month": pl.String,
                 "event_type": pl.String,
                 "cash_amount": pl.Float64,
-                "amount_base": pl.Float64,
+                "target_value": pl.Float64,
             },
         )
         fig = cash_flow_breakdown(df)
@@ -350,14 +358,14 @@ class TestPassiveIncomeTimeline:
         """Bar hovertemplate formats the numeric value, not the month label."""
         div = _dividends(
             [
-                {"period_month": "2026-01", "amount_base": 123.45},
-                {"period_month": "2026-02", "amount_base": 67.89},
+                {"period_month": "2026-01", "target_value": 123.45},
+                {"period_month": "2026-02", "target_value": 67.89},
             ]
         )
         interest = pl.DataFrame(
             {
                 "period_month": pl.Series([], dtype=pl.String),
-                "amount_base": pl.Series([], dtype=pl.Float64),
+                "target_value": pl.Series([], dtype=pl.Float64),
             }
         )
         fig = passive_income_timeline(div, interest)
@@ -371,13 +379,13 @@ class TestPassiveIncomeTimeline:
         """Interest bar hovertemplate also formats the numeric value."""
         interest = _interest(
             [
-                {"period_month": "2026-01", "amount_base": 10.50},
+                {"period_month": "2026-01", "target_value": 10.50},
             ]
         )
         div = pl.DataFrame(
             {
                 "period_month": pl.Series([], dtype=pl.String),
-                "amount_base": pl.Series([], dtype=pl.Float64),
+                "target_value": pl.Series([], dtype=pl.Float64),
             }
         )
         fig = passive_income_timeline(div, interest)
@@ -388,8 +396,8 @@ class TestPassiveIncomeTimeline:
 
     def test_both_traces_have_hovertemplate(self) -> None:
         """When both dividends and interest exist, both have hovertemplates."""
-        div = _dividends([{"period_month": "2026-01", "amount_base": 50.0}])
-        interest = _interest([{"period_month": "2026-01", "amount_base": 25.0}])
+        div = _dividends([{"period_month": "2026-01", "target_value": 50.0}])
+        interest = _interest([{"period_month": "2026-01", "target_value": 25.0}])
         fig = passive_income_timeline(div, interest)
 
         assert len(fig.data) == 2
@@ -399,8 +407,8 @@ class TestPassiveIncomeTimeline:
 
     def test_stacked_barmode(self) -> None:
         """Chart uses stacked bar mode."""
-        div = _dividends([{"period_month": "2026-01", "amount_base": 50.0}])
-        interest = _interest([{"period_month": "2026-01", "amount_base": 25.0}])
+        div = _dividends([{"period_month": "2026-01", "target_value": 50.0}])
+        interest = _interest([{"period_month": "2026-01", "target_value": 25.0}])
         fig = passive_income_timeline(div, interest)
 
         assert fig.layout.barmode == "stack"

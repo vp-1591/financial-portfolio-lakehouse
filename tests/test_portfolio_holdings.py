@@ -119,13 +119,13 @@ class TestBuildPortfolioHoldings:
 
         assert result.num_rows == consolidated.num_rows
 
-    def test_value_base_is_decrypted_float(self, tmp_path: Path):
-        """value_base column contains decrypted float values, not bytes."""
+    def test_target_value_is_decrypted_float(self, tmp_path: Path):
+        """target_value column contains decrypted float values, not bytes."""
         fernet_key = generate_key()
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        values = result.column("value_base").to_pylist()
+        values = result.column("target_value").to_pylist()
         assert all(isinstance(v, float) for v in values)
         assert all(v > 0 for v in values)
 
@@ -139,15 +139,15 @@ class TestBuildPortfolioHoldings:
         assert "EQUITY" in position_types
         assert "CASH" in position_types
 
-    def test_base_currency_matches_consolidated(self, tmp_path: Path):
-        """base_currency matches the consolidated holdings currency (target)."""
+    def test_target_ccy_matches_consolidated(self, tmp_path: Path):
+        """target_ccy matches the consolidated holdings currency (target)."""
         fernet_key = generate_key()
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        base_currencies = set(result.column("base_currency").to_pylist())
-        # With manual_rates targeting EUR, all base currencies should be EUR
-        assert base_currencies == {"EUR"}
+        target_ccy_values = set(result.column("target_ccy").to_pylist())
+        # With manual_rates targeting EUR, all target currencies should be EUR
+        assert target_ccy_values == {"EUR"}
 
     def test_writes_delta_table(self, tmp_path: Path):
         """Portfolio holdings table is written to the analytics layer."""
@@ -163,23 +163,23 @@ class TestBuildPortfolioHoldings:
         assert stored.num_rows == result.num_rows
 
     def test_native_value_for_eur_positions(self, tmp_path: Path):
-        """EUR-denominated positions should have native value equal to value_base."""
+        """EUR-denominated positions should have native value equal to target_value."""
         fernet_key = generate_key()
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        # Find EUR-currency rows where base is also EUR
+        # Find EUR-currency rows where target_ccy is also EUR
         import polars as pl
 
         df = pl.from_arrow(result)
         eur_native = df.filter(
-            (pl.col("value_currency") == "EUR") & (pl.col("base_currency") == "EUR")
+            (pl.col("security_ccy") == "EUR") & (pl.col("target_ccy") == "EUR")
         )
-        # For EUR positions, native value should equal base value
+        # For EUR positions, native value should equal target value
         assert len(eur_native) > 0
         for row in eur_native.iter_rows(named=True):
-            assert abs(row["value"] - row["value_base"]) < 0.01, (
-                f"EUR position {row['ticker']}: native {row['value']} != base {row['value_base']}"
+            assert abs(row["security_value"] - row["target_value"]) < 0.01, (
+                f"EUR position {row['ticker']}: native {row['security_value']} != target {row['target_value']}"
             )
 
     def test_missing_consolidated_raises(self, tmp_path: Path):

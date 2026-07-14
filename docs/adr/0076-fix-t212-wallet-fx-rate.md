@@ -1,5 +1,7 @@
 # 0076 — Fix T212 `walletImpact.fxRate` Usage (Phase 1: Currency Unification)
 
+> **Superseded by [ADR 0077](./0077-currency-unification-phase2-schema-redesign.md)** — Phase 2 replaced all remaining overloaded column names (`value_currency`, `base_currency`, `fx_rate_to_base`, etc.) with unambiguous ones and added `normalize_currency()`.
+
 ## Context
 
 The T212 connector transform treated `walletImpact.fxRate` as a "wallet-to-base" rate, but it is actually the **wallet-to-security** rate (e.g., PLN→USD, PLN→GBP, PLN→GBX). This caused Bug 1: `fx_rate_to_base` was mislabeled, and `cash_amount` was stored in wallet currency instead of the security's trading currency.

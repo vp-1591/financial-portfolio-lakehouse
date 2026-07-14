@@ -86,7 +86,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0073 | Currency Exposure Donut Chart (Phase 1) | 2026-07-14 | active | — |
 | 0074 | Remove Overloaded Currency Column, Rename to Explicit Names | 2026-07-14 | active | — |
 | 0075 | Cash Flow Breakdown Outlier Toggle | 2026-07-14 | active | — |
-| 0076 | Fix T212 walletImpact.fxRate Usage (Phase 1: Currency Unification) | 2026-07-14 | active | — |
+| 0076 | Fix T212 walletImpact.fxRate Usage (Phase 1: Currency Unification) | 2026-07-14 | superseded | 0077 |
+| 0077 | Currency Unification Phase 2 — Schema Redesign | 2026-07-14 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
