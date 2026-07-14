@@ -316,10 +316,10 @@ def check_freshness(
         )
 
     col = arrow_table.column(freshness_column)
-    if col.length == 0:
+    if len(col) == 0:
         return CheckResult(
-            status=WARN,
-            details=f"Table {table_name} is empty, cannot check freshness",
+            status=PASS,
+            details=f"Table {table_name} is empty; freshness not applicable",
         )
 
     # Convert to polars for easy max
@@ -626,7 +626,7 @@ def run_validation(
     write_deltalake(
         dq_path,
         result_table,
-        mode="append",
+        mode="overwrite",
         storage_options=storage_options,
     )
 

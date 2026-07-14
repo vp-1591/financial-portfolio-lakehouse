@@ -82,6 +82,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0069 | Fix IBKR CDC Triplication and Date Parsing | 2026-07-13 | active | — |
 | 0070 | Embed Validation in Pipeline and Selective Report Sections | 2026-07-13 | active | — |
 | 0071 | IBKR Demo Initial Deposit Injection | 2026-07-14 | active | — |
+| 0072 | DQ Table Overwrite and Empty-Table Freshness | 2026-07-14 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

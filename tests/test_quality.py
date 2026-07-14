@@ -388,6 +388,27 @@ class TestCheckFreshness:
         result = check_freshness("some_table", table, "fetched_at", freshness_days=7)
         assert result.status == WARN
 
+    def test_empty_table_passes_freshness(self) -> None:
+        """An empty table passes freshness — empty data cannot be stale."""
+        # Build an empty table with the correct schema but zero rows
+        table = pa.table(
+            {
+                "calculated_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
+                "ticker": pa.array([], type=pa.string()),
+                "percentage": pa.array([], type=pa.float64()),
+                "broker": pa.array([], type=pa.string()),
+                "identifier": pa.array([], type=pa.string()),
+                "security_currency": pa.array([], type=pa.string()),
+                "description": pa.array([], type=pa.string()),
+            },
+            schema=portfolio_allocation_schema,
+        )
+        result = check_freshness(
+            "portfolio_allocation", table, "calculated_at", freshness_days=7
+        )
+        assert result.status == PASS
+        assert "empty" in result.details.lower()
+
 
 # ---------------------------------------------------------------------------
 # Reconciliation check tests
