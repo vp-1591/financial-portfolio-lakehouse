@@ -210,29 +210,60 @@ def main() -> None:
         table_path = storage.normalized_path(table_name)
         print(f"Checking {table_name}...")
         if migrate_table_drop(
-            table_name, table_path, storage_opts, target_schema, drop_col, dry_run=args.dry_run
+            table_name,
+            table_path,
+            storage_opts,
+            target_schema,
+            drop_col,
+            dry_run=args.dry_run,
         ):
             migrated += 1
 
     # Rename `currency` → `value_currency`
-    for table_name, (target_schema, old_col, new_col) in _RENAME_TO_VALUE_CURRENCY.items():
+    for table_name, (
+        target_schema,
+        old_col,
+        new_col,
+    ) in _RENAME_TO_VALUE_CURRENCY.items():
         table_path = (
             storage.analytics_path(table_name)
-            if table_name in ("portfolio_holdings", "dividend_income", "interest_income", "cash_flow_summary")
+            if table_name
+            in (
+                "portfolio_holdings",
+                "dividend_income",
+                "interest_income",
+                "cash_flow_summary",
+            )
             else storage.normalized_path(table_name)
         )
         print(f"Checking {table_name}...")
         if migrate_table_rename(
-            table_name, table_path, storage_opts, target_schema, old_col, new_col, dry_run=args.dry_run
+            table_name,
+            table_path,
+            storage_opts,
+            target_schema,
+            old_col,
+            new_col,
+            dry_run=args.dry_run,
         ):
             migrated += 1
 
     # Rename `currency` → `base_currency`
-    for table_name, (target_schema, old_col, new_col) in _RENAME_TO_BASE_CURRENCY.items():
+    for table_name, (
+        target_schema,
+        old_col,
+        new_col,
+    ) in _RENAME_TO_BASE_CURRENCY.items():
         table_path = storage.normalized_path(table_name)
         print(f"Checking {table_name}...")
         if migrate_table_rename(
-            table_name, table_path, storage_opts, target_schema, old_col, new_col, dry_run=args.dry_run
+            table_name,
+            table_path,
+            storage_opts,
+            target_schema,
+            old_col,
+            new_col,
+            dry_run=args.dry_run,
         ):
             migrated += 1
 
