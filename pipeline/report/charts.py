@@ -102,12 +102,12 @@ def passive_income_timeline(
             .agg(pl.col("amount_base").sum().alias("total"))
             .sort("period_month")
         )
-        value_col = "total"
         traces.append(
             go.Bar(
                 x=div_agg["period_month"].to_list(),
-                y=div_agg[value_col].to_list(),
+                y=div_agg["total"].to_list(),
                 name="Dividends",
+                hovertemplate="Dividends<extra></extra><br>%{y:,.2f}",
             )
         )
 
@@ -117,12 +117,12 @@ def passive_income_timeline(
             .agg(pl.col("amount_base").sum().alias("total"))
             .sort("period_month")
         )
-        value_col = "total"
         traces.append(
             go.Bar(
                 x=int_agg["period_month"].to_list(),
-                y=int_agg[value_col].to_list(),
+                y=int_agg["total"].to_list(),
                 name="Interest",
+                hovertemplate="Interest<extra></extra><br>%{y:,.2f}",
             )
         )
 
@@ -236,9 +236,16 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
 def data_quality_chart(dq: pl.DataFrame) -> go.Figure | None:
     """Bar chart: check counts by status (PASS/WARN/FAIL).
 
-    Returns ``None`` if the DataFrame is empty (no validation results).
+    Returns ``None`` if the DataFrame is empty or if every check passed
+    (no WARN or FAIL rows).  An all-pass chart is just a big green bar
+    with no actionable information.
     """
     if dq.is_empty():
+        return None
+
+    # Skip the chart when there's nothing to flag — all-pass is not useful.
+    statuses = set(dq["status"].unique().to_list())
+    if statuses <= {"PASS"}:
         return None
 
     agg = dq.group_by("status").len().sort("status")
