@@ -163,13 +163,6 @@ def format_identifier(kind: str, value: str) -> str:
     return f"{kind}:{value}" if value else ""
 
 
-def real_currency(value: object, fallback: str) -> str:
-    currency = str(value or "").upper()
-    if not currency or currency == "BASE":
-        return fallback
-    return currency
-
-
 def normalize_trading212_ticker(ticker: str) -> str:
     if ticker.startswith("CASH "):
         return ticker
@@ -321,7 +314,7 @@ def consolidate_holdings(
             "fetched_at": fetched_ats,
             "broker": brokers,
             "ticker": tickers,
-            "currency": currencies,
+            "base_currency": currencies,
             "value": values,
             "identifier": identifiers,
             "security_currency": security_currencies,

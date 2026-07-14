@@ -635,7 +635,7 @@ class TestCdcTransform:
         assert result.column("broker")[0].as_py() == "Trading 212"
         assert result.column("event_id")[0].as_py() == "12345"
         assert result.column("event_datetime")[0].as_py() == "2024-01-15T10:30:00Z"
-        assert result.column("currency")[0].as_py() == "USD"
+        assert result.column("value_currency")[0].as_py() == "USD"
 
         # Nullable trade fields — now populated via nested struct access
         assert result.column("ticker")[0].as_py() == "AAPL_US_EQ"

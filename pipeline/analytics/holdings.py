@@ -116,18 +116,13 @@ def build_portfolio_holdings(
             .alias("value_native")
         )
 
-        # Determine native currency: prefer value_currency if present, fall back
-        # to the generic "currency" column.
-        currency_col = (
-            "value_currency" if "value_currency" in snap.columns else "currency"
-        )
-
+        # Native currency of the holding's value (from the snapshot).
         snap = snap.select(
             [
                 pl.lit(connector.display_name).alias("broker"),
                 pl.col(label_col).alias("ticker"),
                 pl.col("position_type"),
-                pl.col(currency_col).alias("currency"),
+                pl.col("value_currency"),
                 pl.col("value_native").alias("value"),
             ]
         )
@@ -143,7 +138,7 @@ def build_portfolio_holdings(
                 "broker": pl.Series([], dtype=pl.String),
                 "ticker": pl.Series([], dtype=pl.String),
                 "position_type": pl.Series([], dtype=pl.String),
-                "currency": pl.Series([], dtype=pl.String),
+                "value_currency": pl.Series([], dtype=pl.String),
                 "value": pl.Series([], dtype=pl.Float64),
             }
         )
@@ -155,10 +150,9 @@ def build_portfolio_holdings(
         [
             "broker",
             "ticker",
-            # consolidated.currency is the base/target currency (always EUR in
-            # test fixtures).  Rename early so the left join doesn't collide
-            # with the snapshot's "currency" column.
-            pl.col("currency").alias("base_currency"),
+            # consolidated.base_currency is the base/target currency (always
+            # EUR in test fixtures) — the currency value_base is denominated in.
+            "base_currency",
             "value_base",
             "identifier",
             "security_currency",
@@ -176,11 +170,12 @@ def build_portfolio_holdings(
             .then(pl.col("value_base"))
             .otherwise(pl.col("value"))
             .alias("value"),
-            # Native currency: use snapshot currency if matched, else fall back to base
-            pl.when(pl.col("currency").is_null())
+            # Native currency: use snapshot value_currency if matched, else
+            # fall back to the consolidated base_currency.
+            pl.when(pl.col("value_currency").is_null())
             .then(pl.col("base_currency"))
-            .otherwise(pl.col("currency"))
-            .alias("currency"),
+            .otherwise(pl.col("value_currency"))
+            .alias("value_currency"),
             # Position type: UNKNOWN for unmatched rows
             pl.when(pl.col("position_type").is_null())
             .then(pl.lit("UNKNOWN"))
@@ -200,7 +195,7 @@ def build_portfolio_holdings(
             pl.lit(now).alias("calculated_at"),
             "broker",
             "ticker",
-            "currency",
+            "value_currency",
             "value",
             "value_base",
             "base_currency",

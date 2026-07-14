@@ -93,7 +93,6 @@ def ibkr_normalized_snapshot(
             "position_type": ["EQUITY", "EQUITY", "CASH"],
             "label": ["VWCE", "AAPL", "CASH EUR"],
             "asset_class": ["STK", "STK", "CASH"],
-            "currency": ["EUR", "EUR", "EUR"],
             "value": [
                 encrypt_float(5000.0, fernet_key),
                 encrypt_float(2700.0, fernet_key),  # 3000 USD * 0.9 EUR/USD

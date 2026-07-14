@@ -68,7 +68,7 @@ Fix the immediate bug where the currency allocation chart groups by wallet curre
 
 ---
 
-### Phase 2 — Remove `currency` column and rename to explicit names across all layers *[status: planned]*
+### Phase 2 — Remove `currency` column and rename to explicit names across all layers *[status: done]*
 
 Remove the redundant `currency` column from snapshot schemas and rename the overloaded `currency` column in consolidated holdings, portfolio holdings, and CDC tables to unambiguous names. These changes are tightly coupled — removing `currency` from snapshots requires updating `holdings.py` which also renames the column in `portfolio_holdings`.
 

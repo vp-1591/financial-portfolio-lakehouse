@@ -111,7 +111,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "fetched_at",
         "broker",
         "ticker",
-        "currency",
+        "base_currency",
         "value",
     ],
     "cdc_events": [
@@ -124,19 +124,19 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
     "ibkr_snapshot": [
         "fetched_at",
         "account_id",
-        "currency",
+        "value_currency",
         "value",
     ],
     "trading212_snapshot": [
         "fetched_at",
         "account_id",
-        "currency",
+        "value_currency",
         "value",
     ],
     "xtb_snapshot": [
         "fetched_at",
         "account_id",
-        "currency",
+        "value_currency",
         "value",
     ],
     "ibkr_cdc": [
@@ -171,7 +171,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "calculated_at",
         "broker",
         "ticker",
-        "currency",
+        "value_currency",
         "value",
         "base_currency",
         "position_type",
@@ -180,7 +180,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "calculated_at",
         "period_month",
         "broker",
-        "currency",
+        "value_currency",
         "cash_amount",
         "event_count",
     ],
@@ -188,7 +188,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "calculated_at",
         "period_month",
         "broker",
-        "currency",
+        "value_currency",
         "cash_amount",
         "event_count",
     ],
@@ -197,7 +197,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "period_month",
         "broker",
         "event_type",
-        "currency",
+        "value_currency",
         "cash_amount",
         "event_count",
     ],
@@ -392,11 +392,11 @@ def check_reconciliation(
         )
 
     # Currency coverage check
-    holdings_currencies = set(holdings_df["currency"].unique().to_list())
-    # For CDC, amount_base is encrypted — use currency column instead
+    holdings_currencies = set(holdings_df["base_currency"].unique().to_list())
+    # For CDC, amount_base is encrypted — use value_currency column instead
     cdc_currencies = (
-        set(cdc_df["currency"].unique().to_list())
-        if "currency" in cdc_df.columns
+        set(cdc_df["value_currency"].unique().to_list())
+        if "value_currency" in cdc_df.columns
         else set()
     )
 

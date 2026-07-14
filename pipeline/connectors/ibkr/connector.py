@@ -74,7 +74,7 @@ class IbkrConnector:
                 Holding(
                     broker="IBKR",
                     ticker=str(row["label"]),
-                    currency=str(row.get("value_currency", row.get("currency", ""))),
+                    currency=str(row.get("value_currency", "")),
                     value=row["value_decrypted"],
                     identifier=identifier,
                     security_currency=str(row.get("security_currency", "")),

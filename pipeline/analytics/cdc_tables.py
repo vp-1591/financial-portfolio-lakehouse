@@ -265,7 +265,7 @@ def build_dividend_income(
                 "ticker": pa.array([], type=pa.string()),
                 "isin": pa.array([], type=pa.string()),
                 "description": pa.array([], type=pa.string()),
-                "currency": pa.array([], type=pa.string()),
+                "value_currency": pa.array([], type=pa.string()),
                 "cash_amount": pa.array([], type=pa.float64()),
                 "amount_base": pa.array([], type=pa.float64()),
                 "base_currency": pa.array([], type=pa.string()),
@@ -283,7 +283,7 @@ def build_dividend_income(
                     "ticker",
                     "isin",
                     "description",
-                    "currency",
+                    "value_currency",
                     "base_currency",
                 ]
             )
@@ -314,7 +314,7 @@ def build_dividend_income(
                 "ticker": agg["ticker"].to_list(),
                 "isin": agg["isin"].to_list(),
                 "description": agg["description"].to_list(),
-                "currency": agg["currency"].to_list(),
+                "value_currency": agg["value_currency"].to_list(),
                 "cash_amount": agg["cash_amount"].to_list(),
                 "amount_base": agg["amount_base"].to_list(),
                 "base_currency": agg["base_currency"].to_list(),
@@ -357,7 +357,7 @@ def build_interest_income(
                 "period_month": pa.array([], type=pa.string()),
                 "period_quarter": pa.array([], type=pa.string()),
                 "broker": pa.array([], type=pa.string()),
-                "currency": pa.array([], type=pa.string()),
+                "value_currency": pa.array([], type=pa.string()),
                 "cash_amount": pa.array([], type=pa.float64()),
                 "amount_base": pa.array([], type=pa.float64()),
                 "base_currency": pa.array([], type=pa.string()),
@@ -372,7 +372,7 @@ def build_interest_income(
                     "period_month",
                     "period_quarter",
                     "broker",
-                    "currency",
+                    "value_currency",
                     "base_currency",
                 ]
             )
@@ -388,7 +388,7 @@ def build_interest_income(
                     pl.col("event_id").count().alias("event_count"),
                 ]
             )
-            .sort(["period_month", "broker", "currency"])
+            .sort(["period_month", "broker", "value_currency"])
         )
         # Cast amount_base to Float64 — Polars sum() on an all-null column
         # produces Null type, which breaks PyArrow schema inference.
@@ -400,7 +400,7 @@ def build_interest_income(
                 "period_month": agg["period_month"].to_list(),
                 "period_quarter": agg["period_quarter"].to_list(),
                 "broker": agg["broker"].to_list(),
-                "currency": agg["currency"].to_list(),
+                "value_currency": agg["value_currency"].to_list(),
                 "cash_amount": agg["cash_amount"].to_list(),
                 "amount_base": agg["amount_base"].to_list(),
                 "base_currency": agg["base_currency"].to_list(),
@@ -441,7 +441,7 @@ def build_cash_flow_summary(
                 "period_quarter": pa.array([], type=pa.string()),
                 "broker": pa.array([], type=pa.string()),
                 "event_type": pa.array([], type=pa.string()),
-                "currency": pa.array([], type=pa.string()),
+                "value_currency": pa.array([], type=pa.string()),
                 "cash_amount": pa.array([], type=pa.float64()),
                 "amount_base": pa.array([], type=pa.float64()),
                 "base_currency": pa.array([], type=pa.string()),
@@ -457,7 +457,7 @@ def build_cash_flow_summary(
                     "period_quarter",
                     "broker",
                     "event_type",
-                    "currency",
+                    "value_currency",
                     "base_currency",
                 ]
             )
@@ -486,7 +486,7 @@ def build_cash_flow_summary(
                 "period_quarter": agg["period_quarter"].to_list(),
                 "broker": agg["broker"].to_list(),
                 "event_type": agg["event_type"].to_list(),
-                "currency": agg["currency"].to_list(),
+                "value_currency": agg["value_currency"].to_list(),
                 "cash_amount": agg["cash_amount"].to_list(),
                 "amount_base": agg["amount_base"].to_list(),
                 "base_currency": agg["base_currency"].to_list(),
