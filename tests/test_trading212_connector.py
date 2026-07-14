@@ -734,6 +734,11 @@ class TestCdcTransform:
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(500.0)
 
+        # gross_amount should also be converted from wallet to security ccy.
+        # The default filledValue is 1500.0 (wallet ccy), * 0.25 = 375.0 USD.
+        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
+        assert gross == pytest.approx(1500.0 * 0.25)
+
         # target_fx_rate, target_value, target_ccy are null for T212 orders;
         # they are computed later by normalize_currency.
         assert result.column("target_fx_rate")[0].as_py() is None
@@ -778,8 +783,72 @@ class TestCdcTransform:
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(7500.0 * 19.949, rel=1e-6)
 
+        # gross_amount is also converted from wallet to security ccy.
+        # Default filledValue=1500.0 (wallet ccy PLN), * 19.949 ≈ 29923.5 GBX.
+        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
+        assert gross == pytest.approx(1500.0 * 19.949, rel=1e-6)
+
         # target_fx_rate, target_value, target_ccy are null for T212 orders
         assert result.column("target_value")[0].as_py() is None
+
+    def test_transform_cdc_order_fee_tax_converted_to_security_ccy(
+        self, fernet_key: bytes
+    ) -> None:
+        """T212 cross-currency orders convert fee/tax/gross from wallet ccy to security ccy.
+
+        Bug 5 fix: fee_amount, tax_amount, and gross_amount are multiplied by
+        walletImpact.fxRate (wallet→security) to convert from wallet currency to
+        security currency.
+          - wallet ccy = PLN, security ccy = USD, fx_rate = 0.25 (PLN→USD)
+          - gross_amount (wallet) = 2000 PLN → 500 USD
+          - fee_amount (wallet) = 4.0 PLN → 1.0 USD
+          - tax_amount (wallet) = 2.0 PLN → 0.5 USD
+        """
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        event = self._make_order_event()
+        event["order"]["ticker"] = "SPYI_US_EQ"
+        event["order"]["currency"] = "USD"
+        event["order"]["filledValue"] = 2000.0
+        event["order"]["instrument"] = {
+            "ticker": "SPYI_US_EQ",
+            "isin": "US46434G7510",
+            "name": "SPDR SSGA Global Infrastructure ETF",
+            "currency": "USD",
+        }
+        event["fill"]["walletImpact"] = {
+            "currency": "PLN",
+            "fxRate": 0.25,
+            "netValue": 2000.0,
+            "realisedProfitLoss": 0,
+            "taxes": [
+                {"name": "TRANSACTION_FEE", "quantity": 4.0, "currency": "PLN"},
+                {"name": "FRENCH_TRANSACTION_TAX", "quantity": 2.0, "currency": "PLN"},
+            ],
+        }
+        event["fill"]["price"] = 50.0  # USD per share
+        event["fill"]["quantity"] = 10
+
+        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+
+        # cash_amount: 2000 PLN * 0.25 = 500 USD
+        cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
+        assert cash == pytest.approx(500.0)
+
+        # gross_amount: 2000 PLN * 0.25 = 500 USD
+        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
+        assert gross == pytest.approx(500.0)
+
+        # fee_amount: 4.0 PLN * 0.25 = 1.0 USD
+        fee = decrypt_float(result.column("fee_amount")[0].as_py(), fernet_key)
+        assert fee == pytest.approx(1.0)
+
+        # tax_amount: 2.0 PLN * 0.25 = 0.5 USD
+        tax = decrypt_float(result.column("tax_amount")[0].as_py(), fernet_key)
+        assert tax == pytest.approx(0.5)
 
     def test_transform_cdc_dividend_currency_mismatch_warning(
         self, fernet_key: bytes, caplog: pytest.LogCaptureFixture

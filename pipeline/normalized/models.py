@@ -95,12 +95,8 @@ cdc_events_normalized_schema = pa.schema(
         pa.field("price", pa.binary()),  # Fernet-encrypted
         pa.field("side", pa.string()),
         pa.field("gross_amount", pa.binary()),  # Fernet-encrypted; in security_ccy
-        pa.field(
-            "fee_amount", pa.binary()
-        ),  # Fernet-encrypted; in security_ccy (Phase 3: wallet ccy for T212)
-        pa.field(
-            "tax_amount", pa.binary()
-        ),  # Fernet-encrypted; in security_ccy (Phase 3: wallet ccy for T212)
+        pa.field("fee_amount", pa.binary()),  # Fernet-encrypted; in security_ccy
+        pa.field("tax_amount", pa.binary()),  # Fernet-encrypted; in security_ccy
         # Target currency columns (populated by normalize_currency step)
         pa.field(
             "target_fx_rate", pa.binary()

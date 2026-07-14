@@ -728,6 +728,21 @@ class TestCdcTransform:
                 f"Compact datetime not normalised: {dt}"
             )
 
+    def test_transform_cdc_settle_date_normalized(self, fernet_key: bytes) -> None:
+        """IBKR settle_date compact formats are normalised to ISO 8601."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        settle_dates = result.column("settle_date").to_pylist()
+        # All non-empty settle_date values should be ISO 8601 (no compact YYYYMMDD)
+        for sd in settle_dates:
+            if sd:
+                assert "-" in sd, f"Compact settle_date not normalised: {sd}"
+
 
 class TestNormalizeIbkrDatetime:
     """Tests for _normalize_ibkr_datetime helper."""
@@ -763,6 +778,147 @@ class TestNormalizeIbkrDatetime:
         from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert _normalize_ibkr_datetime("") == ""
+
+
+class TestIbkrFeeConversion:
+    """Tests for IBKR trade fee conversion when commission currency differs from trade currency."""
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    def _build_trade_xml(
+        self,
+        account_id: str = "U123456",
+        account_currency: str = "EUR",
+        trade_currency: str = "USD",
+        fx_rate_to_base: str = "0.9",
+        ib_commission: str = "-1.0",
+        ib_commission_currency: str = "USD",
+    ) -> str:
+        """Build Flex XML with a single Trade having the specified commission currency."""
+        return (
+            '<FlexQueryResponse queryName="test_fee" type="AF">'
+            '<FlexStatements count="1">'
+            f'<FlexStatement accountId="{account_id}" fromDate="20260101" toDate="20260625">'
+            "<AccountInformation>"
+            f'<AccountInformation accountId="{account_id}" currency="{account_currency}"/>'
+            "</AccountInformation>"
+            "<Trades>"
+            f'<Trade accountId="{account_id}" symbol="AAPL" description="Apple Inc"'
+            f' isin="US0378331005" currency="{trade_currency}" fxRateToBase="{fx_rate_to_base}"'
+            ' dateTime="20260115;103000"'
+            ' tradeDate="20260115" settleDateTarget="20260117"'
+            ' quantity="10" tradePrice="150.0" proceeds="-1500.0"'
+            f' ibCommission="{ib_commission}" ibCommissionCurrency="{ib_commission_currency}"'
+            ' netCash="-1501.0"'
+            ' buySell="BUY" transactionType="ExTrade"'
+            f' ibExecutionId="e001" tradeId="T001" transactionId="TX001"'
+            ' taxes="0.0" conid="265598" securityId="US0378331005"'
+            ' multiplier="1" openCloseIndicator="O"/>'
+            "</Trades>"
+            "<CashTransactions/>"
+            "<Transfers/>"
+            "<TransactionFees/>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+
+    def _build_raw_table(self, xml_str: str, fernet_key: bytes) -> pa.Table:
+        """Build a raw-layer table with a Flex XML payload."""
+        import hashlib
+
+        from pipeline.crypto import encrypt
+
+        xml_bytes = xml_str.encode("utf-8")
+        encrypted_payload = encrypt(xml_bytes, fernet_key)
+        now = datetime.now(timezone.utc)
+        payload_hash = hashlib.sha256(xml_bytes).hexdigest()
+
+        return pa.table(
+            {
+                "fetched_at": [now],
+                "broker": ["IBKR"],
+                "source": ["flex_cdc"],
+                "payload": [encrypted_payload],
+                "payload_hash": [payload_hash],
+                "source_file": [""],
+            },
+            schema=RAW_SCHEMA,
+        )
+
+    def test_trade_fee_same_currency(self, fernet_key: bytes) -> None:
+        """When ibCommissionCurrency matches trade currency, fee is unchanged."""
+        from pipeline.connectors.ibkr.transform import transform_cdc
+        from pipeline.crypto import decrypt_float
+
+        xml_str = self._build_trade_xml(
+            trade_currency="USD",
+            ib_commission_currency="USD",
+            ib_commission="-1.0",
+        )
+        raw = self._build_raw_table(xml_str, fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        event_types = result.column("event_type").to_pylist()
+        trade_idx = event_types.index("TRADE")
+        fee = decrypt_float(result.column("fee_amount")[trade_idx].as_py(), fernet_key)
+        assert fee == pytest.approx(1.0)  # abs(-1.0), no conversion
+
+    def test_trade_fee_commission_in_base_currency(self, fernet_key: bytes) -> None:
+        """When commission currency matches base currency, fee is converted via 1/fxRateToBase."""
+        from pipeline.connectors.ibkr.transform import transform_cdc
+        from pipeline.crypto import decrypt_float
+
+        # EUR account, USD trade, commission in EUR (base), fxRateToBase=0.9 (USD→EUR)
+        # fee_amount = 1.0 EUR / 0.9 = 1.111... USD
+        xml_str = self._build_trade_xml(
+            account_currency="EUR",
+            trade_currency="USD",
+            fx_rate_to_base="0.9",
+            ib_commission="-1.0",
+            ib_commission_currency="EUR",
+        )
+        raw = self._build_raw_table(xml_str, fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        event_types = result.column("event_type").to_pylist()
+        trade_idx = event_types.index("TRADE")
+        fee = decrypt_float(result.column("fee_amount")[trade_idx].as_py(), fernet_key)
+        assert fee == pytest.approx(1.0 / 0.9, abs=1e-4)
+
+    def test_trade_fee_cross_currency_warning(self, fernet_key: bytes, caplog) -> None:
+        """When commission currency differs from both trade and base, fee is left unconverted with a warning."""
+        import logging
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+        from pipeline.crypto import decrypt_float
+
+        # EUR account, USD trade, commission in GBP (neither trade nor base currency)
+        xml_str = self._build_trade_xml(
+            account_currency="EUR",
+            trade_currency="USD",
+            fx_rate_to_base="0.9",
+            ib_commission="-0.50",
+            ib_commission_currency="GBP",
+        )
+        raw = self._build_raw_table(xml_str, fernet_key)
+
+        with caplog.at_level(logging.WARNING):
+            result = transform_cdc(raw, fernet_key)
+
+        event_types = result.column("event_type").to_pylist()
+        trade_idx = event_types.index("TRADE")
+        fee = decrypt_float(result.column("fee_amount")[trade_idx].as_py(), fernet_key)
+        # Fee is left in GBP (0.50) since we can't convert it
+        assert fee == pytest.approx(0.50)
+
+        # A warning should have been logged
+        warning_msgs = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert any("differs from" in msg and "GBP" in msg for msg in warning_msgs)
 
 
 class TestClassifyIbkrCashType:

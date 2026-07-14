@@ -394,7 +394,7 @@ def check_reconciliation(
 
     # Currency coverage check
     holdings_currencies = set(holdings_df["target_ccy"].unique().to_list())
-    # For CDC, amount_base is encrypted — use security_ccy column instead
+    # CDC target_value is encrypted — use security_ccy column for currency coverage
     cdc_currencies = (
         set(cdc_df["security_ccy"].unique().to_list())
         if "security_ccy" in cdc_df.columns

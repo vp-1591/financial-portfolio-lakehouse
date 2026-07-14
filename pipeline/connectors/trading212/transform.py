@@ -383,13 +383,15 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         ).cast(pl.Float64),
         price=fill.struct.field("price").cast(pl.Float64),
         side=order.struct.field("side"),
-        # gross_amount, fee_amount, tax_amount remain in wallet ccy until
-        # Phase 3 addresses fee/tax currency conversion.
+        # gross_amount, fee_amount, and tax_amount are converted from wallet ccy
+        # to security_ccy using walletImpact.fxRate (the wallet→security rate),
+        # the same rate used for cash_amount conversion.
         gross_amount=pl.coalesce(
             [order.struct.field("filledValue"), order.struct.field("value")]
-        ).cast(pl.Float64),
-        fee_amount=pl.Series("fee_amount", fee_amounts, dtype=pl.Float64),
-        tax_amount=pl.Series("tax_amount", tax_amounts, dtype=pl.Float64),
+        ).cast(pl.Float64)
+        * fx_rate,
+        fee_amount=pl.Series("fee_amount", fee_amounts, dtype=pl.Float64) * fx_rate,
+        tax_amount=pl.Series("tax_amount", tax_amounts, dtype=pl.Float64) * fx_rate,
         # target_fx_rate, target_value, target_ccy are null for T212 orders;
         # they are populated by the normalize_currency step.
         target_fx_rate=pl.lit(None),

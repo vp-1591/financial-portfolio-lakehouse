@@ -587,6 +587,42 @@ def _process_ibkr_trade(
         fx_rate if base_currency.upper() == target_currency.upper() else None
     )
 
+    # Phase 3: Convert fee_amount from ibCommissionCurrency to security_ccy when
+    # they differ.  When commission currency matches base_currency, we can reverse
+    # fxRateToBase (which converts security_ccy → base_ccy) to get the fee in
+    # security_ccy.  Otherwise, log a warning and leave the fee in its native currency.
+    raw_fee = abs(as_float(trade.get("ibCommission")))
+    commission_ccy = str(trade.get("ibCommissionCurrency", "") or "").upper()
+    if commission_ccy and commission_ccy != currency:
+        if commission_ccy == base_currency and fx_rate != 0:
+            fee_amount = raw_fee / fx_rate
+            logger.info(
+                "IBKR trade %s: commission currency %s differs from trade currency %s; "
+                "converted fee %.4f %s → %.4f %s using fxRateToBase %.4f",
+                event_id,
+                commission_ccy,
+                currency,
+                raw_fee,
+                commission_ccy,
+                fee_amount,
+                currency,
+                fx_rate,
+            )
+        else:
+            fee_amount = raw_fee
+            logger.warning(
+                "IBKR trade %s: commission currency %s differs from trade currency %s "
+                "and base currency %s; fee %.4f %s left in commission currency",
+                event_id,
+                commission_ccy,
+                currency,
+                base_currency,
+                raw_fee,
+                commission_ccy,
+            )
+    else:
+        fee_amount = raw_fee
+
     return {
         "fetched_at": fetched_at,
         "broker": "IBKR",
@@ -598,7 +634,7 @@ def _process_ibkr_trade(
         "event_datetime": _normalize_ibkr_datetime(str(trade.get("dateTime", ""))),
         "security_ccy": currency,
         "cash_amount": as_float(trade.get("netCash")),
-        "settle_date": str(trade.get("settleDateTarget", "")),
+        "settle_date": _normalize_ibkr_datetime(str(trade.get("settleDateTarget", ""))),
         "ticker": str(trade.get("symbol", "")),
         "isin": str(trade.get("isin", "")),
         "description": str(trade.get("description", "")),
@@ -606,7 +642,7 @@ def _process_ibkr_trade(
         "price": as_float(trade.get("tradePrice")),
         "side": str(trade.get("buySell", "")),
         "gross_amount": as_float(trade.get("proceeds")),
-        "fee_amount": abs(as_float(trade.get("ibCommission"))),
+        "fee_amount": fee_amount,
         "tax_amount": as_float(trade.get("taxes")),
         "target_fx_rate": target_fx_rate,
         "target_value": None,
@@ -650,7 +686,7 @@ def _process_ibkr_cash_transaction(
         "event_datetime": _normalize_ibkr_datetime(str(ct.get("dateTime", ""))),
         "security_ccy": currency,
         "cash_amount": amount,
-        "settle_date": str(ct.get("settleDate", "")),
+        "settle_date": _normalize_ibkr_datetime(str(ct.get("settleDate", ""))),
         "ticker": str(ct.get("symbol", "")),
         "isin": str(ct.get("isin", "")),
         "description": str(ct.get("description", "")),
@@ -695,7 +731,7 @@ def _process_ibkr_transfer(
         "event_datetime": _normalize_ibkr_datetime(str(transfer.get("dateTime", ""))),
         "security_ccy": currency,
         "cash_amount": cash_transfer,
-        "settle_date": str(transfer.get("settleDate", "")),
+        "settle_date": _normalize_ibkr_datetime(str(transfer.get("settleDate", ""))),
         "ticker": str(transfer.get("symbol", "")),
         "isin": str(transfer.get("isin", "")),
         "description": str(transfer.get("description", "")),
@@ -743,7 +779,7 @@ def _process_ibkr_transaction_fee(
         "event_datetime": _normalize_ibkr_datetime(str(fee.get("date", ""))),
         "security_ccy": currency,
         "cash_amount": tax_amount,
-        "settle_date": str(fee.get("settleDate", "")),
+        "settle_date": _normalize_ibkr_datetime(str(fee.get("settleDate", ""))),
         "ticker": str(fee.get("symbol", "")),
         "isin": str(fee.get("isin", "")),
         "description": str(fee.get("taxDescription", "")),
