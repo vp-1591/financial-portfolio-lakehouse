@@ -852,3 +852,197 @@ class TestClassifyIbkrCashType:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("SomeNewType", 42.0) == "UNKNOWN"
+
+
+class TestInjectDemoDeposit:
+    """Tests for _inject_demo_deposit synthetic deposit injection."""
+
+    def _make_records(
+        self,
+        account_id: str = "U123456",
+        base_currency: str = "EUR",
+        event_datetime: str = "2026-03-01T00:00:00Z",
+    ) -> list[dict]:
+        """Build minimal CDC record dicts for testing."""
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "fetched_at": now,
+                "broker": "IBKR",
+                "account_id": account_id,
+                "event_id": "abc123",
+                "source": "CashTransaction",
+                "event_type": "DIVIDEND",
+                "raw_event_type": "Dividends",
+                "event_datetime": event_datetime,
+                "currency": base_currency,
+                "cash_amount": 42.50,
+                "settle_date": "2026-03-04",
+                "ticker": "VWCE",
+                "isin": "IE00BK5BQT80",
+                "description": "Vanguard FTSE All-World",
+                "base_currency": base_currency,
+                "fx_rate_to_base": 1.0,
+                "amount_base": 42.50,
+            }
+        ]
+
+    def test_no_injection_when_not_demo(self) -> None:
+        """When is_demo=False, records are returned unchanged."""
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        records = self._make_records()
+        result = _inject_demo_deposit(records, is_demo=False)
+        assert result is records
+        assert len(result) == 1
+
+    def test_injection_adds_deposit_when_demo(self) -> None:
+        """When is_demo=True, a DEPOSIT record is added for each account."""
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        records = self._make_records()
+        result = _inject_demo_deposit(records, is_demo=True)
+        assert len(result) == 2  # original + deposit
+
+        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        assert deposit["account_id"] == "U123456"
+        assert deposit["currency"] == "EUR"
+        assert deposit["cash_amount"] == 1_000_000.0
+        assert deposit["amount_base"] == 1_000_000.0
+        assert deposit["fx_rate_to_base"] == 1.0
+        assert deposit["source"] == "CashTransaction"
+        assert deposit["raw_event_type"] == "Deposits & Withdrawals"
+        assert deposit["description"] == "Initial demo account deposit"
+        assert deposit["ticker"] == ""
+        assert deposit["isin"] == ""
+
+    def test_deposit_date_before_earliest_event(self) -> None:
+        """The deposit date is one day before the earliest event_datetime."""
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        records = self._make_records(event_datetime="2026-06-15T10:30:00Z")
+        result = _inject_demo_deposit(records, is_demo=True)
+
+        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        assert deposit["event_datetime"] == "2026-06-14T00:00:00Z"
+        assert deposit["settle_date"] == "2026-06-14"
+
+    def test_deposit_date_with_compact_datetime(self) -> None:
+        """Deposit date calculation works with IBKR compact datetime format."""
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        records = self._make_records(event_datetime="20260301")
+        # After normalization this becomes 2026-03-01T00:00:00Z
+        # But the records here use the already-normalized format.
+        # Test with ISO format since _inject_demo_deposit normalizes.
+        result = _inject_demo_deposit(records, is_demo=True)
+
+        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        assert deposit["settle_date"] == "2026-02-28"
+
+    def test_fallback_date_when_no_records(self) -> None:
+        """When no records exist, deposit uses the fallback date 2020-01-01."""
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        result = _inject_demo_deposit([], is_demo=True)
+        # No records → no accounts to derive → returns empty list
+        assert result == []
+
+    def test_multi_account_gets_deposit_per_account(self) -> None:
+        """Each unique (account_id, base_currency) pair gets its own deposit."""
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        now = datetime.now(timezone.utc)
+        records = [
+            {
+                "fetched_at": now,
+                "broker": "IBKR",
+                "account_id": "U111",
+                "event_id": "evt1",
+                "source": "CashTransaction",
+                "event_type": "TRADE",
+                "raw_event_type": "ExTrade",
+                "event_datetime": "2026-05-01T00:00:00Z",
+                "currency": "USD",
+                "cash_amount": -100.0,
+                "settle_date": "2026-05-03",
+                "ticker": "AAPL",
+                "isin": "",
+                "description": "Apple Inc",
+                "base_currency": "USD",
+                "fx_rate_to_base": 1.0,
+                "amount_base": -100.0,
+            },
+            {
+                "fetched_at": now,
+                "broker": "IBKR",
+                "account_id": "U222",
+                "event_id": "evt2",
+                "source": "CashTransaction",
+                "event_type": "DIVIDEND",
+                "raw_event_type": "Dividends",
+                "event_datetime": "2026-05-10T00:00:00Z",
+                "currency": "EUR",
+                "cash_amount": 50.0,
+                "settle_date": "2026-05-13",
+                "ticker": "VWCE",
+                "isin": "",
+                "description": "Vanguard",
+                "base_currency": "EUR",
+                "fx_rate_to_base": 1.0,
+                "amount_base": 50.0,
+            },
+        ]
+
+        result = _inject_demo_deposit(records, is_demo=True)
+        deposits = [r for r in result if r["event_type"] == "DEPOSIT"]
+        assert len(deposits) == 2
+
+        # Each account gets its own deposit with correct currency
+        by_account = {d["account_id"]: d for d in deposits}
+        assert "U111" in by_account
+        assert "U222" in by_account
+        assert by_account["U111"]["currency"] == "USD"
+        assert by_account["U222"]["currency"] == "EUR"
+        # Both deposits dated one day before earliest event (2026-05-01)
+        assert by_account["U111"]["event_datetime"] == "2026-04-30T00:00:00Z"
+        assert by_account["U222"]["event_datetime"] == "2026-04-30T00:00:00Z"
+
+    def test_deterministic_event_id_is_stable(self) -> None:
+        """Calling _inject_demo_deposit twice produces the same event_ids."""
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        records = self._make_records()
+        result1 = _inject_demo_deposit(list(records), is_demo=True)
+        result2 = _inject_demo_deposit(list(records), is_demo=True)
+
+        deposits1 = [r for r in result1 if r["event_type"] == "DEPOSIT"]
+        deposits2 = [r for r in result2 if r["event_type"] == "DEPOSIT"]
+        assert len(deposits1) == len(deposits2) == 1
+        assert deposits1[0]["event_id"] == deposits2[0]["event_id"]
+
+    def test_transform_cdc_with_demo_flag(self) -> None:
+        """transform_cdc with is_demo=True injects a synthetic deposit."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        fernet_key = generate_key()
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+
+        result_no_demo = transform_cdc(raw, fernet_key, is_demo=False)
+        result_demo = transform_cdc(raw, fernet_key, is_demo=True)
+
+        # Demo result should have one more row (the deposit)
+        assert result_demo.num_rows == result_no_demo.num_rows + 1
+
+        demo_types = result_demo.column("event_type").to_pylist()
+        assert demo_types.count("DEPOSIT") == 1 + result_no_demo.column(
+            "event_type"
+        ).to_pylist().count("DEPOSIT")
+
+        # The synthetic deposit should be for the fixture account
+        demo_event_ids = result_demo.column("event_id").to_pylist()
+        assert len(demo_event_ids) == len(set(demo_event_ids)), (
+            "Synthetic deposit should not duplicate existing event_ids"
+        )

@@ -12,7 +12,7 @@ import pyarrow as pa
 from pipeline.connectors.ibkr import fetch, transform
 from pipeline.connectors.registry import register
 from pipeline.normalized.consolidate import Holding
-from pipeline.secrets import get_env, resolve_secret
+from pipeline.secrets import get_env, is_demo, resolve_secret
 
 logger = logging.getLogger(__name__)
 
@@ -118,4 +118,4 @@ class IbkrConnector:
         )
 
     def transform_cdc(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
-        return transform.transform_cdc(raw, fernet_key)
+        return transform.transform_cdc(raw, fernet_key, is_demo=is_demo())
