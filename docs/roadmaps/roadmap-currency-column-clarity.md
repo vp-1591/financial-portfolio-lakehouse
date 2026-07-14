@@ -45,7 +45,7 @@ Relevant ADRs: [ADR 0046](../adr/0046-fix-consolidated-currency-column.md) (fixe
 
 ## Phases
 
-### Phase 1 — Fix allocation chart bug and switch to donut *[status: planned]*
+### Phase 1 — Fix allocation chart bug and switch to donut *[status: done]*
 
 Fix the immediate bug where the currency allocation chart groups by wallet currency instead of instrument currency, and switch the chart type from bar to donut for consistency with the other allocation charts.
 
@@ -62,7 +62,7 @@ Fix the immediate bug where the currency allocation chart groups by wallet curre
 - Changing any other charts
 - CDC table changes
 
-**Files:** `pipeline/report/charts.py`, `pipeline/report/renderer.py`, `pipeline/report/templates/report.html`, `tests/test_report.py`
+**Files:** `pipeline/report/charts.py`, `tests/test_charts.py`
 
 **Links:** ADR 0066
 
