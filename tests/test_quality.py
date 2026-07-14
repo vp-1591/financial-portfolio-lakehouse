@@ -73,7 +73,7 @@ def _make_holdings_table(
                 "fetched_at": now,
                 "broker": "IBKR",
                 "ticker": "VWCE",
-                "currency": "EUR",
+                "base_currency": "EUR",
                 "value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
                 "security_currency": "EUR",
@@ -100,7 +100,7 @@ def _make_cdc_table(
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": "2026-03-01 00:00:00",
-                "currency": "EUR",
+                "value_currency": "EUR",
                 "cash_amount": encrypt_float(42.5, fernet_key),
                 "settle_date": None,
                 "ticker": "VWCE",
@@ -146,7 +146,7 @@ def _make_portfolio_holdings_table() -> pa.Table:
             "calculated_at": [now],
             "broker": ["IBKR"],
             "ticker": ["VWCE"],
-            "currency": ["EUR"],
+            "value_currency": ["EUR"],
             "value": [5000.0],
             "value_base": [5000.0],
             "base_currency": ["EUR"],
@@ -293,7 +293,7 @@ class TestCheckRequiredNulls:
                 "fetched_at": now,
                 "broker": None,  # null in required field
                 "ticker": "VWCE",
-                "currency": "EUR",
+                "base_currency": "EUR",
                 "value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
                 "security_currency": "EUR",
@@ -436,7 +436,7 @@ class TestCheckReconciliation:
                 "fetched_at": now,
                 "broker": "XTB",
                 "ticker": "VWCE",
-                "currency": "EUR",
+                "base_currency": "EUR",
                 "value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
                 "security_currency": "EUR",
@@ -567,7 +567,7 @@ class TestRunValidation:
                 "fetched_at": old_ts,
                 "broker": "IBKR",
                 "ticker": "VWCE",
-                "currency": "EUR",
+                "base_currency": "EUR",
                 "value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
                 "security_currency": "EUR",
@@ -676,7 +676,6 @@ def _make_ibkr_snapshot_table(fernet_key: bytes) -> pa.Table:
             "position_type": ["EQUITY"],
             "label": ["VWCE"],
             "asset_class": ["STK"],
-            "currency": ["EUR"],
             "value": [encrypt_float(5000.0, fernet_key)],
             "value_currency": ["EUR"],
             "isin": ["IE00BK5BQT80"],
@@ -761,7 +760,7 @@ class TestScopedValidation:
 
         # Write snapshot with a missing column
         snapshot = _make_ibkr_snapshot_table(fernet_key)
-        bad_snapshot = snapshot.drop_columns(["currency"])
+        bad_snapshot = snapshot.drop_columns(["value_currency"])
         write_deltalake(
             storage.normalized_path("ibkr_snapshot"), bad_snapshot, mode="overwrite"
         )

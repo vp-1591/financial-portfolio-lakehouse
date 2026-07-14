@@ -44,7 +44,6 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                     "label": pos.label,
                     "name": pos.name,
                     "asset_class": pos.asset_class,
-                    "currency": pos.currency,
                     "value": pos.value,
                     "value_currency": pos.currency,
                     "isin": pos.isin,
@@ -108,7 +107,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                     "event_type": _classify_xtb_event_type(op.operation_type),
                     "raw_event_type": op.operation_type,
                     "event_datetime": op.operation_date,
-                    "currency": op.currency,
+                    "value_currency": op.currency,
                     "cash_amount": op.amount,
                     "description": op.comment,
                 }

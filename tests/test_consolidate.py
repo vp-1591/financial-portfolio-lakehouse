@@ -12,7 +12,6 @@ from pipeline.normalized.consolidate import (
     aggregate_percentages,
     format_identifier,
     normalize_trading212_ticker,
-    real_currency,
 )
 
 
@@ -39,17 +38,6 @@ class TestFormatIdentifier:
 
     def test_returns_empty_for_empty_value(self) -> None:
         assert format_identifier("ISIN", "") == ""
-
-
-class TestRealCurrency:
-    def test_returns_real_currency(self) -> None:
-        assert real_currency("USD", "EUR") == "USD"
-
-    def test_falls_back_for_base_placeholder(self) -> None:
-        assert real_currency("BASE", "EUR") == "EUR"
-
-    def test_falls_back_for_empty(self) -> None:
-        assert real_currency(None, "EUR") == "EUR"
 
 
 class TestAggregatePercentages:

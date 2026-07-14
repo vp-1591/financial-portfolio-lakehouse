@@ -48,11 +48,11 @@ class XtbConnector:
                 Holding(
                     broker="XTB",
                     ticker=str(row["label"]),
-                    currency=str(row.get("value_currency", row.get("currency", ""))),
+                    currency=str(row.get("value_currency", "")),
                     value=row["value_decrypted"],
                     identifier=identifier,
                     security_currency=str(
-                        row.get("value_currency", row.get("currency", ""))
+                        row.get("security_currency", row.get("value_currency", ""))
                     ),
                     description=str(row.get("name", "")),
                 )

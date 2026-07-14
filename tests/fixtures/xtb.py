@@ -217,7 +217,6 @@ def xtb_normalized_snapshot(
                 "Cash PLN",
             ],
             "asset_class": ["STK", "STK", "CASH"],
-            "currency": ["EUR", "PLN", "PLN"],
             "value": [
                 encrypt_float(1000.0, fernet_key),
                 encrypt_float(2500.0, fernet_key),

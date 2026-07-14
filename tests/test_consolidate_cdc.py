@@ -39,7 +39,7 @@ class TestConsolidateCdc:
                 "event_type": event.get("event_type", ""),
                 "raw_event_type": event.get("raw_event_type", ""),
                 "event_datetime": event.get("event_datetime", ""),
-                "currency": event.get("currency", ""),
+                "value_currency": event.get("value_currency", ""),
                 "cash_amount": event.get("cash_amount", 0.0),
             }
             records.append(record)
@@ -64,7 +64,7 @@ class TestConsolidateCdc:
                     "raw_event_type": "ORDER",
                     "source": "/equity/history/orders",
                     "event_datetime": "2024-01-15",
-                    "currency": "USD",
+                    "value_currency": "USD",
                     "cash_amount": 1500.0,
                 }
             ],
@@ -79,7 +79,7 @@ class TestConsolidateCdc:
                     "raw_event_type": "Dividends",
                     "source": "CashTransaction",
                     "event_datetime": "2024-03-01",
-                    "currency": "EUR",
+                    "value_currency": "EUR",
                     "cash_amount": 42.5,
                 }
             ],

@@ -173,7 +173,7 @@ class TestBuildPortfolioHoldings:
 
         df = pl.from_arrow(result)
         eur_native = df.filter(
-            (pl.col("currency") == "EUR") & (pl.col("base_currency") == "EUR")
+            (pl.col("value_currency") == "EUR") & (pl.col("base_currency") == "EUR")
         )
         # For EUR positions, native value should equal base value
         assert len(eur_native) > 0

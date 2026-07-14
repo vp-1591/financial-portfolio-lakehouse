@@ -332,7 +332,7 @@ class TestFlexTransformSnapshot:
             '<FlexStatement accountId="U999" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U999" currency="BASE"/>'
             "<OpenPositions>"
-            '<OpenPosition symbol="AAPL" currency="USD" positionValue="5000.0" '
+            '<OpenPosition symbol="AAPL" positionValue="5000.0" '
             'assetClass="STK" fxRateToBase="0.9"/>'
             "</OpenPositions>"
             "</FlexStatement>"
@@ -345,7 +345,9 @@ class TestFlexTransformSnapshot:
             raw, fernet_key, base_currency_override="CHF"
         )
 
-        currencies = result.column("currency").to_pylist()
+        # The position has no native currency, so value_currency/security_currency
+        # fall back to the overridden base currency (CHF).
+        currencies = result.column("value_currency").to_pylist()
         assert all(c == "CHF" for c in currencies)
 
     def test_transform_produces_cash_from_base_summary_fallback(
@@ -454,7 +456,7 @@ class TestFlexTransformSnapshot:
         labels = result.column("label").to_pylist()
         assert labels[cash_idx] == "CASH CHF"
 
-        currencies = result.column("currency").to_pylist()
+        currencies = result.column("value_currency").to_pylist()
         assert currencies[cash_idx] == "CHF"
 
 
@@ -875,7 +877,7 @@ class TestInjectDemoDeposit:
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": event_datetime,
-                "currency": base_currency,
+                "value_currency": base_currency,
                 "cash_amount": 42.50,
                 "settle_date": "2026-03-04",
                 "ticker": "VWCE",
@@ -906,7 +908,7 @@ class TestInjectDemoDeposit:
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
         assert deposit["account_id"] == "U123456"
-        assert deposit["currency"] == "EUR"
+        assert deposit["value_currency"] == "EUR"
         assert deposit["cash_amount"] == 1_000_000.0
         assert deposit["amount_base"] == 1_000_000.0
         assert deposit["fx_rate_to_base"] == 1.0
@@ -963,7 +965,7 @@ class TestInjectDemoDeposit:
                 "event_type": "TRADE",
                 "raw_event_type": "ExTrade",
                 "event_datetime": "2026-05-01T00:00:00Z",
-                "currency": "USD",
+                "value_currency": "USD",
                 "cash_amount": -100.0,
                 "settle_date": "2026-05-03",
                 "ticker": "AAPL",
@@ -982,7 +984,7 @@ class TestInjectDemoDeposit:
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": "2026-05-10T00:00:00Z",
-                "currency": "EUR",
+                "value_currency": "EUR",
                 "cash_amount": 50.0,
                 "settle_date": "2026-05-13",
                 "ticker": "VWCE",
@@ -1002,8 +1004,8 @@ class TestInjectDemoDeposit:
         by_account = {d["account_id"]: d for d in deposits}
         assert "U111" in by_account
         assert "U222" in by_account
-        assert by_account["U111"]["currency"] == "USD"
-        assert by_account["U222"]["currency"] == "EUR"
+        assert by_account["U111"]["value_currency"] == "USD"
+        assert by_account["U222"]["value_currency"] == "EUR"
         # Both deposits dated one day before earliest event (2026-05-01)
         assert by_account["U111"]["event_datetime"] == "2026-04-30T00:00:00Z"
         assert by_account["U222"]["event_datetime"] == "2026-04-30T00:00:00Z"

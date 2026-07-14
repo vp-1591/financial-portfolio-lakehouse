@@ -34,7 +34,6 @@ def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
             "position_type": ["EQUITY", "EQUITY", "CASH"],
             "label": ["VWCE", "AAPL", "CASH EUR"],
             "asset_class": ["STK", "STK", "CASH"],
-            "currency": ["EUR", "EUR", "EUR"],
             "value": [
                 encrypt_float(5000.0, fernet_key),
                 encrypt_float(2700.0, fernet_key),
@@ -186,7 +185,7 @@ class TestQueryCLI:
         _setup_env(tmp_path)
 
         args = _make_args(
-            "SELECT label, currency FROM ibkr_snapshot_normalized", fmt="csv"
+            "SELECT label, value_currency FROM ibkr_snapshot_normalized", fmt="csv"
         )
         result = cmd_query(args)
 
@@ -204,7 +203,7 @@ class TestQueryCLI:
         _setup_env(tmp_path)
 
         args = _make_args(
-            "SELECT label, currency FROM ibkr_snapshot_normalized", fmt="json"
+            "SELECT label, value_currency FROM ibkr_snapshot_normalized", fmt="json"
         )
         result = cmd_query(args)
 

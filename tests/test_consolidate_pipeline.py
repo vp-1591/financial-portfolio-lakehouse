@@ -136,11 +136,11 @@ class TestConsolidateMultiBroker:
 
         assert result.schema.equals(consolidated_holdings_schema)
 
-        # The currency column must match the converter's target currency,
+        # The base_currency column must match the converter's target currency,
         # since all values have been converted to that currency.
-        currency_col = result.column("currency").to_pylist()
+        currency_col = result.column("base_currency").to_pylist()
         assert all(c == "EUR" for c in currency_col), (
-            f"currency column should all be EUR (target), got: {currency_col}"
+            f"base_currency column should all be EUR (target), got: {currency_col}"
         )
 
     def test_consolidate_values_are_encrypted(self, tmp_path: Path):

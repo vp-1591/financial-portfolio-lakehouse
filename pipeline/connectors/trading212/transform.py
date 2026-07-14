@@ -85,9 +85,6 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "label": position_label(position),
                 "name": position_name(position, instrument_names),
                 "asset_class": "EQUITY",
-                "currency": position_currency(
-                    position, instrument_currencies, currency
-                ),
                 "value": value,
                 "value_currency": position_currency(
                     position, instrument_currencies, currency
@@ -109,7 +106,6 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "label": f"CASH {currency}".rstrip(),
                 "name": f"Cash {currency}".rstrip(),
                 "asset_class": "CASH",
-                "currency": currency,
                 "value": cash_balance,
                 "value_currency": currency,
                 "isin": "",
@@ -358,7 +354,7 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         event_datetime=pl.coalesce(
             [order.struct.field("createdAt"), fill.struct.field("filledAt")]
         ),
-        currency=pl.coalesce(
+        value_currency=pl.coalesce(
             [wallet_impact.struct.field("currency"), order.struct.field("currency")]
         ),
         cash_amount=net_value,
@@ -416,7 +412,7 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
         event_type=pl.lit("DIVIDEND"),
         raw_event_type=pl.coalesce([pl.col("type"), pl.lit("DIVIDEND")]),
         event_datetime=pl.col("paidOn").cast(pl.Utf8),
-        currency=pl.coalesce([pl.col("currency"), pl.col("tickerCurrency")]),
+        value_currency=pl.coalesce([pl.col("currency"), pl.col("tickerCurrency")]),
         cash_amount=amount,
         settle_date=pl.col("paidOn").cast(pl.Utf8),
         ticker=pl.coalesce([pl.col("ticker"), instrument.struct.field("ticker")]),
@@ -458,7 +454,7 @@ def _transform_transactions(
         event_type=event_type,
         raw_event_type=raw_type,
         event_datetime=pl.col("dateTime").cast(pl.Utf8),
-        currency=pl.col("currency").cast(pl.Utf8),
+        value_currency=pl.col("currency").cast(pl.Utf8),
         cash_amount=amount,
         settle_date=pl.lit(""),
         ticker=pl.lit(""),
