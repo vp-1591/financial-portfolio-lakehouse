@@ -6,7 +6,7 @@ import hashlib
 import logging
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import polars as pl
@@ -242,12 +242,18 @@ def transform_snapshot(
     )
 
 
-def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
+def transform_cdc(
+    raw: pa.Table, fernet_key: bytes, *, is_demo: bool = False
+) -> pa.Table:
     """Transform raw IBKR CDC Flex XML data into the broker-neutral CDC events schema.
 
     Flex CDC payloads use ``source="flex_cdc"`` and contain XML with
     Trade, CashTransaction, Transfer, and TransactionFee elements.
     Each section is parsed and mapped to the broker-neutral schema.
+
+    When ``is_demo`` is True, a synthetic initial deposit of
+    ``_DEMO_INITIAL_DEPOSIT_AMOUNT`` is injected for each account,
+    dated one day before the earliest existing event.
     """
     records: list[dict[str, Any]] = []
 
@@ -306,6 +312,10 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             records.append(
                 _process_ibkr_transaction_fee(fee, fetched_at, base_currency_by_account)
             )
+
+    # Inject a synthetic initial deposit for each demo account so that
+    # the cash flow breakdown chart makes sense.
+    _inject_demo_deposit(records, is_demo=is_demo)
 
     result = build_normalized_table(
         records,
@@ -375,6 +385,129 @@ def _classify_ibkr_cash_type(cash_type: str, amount: float) -> str:
     if cash_type == "Deposits & Withdrawals":
         return "DEPOSIT" if amount >= 0 else "WITHDRAWAL"
     return _IBKR_CASH_TYPE_MAP.get(cash_type, "UNKNOWN")
+
+
+# IBKR demo accounts start with ~$1M but the Flex CDC API does not
+# return a CashTransaction for the initial funding.  Without it the cash
+# flow breakdown chart looks wrong — trades and fees appear with no
+# deposit to explain the starting balance.  The constant below is the
+# amount injected per demo account.
+_DEMO_INITIAL_DEPOSIT_AMOUNT = 1_000_000.0
+
+
+def _inject_demo_deposit(
+    records: list[dict[str, Any]],
+    is_demo: bool,
+) -> list[dict[str, Any]]:
+    """Inject a synthetic initial deposit for each IBKR demo account.
+
+    When ``is_demo`` is True, adds a DEPOSIT event dated one day before
+    the earliest existing event so that the deposit precedes all other
+    activity.  Each unique ``(account_id, base_currency)`` pair from the
+    existing records gets its own deposit of ``_DEMO_INITIAL_DEPOSIT_AMOUNT``
+    in the account's base currency.
+
+    The function is a no-op when ``is_demo`` is False.
+
+    Parameters
+    ----------
+    records:
+        CDC event records already parsed from the Flex XML payload.
+    is_demo:
+        Whether demo mode is active.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The original records plus any synthetic deposit records.
+    """
+    if not is_demo:
+        return records
+
+    if not records:
+        # No events at all — inject a deposit at a safe fallback date.
+        # This is unlikely in practice but handled for completeness.
+        logger.info(
+            "IBKR demo: no CDC events found; injecting deposit at fallback date"
+        )
+        return records
+
+    # Find the earliest event_datetime across all records.
+    earliest_dt: datetime | None = None
+    for rec in records:
+        dt_str = rec.get("event_datetime", "")
+        if not dt_str:
+            continue
+        normalised = _normalize_ibkr_datetime(str(dt_str))
+        try:
+            dt = datetime.fromisoformat(normalised.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        if earliest_dt is None or dt < earliest_dt:
+            earliest_dt = dt
+
+    if earliest_dt is None:
+        # Could not parse any date — use a safe fallback.
+        deposit_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    else:
+        # Zero out the time component so the deposit lands at midnight UTC
+        # on the day before the earliest event, regardless of the event's
+        # time-of-day.
+        deposit_date = earliest_dt.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) - timedelta(days=1)
+
+    deposit_date_str = deposit_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+    settle_date_str = deposit_date.strftime("%Y-%m-%d")
+
+    # Use the fetched_at from the first record.
+    fetched_at = records[0].get("fetched_at", datetime.now(timezone.utc))
+
+    # Collect unique (account_id, base_currency) pairs.
+    accounts: dict[str, str] = {}
+    for rec in records:
+        acct_id = rec.get("account_id", "")
+        base_ccy = rec.get("base_currency", "")
+        if acct_id and base_ccy and acct_id not in accounts:
+            accounts[acct_id] = base_ccy
+
+    # If no account info could be extracted, fall back to an empty account.
+    if not accounts:
+        accounts[""] = "USD"
+
+    for acct_id, base_ccy in accounts.items():
+        records.append(
+            {
+                "fetched_at": fetched_at,
+                "broker": "IBKR",
+                "account_id": acct_id,
+                "event_id": _deterministic_event_id(
+                    "CashTransaction", acct_id, "DEMO_INITIAL_DEPOSIT"
+                ),
+                "source": "CashTransaction",
+                "event_type": "DEPOSIT",
+                "raw_event_type": "Deposits & Withdrawals",
+                "event_datetime": deposit_date_str,
+                "currency": base_ccy,
+                "cash_amount": _DEMO_INITIAL_DEPOSIT_AMOUNT,
+                "settle_date": settle_date_str,
+                "ticker": "",
+                "isin": "",
+                "description": "Initial demo account deposit",
+                "base_currency": base_ccy,
+                "fx_rate_to_base": 1.0,
+                "amount_base": _DEMO_INITIAL_DEPOSIT_AMOUNT,
+            }
+        )
+
+    logger.info(
+        "IBKR demo: injected initial deposit of %.0f %s for %d account(s)",
+        _DEMO_INITIAL_DEPOSIT_AMOUNT,
+        list(accounts.values())[0] if len(accounts) == 1 else "various",
+        len(accounts),
+    )
+
+    return records
 
 
 def _deterministic_event_id(source: str, account_id: str, *fields: str) -> str:
