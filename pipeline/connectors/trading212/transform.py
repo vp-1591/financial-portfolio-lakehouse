@@ -7,6 +7,8 @@ nested access and ``coalesce()`` for fallback chains — instead of error-prone
 
 from __future__ import annotations
 
+import logging
+
 import pyarrow as pa
 import polars as pl
 
@@ -34,6 +36,8 @@ from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     trading212_snapshot_normalized_schema,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
@@ -339,9 +343,24 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
     net_value = pl.coalesce(
         [wallet_impact.struct.field("netValue"), order.struct.field("filledValue")]
     ).cast(pl.Float64)
+    # wallet_fx_rate: the rate from wallet currency to security trading currency.
+    # E.g. for a PLN wallet buying a USD security, this is the PLN→USD rate.
+    # Kept under the old column name fx_rate_to_base for schema compatibility;
+    # renamed to target_fx_rate in Phase 2.
     fx_rate = pl.coalesce([wallet_impact.struct.field("fxRate"), pl.lit(1.0)]).cast(
         pl.Float64
     )
+
+    # security_ccy: the instrument's trading currency (e.g. USD for SPYI).
+    # This replaces the old value_currency which was the wallet currency.
+    security_ccy = pl.coalesce(
+        [instrument.struct.field("currency"), order.struct.field("currency")]
+    ).cast(pl.Utf8)
+
+    # Cash amount in security currency, converted from wallet currency using
+    # walletImpact.fxRate.  For same-currency trades (wallet ccy == security ccy)
+    # the fx_rate is 1.0 and this is equivalent to net_value.
+    cash_amount_security_ccy = net_value * fx_rate
 
     return df.select(
         fetched_at=pl.lit(fetched_at),
@@ -354,10 +373,12 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         event_datetime=pl.coalesce(
             [order.struct.field("createdAt"), fill.struct.field("filledAt")]
         ),
-        value_currency=pl.coalesce(
-            [wallet_impact.struct.field("currency"), order.struct.field("currency")]
-        ),
-        cash_amount=net_value,
+        # Phase 1: value_currency is now the security's trading currency,
+        # not the wallet currency.
+        value_currency=security_ccy,
+        # Phase 1: cash_amount is now in security ccy, converted from wallet
+        # ccy using walletImpact.fxRate.
+        cash_amount=cash_amount_security_ccy,
         settle_date=pl.coalesce(
             [fill.struct.field("filledAt"), order.struct.field("createdAt")]
         ),
@@ -371,17 +392,25 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         ).cast(pl.Float64),
         price=fill.struct.field("price").cast(pl.Float64),
         side=order.struct.field("side"),
+        # gross_amount, fee_amount, tax_amount remain in wallet ccy until
+        # Phase 3 addresses fee/tax currency conversion.
         gross_amount=pl.coalesce(
             [order.struct.field("filledValue"), order.struct.field("value")]
         ).cast(pl.Float64),
         fee_amount=pl.Series("fee_amount", fee_amounts, dtype=pl.Float64),
         tax_amount=pl.Series("tax_amount", tax_amounts, dtype=pl.Float64),
-        net_amount=net_value,
-        base_currency=pl.coalesce(
-            [wallet_impact.struct.field("currency"), order.struct.field("currency")]
-        ),
+        # Phase 1: net_amount is now in security ccy, matching cash_amount.
+        net_amount=cash_amount_security_ccy,
+        # Phase 1: base_currency is now the security's trading currency,
+        # matching value_currency and amount_base.
+        base_currency=security_ccy,
+        # Phase 1: fx_rate_to_base is actually the wallet→security rate.
+        # Kept under old column name; renamed to target_fx_rate in Phase 2.
         fx_rate_to_base=fx_rate,
-        amount_base=(net_value * fx_rate),
+        # Phase 1: amount_base is now the cash amount in security ccy
+        # (= cash_amount for same-ccy trades). Kept under old column name;
+        # renamed to target_value in Phase 2.
+        amount_base=cash_amount_security_ccy,
     )
 
 
@@ -395,6 +424,22 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
     # Ensure nested instrument struct has all expected fields.
     for event in events:
         _ensure_struct_fields(event.get("instrument"), _INSTRUMENT_FIELDS)
+
+    # Log warnings for dividends where the payout currency differs from the
+    # instrument's trading currency.  These dividends need FX conversion that
+    # walletImpact.fxRate cannot provide (only available on orders).  Phase 2
+    # will use CurrencyConverter for this conversion.
+    for event in events:
+        div_ccy = event.get("currency", "")
+        ticker_ccy = event.get("tickerCurrency", "")
+        if div_ccy and ticker_ccy and div_ccy != ticker_ccy:
+            logger.warning(
+                "T212 dividend %s: currency=%s differs from tickerCurrency=%s; "
+                "FX conversion deferred to Phase 2",
+                event.get("ticker", event.get("reference", "?")),
+                div_ccy,
+                ticker_ccy,
+            )
 
     df = pl.DataFrame(events)
 

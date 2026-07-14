@@ -635,6 +635,8 @@ class TestCdcTransform:
         assert result.column("broker")[0].as_py() == "Trading 212"
         assert result.column("event_id")[0].as_py() == "12345"
         assert result.column("event_datetime")[0].as_py() == "2024-01-15T10:30:00Z"
+        # Phase 1: value_currency is now the security's trading currency (USD),
+        # not the wallet currency.  Same value here since wallet ccy == security ccy.
         assert result.column("value_currency")[0].as_py() == "USD"
 
         # Nullable trade fields — now populated via nested struct access
@@ -643,22 +645,26 @@ class TestCdcTransform:
         assert result.column("description")[0].as_py() == "Apple Inc."
         assert result.column("side")[0].as_py() == "BUY"
 
-        # Encrypted monetary fields
+        # Encrypted monetary fields — in security currency (USD) after Phase 1
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
-        assert cash == pytest.approx(1500.0)  # netValue, not price
+        assert cash == pytest.approx(1500.0)  # netValue * fx_rate = 1500 * 1.0
         qty = decrypt_float(result.column("quantity")[0].as_py(), fernet_key)
         assert qty == pytest.approx(10.0)
         price = decrypt_float(result.column("price")[0].as_py(), fernet_key)
         assert price == pytest.approx(150.0)
         gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(1500.0)  # filledValue
+        assert gross == pytest.approx(1500.0)  # filledValue (still in wallet ccy)
         net = decrypt_float(result.column("net_amount")[0].as_py(), fernet_key)
-        assert net == pytest.approx(1500.0)
+        assert net == pytest.approx(1500.0)  # netValue * fx_rate (in security ccy)
         fx = decrypt_float(result.column("fx_rate_to_base")[0].as_py(), fernet_key)
         assert fx == pytest.approx(1.0)
 
-        # Base currency
+        # Phase 1: base_currency is now the security's trading currency (USD),
+        # not the wallet currency.  Same value here since wallet ccy == security ccy.
         assert result.column("base_currency")[0].as_py() == "USD"
+
+        amount_base = decrypt_float(result.column("amount_base")[0].as_py(), fernet_key)
+        assert amount_base == pytest.approx(1500.0)  # netValue * fx_rate (security ccy)
 
     def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
         """T212 orders with walletImpact.taxes correctly split fees and taxes."""
@@ -688,6 +694,189 @@ class TestCdcTransform:
         result = transform_cdc(raw, fernet_key)
 
         assert result.column("side")[0].as_py() == "SELL"
+
+    def test_transform_cdc_order_cross_currency_fx_rate(
+        self, fernet_key: bytes
+    ) -> None:
+        """T212 orders with wallet→security FX rate produce cash_amount in security ccy.
+
+        Bug 1 fix: walletImpact.fxRate is the wallet→security rate.
+        For a PLN wallet buying a USD security:
+          - net_value (wallet ccy) = 2000 PLN
+          - fx_rate = 0.25 (PLN→USD)
+          - cash_amount (security ccy) = 2000 * 0.25 = 500 USD
+          - value_currency = "USD" (security, not "PLN")
+        """
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        event = self._make_order_event()
+        event["order"]["ticker"] = "SPYI_US_EQ"
+        event["order"]["currency"] = "USD"
+        event["order"]["instrument"] = {
+            "ticker": "SPYI_US_EQ",
+            "isin": "US46434G7510",
+            "name": "SPDR SSGA Global Infrastructure ETF",
+            "currency": "USD",
+        }
+        event["fill"]["walletImpact"] = {
+            "currency": "PLN",
+            "fxRate": 0.25,
+            "netValue": 2000.0,
+            "realisedProfitLoss": 0,
+            "taxes": [],
+        }
+        event["fill"]["price"] = 50.0  # USD per share
+        event["fill"]["quantity"] = 10
+
+        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+
+        # value_currency should be USD (security ccy), not PLN (wallet ccy)
+        assert result.column("value_currency")[0].as_py() == "USD"
+        # base_currency should be USD (security ccy), not PLN (wallet ccy)
+        assert result.column("base_currency")[0].as_py() == "USD"
+
+        # cash_amount should be in security ccy: 2000 PLN * 0.25 PLN→USD = 500 USD
+        cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
+        assert cash == pytest.approx(500.0)
+
+        # net_amount should match cash_amount (in security ccy)
+        net = decrypt_float(result.column("net_amount")[0].as_py(), fernet_key)
+        assert net == pytest.approx(500.0)
+
+        # fx_rate_to_base stores the wallet→security rate (0.25)
+        fx = decrypt_float(result.column("fx_rate_to_base")[0].as_py(), fernet_key)
+        assert fx == pytest.approx(0.25)
+
+        # amount_base = net_value * fx_rate = 500 USD (same as cash_amount)
+        amount_base = decrypt_float(result.column("amount_base")[0].as_py(), fernet_key)
+        assert amount_base == pytest.approx(500.0)
+
+    def test_transform_cdc_order_gbx_security_currency(self, fernet_key: bytes) -> None:
+        """T212 order for a GBX-denominated security correctly converts wallet amount.
+
+        GBX is British pence (1/100 GBP).  The fx_rate from PLN→GBX is a large
+        number because GBX is a sub-unit.
+          - net_value (wallet ccy) = 7500 PLN
+          - fx_rate = 19.949 (PLN→GBX)
+          - cash_amount (security ccy) = 7500 * 19.949 ≈ 149617.5 GBX
+        """
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        event = self._make_order_event()
+        event["order"]["ticker"] = "SGLN_UK_EQ"
+        event["order"]["currency"] = "GBX"
+        event["order"]["instrument"] = {
+            "ticker": "SGLN_UK_EQ",
+            "isin": "GB00B579F147",
+            "name": "iShares Core UK Gilts",
+            "currency": "GBX",
+        }
+        event["fill"]["walletImpact"] = {
+            "currency": "PLN",
+            "fxRate": 19.949,
+            "netValue": 7500.0,
+            "realisedProfitLoss": 0,
+            "taxes": [],
+        }
+        event["fill"]["price"] = 14961.75  # GBX per share
+        event["fill"]["quantity"] = 10
+
+        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        assert result.column("value_currency")[0].as_py() == "GBX"
+        assert result.column("base_currency")[0].as_py() == "GBX"
+
+        cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
+        assert cash == pytest.approx(7500.0 * 19.949, rel=1e-6)
+
+        amount_base = decrypt_float(result.column("amount_base")[0].as_py(), fernet_key)
+        assert amount_base == pytest.approx(7500.0 * 19.949, rel=1e-6)
+
+    def test_transform_cdc_dividend_currency_mismatch_warning(
+        self, fernet_key: bytes, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """T212 dividends with currency != tickerCurrency produce a warning log."""
+        import logging
+
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        events = [
+            {
+                "reference": "DIV-XCCY",
+                "ticker": "VWCE",
+                "instrument": {
+                    "ticker": "VWCE",
+                    "isin": "IE00BK5BQT80",
+                    "name": "Vanguard FTSE All-World",
+                    "currency": "USD",
+                },
+                "amount": 42.50,
+                "currency": "EUR",  # differs from tickerCurrency
+                "grossAmountPerShare": 0.425,
+                "paidOn": "2024-03-01",
+                "quantity": 100,
+                "tickerCurrency": "USD",  # instrument currency
+                "type": "ORDINARY",
+            }
+        ]
+        raw = self._build_raw_cdc_table(events, "/equity/history/dividends", fernet_key)
+
+        with caplog.at_level(logging.WARNING):
+            result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        assert result.column("value_currency")[0].as_py() == "EUR"
+        assert result.column("base_currency")[0].as_py() == "EUR"
+
+        # Verify the currency mismatch warning was logged
+        assert any(
+            "differs from tickerCurrency" in record.message for record in caplog.records
+        ), (
+            f"Expected currency mismatch warning, got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_transform_cdc_dividend_same_currency_no_warning(
+        self, fernet_key: bytes, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """T212 dividends with currency == tickerCurrency produce no mismatch warning."""
+        import logging
+
+        from pipeline.connectors.trading212.transform import transform_cdc
+
+        events = [
+            {
+                "reference": "DIV-SAME",
+                "ticker": "AAPL",
+                "instrument": {
+                    "ticker": "AAPL",
+                    "isin": "US0378331007",
+                    "name": "Apple Inc.",
+                    "currency": "USD",
+                },
+                "amount": 50.0,
+                "currency": "USD",  # same as tickerCurrency
+                "grossAmountPerShare": 0.50,
+                "paidOn": "2024-03-15",
+                "quantity": 100,
+                "tickerCurrency": "USD",
+                "type": "ORDINARY",
+            }
+        ]
+        raw = self._build_raw_cdc_table(events, "/equity/history/dividends", fernet_key)
+
+        with caplog.at_level(logging.WARNING):
+            result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        # No currency mismatch warning should be logged
+        assert not any(
+            "differs from tickerCurrency" in record.message for record in caplog.records
+        ), f"Unexpected warning logged: {[r.message for r in caplog.records]}"
 
     def test_transform_cdc_dividends_produces_dividend_events(
         self, fernet_key: bytes
