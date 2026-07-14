@@ -9,6 +9,7 @@ from pipeline.report.charts import (
     allocation_by_currency,
     cash_flow_breakdown,
     _classify_outliers,
+    data_quality_chart,
     passive_income_timeline,
 )
 
@@ -403,3 +404,59 @@ class TestPassiveIncomeTimeline:
         fig = passive_income_timeline(div, interest)
 
         assert fig.layout.barmode == "stack"
+
+
+# ---------------------------------------------------------------------------
+# data_quality_chart – hidden when all checks pass
+# ---------------------------------------------------------------------------
+
+
+def _dq(rows: list[dict]) -> pl.DataFrame:
+    """Build a minimal data_quality DataFrame for chart tests."""
+    return pl.DataFrame(rows)
+
+
+class TestDataQualityChart:
+    """Tests for the data quality bar chart."""
+
+    def test_returns_none_when_all_pass(self) -> None:
+        """All-pass DQ data returns None (no chart rendered)."""
+        df = _dq(
+            [
+                {"status": "PASS", "table_name": "t1", "check_name": "c1"},
+                {"status": "PASS", "table_name": "t2", "check_name": "c2"},
+            ]
+        )
+        assert data_quality_chart(df) is None
+
+    def test_returns_none_when_empty(self) -> None:
+        """Empty DQ DataFrame returns None."""
+        df = pl.DataFrame(
+            {
+                "status": pl.Series([], dtype=pl.String),
+                "table_name": pl.Series([], dtype=pl.String),
+                "check_name": pl.Series([], dtype=pl.String),
+            }
+        )
+        assert data_quality_chart(df) is None
+
+    def test_returns_chart_when_warn_present(self) -> None:
+        """DQ data with a WARN status returns a chart."""
+        df = _dq(
+            [
+                {"status": "PASS", "table_name": "t1", "check_name": "c1"},
+                {"status": "WARN", "table_name": "t2", "check_name": "c2"},
+            ]
+        )
+        fig = data_quality_chart(df)
+        assert fig is not None
+
+    def test_returns_chart_when_fail_present(self) -> None:
+        """DQ data with a FAIL status returns a chart."""
+        df = _dq(
+            [
+                {"status": "FAIL", "table_name": "t1", "check_name": "c1"},
+            ]
+        )
+        fig = data_quality_chart(df)
+        assert fig is not None

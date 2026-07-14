@@ -236,9 +236,16 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
 def data_quality_chart(dq: pl.DataFrame) -> go.Figure | None:
     """Bar chart: check counts by status (PASS/WARN/FAIL).
 
-    Returns ``None`` if the DataFrame is empty (no validation results).
+    Returns ``None`` if the DataFrame is empty or if every check passed
+    (no WARN or FAIL rows).  An all-pass chart is just a big green bar
+    with no actionable information.
     """
     if dq.is_empty():
+        return None
+
+    # Skip the chart when there's nothing to flag — all-pass is not useful.
+    statuses = set(dq["status"].unique().to_list())
+    if statuses <= {"PASS"}:
         return None
 
     agg = dq.group_by("status").len().sort("status")
