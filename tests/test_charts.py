@@ -9,6 +9,7 @@ from pipeline.report.charts import (
     allocation_by_currency,
     cash_flow_breakdown,
     _classify_outliers,
+    passive_income_timeline,
 )
 
 
@@ -324,3 +325,81 @@ class TestClassifyOutliers:
     def test_all_zero_peaks(self) -> None:
         """All-zero peaks produce no outliers."""
         assert _classify_outliers([0, 0, 0]) == [False, False, False]
+
+
+# ---------------------------------------------------------------------------
+# passive_income_timeline – tooltip shows values, not just months
+# ---------------------------------------------------------------------------
+
+
+def _dividends(rows: list[dict]) -> pl.DataFrame:
+    """Build a minimal dividend_income DataFrame for chart tests."""
+    return pl.DataFrame(rows)
+
+
+def _interest(rows: list[dict]) -> pl.DataFrame:
+    """Build a minimal interest_income DataFrame for chart tests."""
+    return pl.DataFrame(rows)
+
+
+class TestPassiveIncomeTimeline:
+    """Tests for the passive income timeline bar chart."""
+
+    def test_hovertemplate_shows_value(self) -> None:
+        """Bar hovertemplate formats the numeric value, not the month label."""
+        div = _dividends(
+            [
+                {"period_month": "2026-01", "amount_base": 123.45},
+                {"period_month": "2026-02", "amount_base": 67.89},
+            ]
+        )
+        interest = pl.DataFrame(
+            {
+                "period_month": pl.Series([], dtype=pl.String),
+                "amount_base": pl.Series([], dtype=pl.Float64),
+            }
+        )
+        fig = passive_income_timeline(div, interest)
+
+        bar = fig.data[0]
+        assert bar.name == "Dividends"
+        # hovertemplate must contain the value format specifier
+        assert "%{y:,.2f}" in bar.hovertemplate
+
+    def test_interest_hovertemplate_shows_value(self) -> None:
+        """Interest bar hovertemplate also formats the numeric value."""
+        interest = _interest(
+            [
+                {"period_month": "2026-01", "amount_base": 10.50},
+            ]
+        )
+        div = pl.DataFrame(
+            {
+                "period_month": pl.Series([], dtype=pl.String),
+                "amount_base": pl.Series([], dtype=pl.Float64),
+            }
+        )
+        fig = passive_income_timeline(div, interest)
+
+        bar = fig.data[0]
+        assert bar.name == "Interest"
+        assert "%{y:,.2f}" in bar.hovertemplate
+
+    def test_both_traces_have_hovertemplate(self) -> None:
+        """When both dividends and interest exist, both have hovertemplates."""
+        div = _dividends([{"period_month": "2026-01", "amount_base": 50.0}])
+        interest = _interest([{"period_month": "2026-01", "amount_base": 25.0}])
+        fig = passive_income_timeline(div, interest)
+
+        assert len(fig.data) == 2
+        for bar in fig.data:
+            assert bar.hovertemplate is not None
+            assert "%{y:,.2f}" in bar.hovertemplate
+
+    def test_stacked_barmode(self) -> None:
+        """Chart uses stacked bar mode."""
+        div = _dividends([{"period_month": "2026-01", "amount_base": 50.0}])
+        interest = _interest([{"period_month": "2026-01", "amount_base": 25.0}])
+        fig = passive_income_timeline(div, interest)
+
+        assert fig.layout.barmode == "stack"

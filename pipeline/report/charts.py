@@ -102,12 +102,12 @@ def passive_income_timeline(
             .agg(pl.col("amount_base").sum().alias("total"))
             .sort("period_month")
         )
-        value_col = "total"
         traces.append(
             go.Bar(
                 x=div_agg["period_month"].to_list(),
-                y=div_agg[value_col].to_list(),
+                y=div_agg["total"].to_list(),
                 name="Dividends",
+                hovertemplate="Dividends<extra></extra><br>%{y:,.2f}",
             )
         )
 
@@ -117,12 +117,12 @@ def passive_income_timeline(
             .agg(pl.col("amount_base").sum().alias("total"))
             .sort("period_month")
         )
-        value_col = "total"
         traces.append(
             go.Bar(
                 x=int_agg["period_month"].to_list(),
-                y=int_agg[value_col].to_list(),
+                y=int_agg["total"].to_list(),
                 name="Interest",
+                hovertemplate="Interest<extra></extra><br>%{y:,.2f}",
             )
         )
 

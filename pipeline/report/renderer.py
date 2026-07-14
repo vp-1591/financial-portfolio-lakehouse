@@ -89,8 +89,7 @@ def _summary_table(holdings) -> str:
         )
 
     html = (
-        f"<h3>Total Value: {total_value:,.2f} {base_currency}</h3>"
-        f"<h4>By Broker</h4><table><tr><th>Broker</th><th>Value</th><th>%</th></tr>"
+        "<h4>By Broker</h4><table><tr><th>Broker</th><th>Value</th><th>%</th></tr>"
         + "".join(rows)
         + "</table>"
         "<h4>By Position Type</h4><table><tr><th>Type</th><th>Value</th><th>%</th></tr>"
