@@ -13,7 +13,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0001 | Disable Pytest Cache Provider | 2026-06-15 | active | — |
 | 0002a | Add Consolidate Step and Fix Duplicates | 2026-06-26 | active | — |
 | 0002b | Use Broker-Native Identifiers in Portfolio Report | 2026-06-15 | active | — |
-| 0003 | Medallion Architecture Pipeline | 2026-06-19 | drifted | — |
+| 0003 | Medallion Architecture Pipeline | 2026-06-19 | superseded | 0084 |
 | 0004 | Pipeline End-to-End Bugfixes | 2026-06-21 | active | — |
 | 0005 | Pipeline End-to-End Bugfixes (Round 2) | 2026-06-21 | active | — |
 | 0006 | Replace IBKR Client Portal Gateway with Flex Web Service | 2026-06-25 | superseded | 0029 |
@@ -94,6 +94,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0081 | Fix Deploy Log Readability in GitHub Actions | 2026-07-15 | active | — |
 | 0082 | Fold portfolio_allocation into portfolio_holdings | 2026-07-15 | active | — |
 | 0083 | Replace "Allocation by Position Type" donut with "Positions" bar chart and EQUITY/CASH summary card | 2026-07-15 | active | — |
+| 0084 | Encrypt Gold Value Columns | 2026-07-15 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

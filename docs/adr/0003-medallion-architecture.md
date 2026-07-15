@@ -1,5 +1,7 @@
 # 0003: Medallion Architecture Pipeline
 
+> **Superseded by [ADR 0084](./0084-encrypt-gold-value-columns.md)** — The "Analytics layer: no encryption" clause is superseded by ADR 0084, which encrypts gold value columns as `pa.binary()` while keeping metadata columns plaintext.
+>
 > **Drifted** — Pipeline has expanded well beyond the ADR's scope: new modules (s3.py, secrets.py, storage.py, report/, analytics/quality|cdc|holdings|models, normalized/consolidate_cdc, connectors/transform_utils), new CLI commands (validate, report, upload-xtb, run-connector, run-consolidate-analytics), expanded BrokerConnector protocol, and paths.py is now deprecated.
 
 ## Context

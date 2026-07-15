@@ -103,24 +103,24 @@ Replace the EQUITY/CASH donut with a horizontal bar chart showing all holdings r
 
 ---
 
-### Phase 3 — Encrypt gold value columns & README screenshots *[status: planned]*
+### Phase 3 — Encrypt gold value columns & README screenshots *[status: done]*
 
 Encrypt financial value columns in gold Delta tables (matching the normalized-layer pattern), update chart code to use `percentage` where possible, and add representative screenshots to the README.
 
 **Encryption design:** Only numeric value columns are Fernet-encrypted; metadata columns (`ticker`, `broker`, `security_ccy`, `percentage`, `position_type`, `event_type`, etc.) remain plaintext. This means allocation charts and the positions chart render without the decryption key (they use `percentage`). Charts that display absolute monetary amounts (Passive Income, Cash Flow, Total Value card) decrypt at render time.
 
 **Scope:**
-- [ ] Change `portfolio_holdings_schema` value columns (`security_value`, `target_value`) from `pa.float64()` to `pa.binary()` in `pipeline/analytics/models.py`
-- [ ] Change CDC gold table schemas (`cash_amount`, `target_value`, `gross_amount`, `fee_amount`, `tax_amount`, `price`, `quantity`, `target_fx_rate`) from `pa.float64()` to `pa.binary()` (nullable where already nullable) in `pipeline/analytics/models.py`
-- [ ] Update `build_portfolio_holdings()` to encrypt `security_value` and `target_value` before writing
-- [ ] Update `build_dividend_income()`, `build_interest_income()`, `build_cash_flow_summary()` to encrypt value columns before writing
-- [ ] Update `pipeline/report/loader.py` to decrypt gold value columns when loading (or update `pipeline/query.py` to decrypt gold columns on read for DuckDB ad-hoc queries)
-- [ ] Update chart code: `allocation_by_broker` and `allocation_by_currency` to use `percentage` column instead of summing `target_value`; `positions_chart` uses `percentage` natively
-- [ ] Update `render_report()` summary card to decrypt `target_value` for Total Value display
-- [ ] Update `_passive_income_table()` and `cash_flow_breakdown()` to decrypt value columns
-- [ ] Update `pipeline/analytics/quality.py` — gold-table schema checks must match the new binary types; required-fields checks must handle binary columns
-- [ ] Update `pipeline/query.py` — `decrypt_df()` should auto-detect and decrypt gold value columns alongside normalized ones
-- [ ] Create an ADR superseding ADR 0003's "Analytics layer: no encryption" — gold value columns are now Fernet-encrypted, metadata columns remain plaintext
+- [x] Change `portfolio_holdings_schema` value columns (`security_value`, `target_value`) from `pa.float64()` to `pa.binary()` in `pipeline/analytics/models.py`
+- [x] Change CDC gold table schemas (`cash_amount`, `target_value`) from `pa.float64()` to `pa.binary()` (nullable where already nullable) in `pipeline/analytics/models.py`
+- [x] Update `build_portfolio_holdings()` to encrypt `security_value` and `target_value` before writing
+- [x] Update `build_dividend_income()`, `build_interest_income()`, `build_cash_flow_summary()` to encrypt value columns before writing
+- [x] Update `pipeline/report/loader.py` to decrypt gold value columns when loading (using `decrypt_df()` from `pipeline/query.py`)
+- [x] Update chart code: `allocation_by_broker` and `allocation_by_currency` to use `percentage` column instead of summing `target_value`; `positions_chart` uses `percentage` natively
+- [x] Update `render_report()` summary card to decrypt `target_value` for Total Value display
+- [x] Update `_passive_income_table()` and `cash_flow_breakdown()` to decrypt value columns
+- [x] Update `pipeline/analytics/quality.py` — gold-table schema checks must match the new binary types; required-fields checks must handle binary columns
+- [x] Update `pipeline/query.py` — `decrypt_df()` auto-detects and decrypts gold value columns alongside normalized ones
+- [x] Create ADR 0084 superseding ADR 0003's "Analytics layer: no encryption" — gold value columns are now Fernet-encrypted, metadata columns remain plaintext
 - [ ] Generate the demo report locally: `pipeline run full` then `pipeline report --output data/report.html`
 - [ ] Screenshot 2–4 focused sections of the report for README:
   - One allocation donut chart (e.g. "Allocation by Broker")
@@ -129,10 +129,10 @@ Encrypt financial value columns in gold Delta tables (matching the normalized-la
   - Optionally: Passive Income Timeline or Cash Flow Breakdown
 - [ ] Add screenshots to `docs/screenshots/` directory
 - [ ] Update `README.md` with an image gallery section showing the screenshots with brief captions
-- [ ] Update the README data-flow Mermaid diagram to remove `portfolio_allocation` → analytics arrow and add `portfolio_holdings` → report arrow
-- [ ] Update `docs/table-lineage.md` diagram to reflect encryption in gold layer
-- [ ] Add/update tests for encrypted gold column read/write roundtrips
-- [ ] Run `ruff check --fix . && ruff format .` then re-run tests
+- [x] Update the README data-flow Mermaid diagram to remove `portfolio_allocation` → analytics arrow and add `portfolio_holdings` → report arrow
+- [x] Update `docs/table-lineage.md` diagram to reflect encryption in gold layer
+- [x] Add/update tests for encrypted gold column read/write roundtrips
+- [x] Run `ruff check --fix . && ruff format .` then re-run tests
 
 **Out of scope:**
 - No PDF or image export from the report generator

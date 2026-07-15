@@ -29,7 +29,7 @@ def _holdings_default_schema() -> dict[str, type]:
     """Default column types for the holdings helper (matching gold schema)."""
     return {
         "security_ccy": pl.String,
-        "target_value": pl.Float64,
+        "percentage": pl.Float64,
     }
 
 
@@ -229,8 +229,8 @@ class TestAllocationByCurrency:
         """Chart is a go.Pie with hole=0.4 and textinfo=label+percent."""
         df = _holdings(
             [
-                {"security_ccy": "USD", "target_value": 1000.0},
-                {"security_ccy": "EUR", "target_value": 500.0},
+                {"security_ccy": "USD", "percentage": 66.67},
+                {"security_ccy": "EUR", "percentage": 33.33},
             ]
         )
         fig = allocation_by_currency(df)
@@ -244,7 +244,7 @@ class TestAllocationByCurrency:
         """Chart title is 'Currency Exposure'."""
         df = _holdings(
             [
-                {"security_ccy": "USD", "target_value": 1000.0},
+                {"security_ccy": "USD", "percentage": 100.0},
             ]
         )
         fig = allocation_by_currency(df)
@@ -260,8 +260,8 @@ class TestAllocationByCurrency:
         """
         df = _holdings(
             [
-                {"security_ccy": "GBX", "target_value": 800.0},
-                {"security_ccy": "USD", "target_value": 200.0},
+                {"security_ccy": "GBX", "percentage": 80.0},
+                {"security_ccy": "USD", "percentage": 20.0},
             ]
         )
         fig = allocation_by_currency(df)
@@ -276,24 +276,24 @@ class TestAllocationByCurrency:
         """Two rows with the same security_ccy sum into one slice."""
         df = _holdings(
             [
-                {"security_ccy": "USD", "target_value": 300.0},
-                {"security_ccy": "USD", "target_value": 700.0},
-                {"security_ccy": "EUR", "target_value": 500.0},
+                {"security_ccy": "USD", "percentage": 30.0},
+                {"security_ccy": "USD", "percentage": 70.0},
+                {"security_ccy": "EUR", "percentage": 50.0},
             ]
         )
         fig = allocation_by_currency(df)
 
         trace = fig.data[0]
-        # After aggregation: USD=1000, EUR=500, sorted descending
+        # After aggregation: USD=100.0, EUR=50.0, sorted descending
         assert list(trace.labels) == ["USD", "EUR"]
-        assert list(trace.values) == [1000.0, 500.0]
+        assert list(trace.values) == [100.0, 50.0]
 
     def test_empty_input(self) -> None:
         """Empty DataFrame returns _empty_figure with correct title."""
         df = pl.DataFrame(
             {
                 "security_ccy": pl.Series([], dtype=pl.String),
-                "target_value": pl.Series([], dtype=pl.Float64),
+                "percentage": pl.Series([], dtype=pl.Float64),
             }
         )
         fig = allocation_by_currency(df)

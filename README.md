@@ -38,7 +38,7 @@ flowchart TD
     FX1["Frankfurter API"]:::fx -->|"FX rates"| CH
     FX2["Yahoo Finance"]:::fx -->|"fallback"| CH
 
-    CH -->|"sum values · calculate %"| PA["portfolio_allocation"]:::analytics
+    CH -->|"sum values · calculate %"| PH["portfolio_holdings<br/>(values encrypted, percentage plaintext)"]:::analytics
 ```
 
 Each layer stores data in Delta tables under `data/`:
@@ -51,7 +51,7 @@ Each layer stores data in Delta tables under `data/`:
 | 🟢 Normalized | Green | `normalized/{broker}_snapshot` | Structured positions & cash rows; financial values remain Fernet-encrypted |
 | 🟢 Normalized | Green | `normalized/consolidated_holdings` | Cross-broker holdings converted to target currency; financial values remain Fernet-encrypted |
 | 🟣 FX Rates | Purple | — | Frankfurter API (primary) / Yahoo Finance (fallback) |
-| 🔵 Analytics | Light blue | `analytics/portfolio_allocation` | Ticker percentages by broker |
+| 🔵 Analytics | Light blue | `analytics/portfolio_holdings` | Portfolio holdings with encrypted values and plaintext percentages |
 
 ### IBKR Flex Web Service
 
@@ -170,14 +170,17 @@ from GitHub Secrets.
 # List all tables
 python -m pipeline.run query "SHOW TABLES"
 
-# Query with human-readable output
-python -m pipeline.run query "SELECT * FROM portfolio_allocation_analytics"
+# Query gold table (values are encrypted; use --decrypt for human-readable output)
+python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --decrypt
+
+# Query percentage column only (no decryption needed)
+python -m pipeline.run query "SELECT ticker, percentage, position_type FROM portfolio_holdings_analytics"
 
 # Decrypt encrypted columns
 python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
 
 # Export as CSV or JSON
-python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_allocation_analytics" --format csv
+python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_holdings_analytics" --format csv
 ```
 
 Table names follow the `{name}_{layer}` convention:
@@ -191,7 +194,17 @@ Table names follow the `{name}_{layer}` convention:
 | `xtb_snapshot_raw` | Raw |
 | `xtb_snapshot_normalized` | Normalized |
 | `consolidated_holdings_normalized` | Normalized |
-| `portfolio_allocation_analytics` | Analytics |
+| `portfolio_holdings_analytics` | Analytics |
+
+## Screenshots
+
+The pipeline generates an interactive HTML report with portfolio charts and data quality badges.
+
+![Portfolio Summary](docs/screenshots/portfolio-summary.png)
+
+![Positions Chart](docs/screenshots/positions-chart.png)
+
+![Data Quality](docs/screenshots/data-quality.png)
 
 ## AWS Infrastructure
 

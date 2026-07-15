@@ -119,8 +119,10 @@ def _make_cdc_table(
     return _rows_to_table(rows, cdc_events_normalized_schema)
 
 
-def _make_portfolio_holdings_table() -> pa.Table:
-    """Build a minimal portfolio_holdings table."""
+def _make_portfolio_holdings_table(fernet_key: bytes) -> pa.Table:
+    """Build a minimal portfolio_holdings table with encrypted value columns."""
+    from pipeline.crypto import encrypt_float
+
     now = datetime.now(timezone.utc)
     return pa.table(
         {
@@ -128,8 +130,8 @@ def _make_portfolio_holdings_table() -> pa.Table:
             "broker": ["IBKR"],
             "ticker": ["VWCE"],
             "security_ccy": ["EUR"],
-            "security_value": [5000.0],
-            "target_value": [5000.0],
+            "security_value": [encrypt_float(5000.0, fernet_key)],
+            "target_value": [encrypt_float(5000.0, fernet_key)],
             "target_ccy": ["EUR"],
             "percentage": [100.0],
             "position_type": ["EQUITY"],
@@ -183,13 +185,15 @@ class TestCheckSchema:
 
     def test_pass_on_valid_table(self) -> None:
         """Schema check passes when the table matches expected schema."""
-        table = _make_portfolio_holdings_table()
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)
         result = check_schema("portfolio_holdings", table, portfolio_holdings_schema)
         assert result.status == PASS
 
     def test_fail_on_missing_column(self) -> None:
         """Schema check fails when a required column is missing."""
-        table = _make_portfolio_holdings_table()
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)
         # Drop the 'ticker' column
         table = table.drop_columns(["ticker"])
         result = check_schema("portfolio_holdings", table, portfolio_holdings_schema)
@@ -198,7 +202,8 @@ class TestCheckSchema:
 
     def test_fail_on_extra_column(self) -> None:
         """Schema check fails when an extra column is present."""
-        table = _make_portfolio_holdings_table()
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)
         # Add an extra column
         table = table.append_column(
             "extra", pa.array(["oops"] * table.num_rows, type=pa.string())
@@ -209,16 +214,17 @@ class TestCheckSchema:
 
     def test_fail_on_type_mismatch(self) -> None:
         """Schema check fails when a column has a different type."""
+        fernet_key = generate_key()
         now = datetime.now(timezone.utc)
-        # Use string instead of float for target_value
+        # Use float64 instead of binary for security_value (wrong type)
         wrong_table = pa.table(
             {
                 "calculated_at": [now],
                 "broker": ["IBKR"],
                 "ticker": ["VWCE"],
                 "security_ccy": ["EUR"],
-                "security_value": ["not_a_float"],  # wrong type
-                "target_value": [5000.0],
+                "security_value": [5000.0],  # wrong type: float64 instead of binary
+                "target_value": [encrypt_float(5000.0, fernet_key)],  # correct binary
                 "target_ccy": ["EUR"],
                 "percentage": [100.0],
                 "position_type": ["EQUITY"],
@@ -231,8 +237,10 @@ class TestCheckSchema:
                     pa.field("broker", pa.string()),
                     pa.field("ticker", pa.string()),
                     pa.field("security_ccy", pa.string()),
-                    pa.field("security_value", pa.string()),  # mismatch
-                    pa.field("target_value", pa.float64()),
+                    pa.field(
+                        "security_value", pa.float64()
+                    ),  # mismatch: should be binary
+                    pa.field("target_value", pa.binary()),
                     pa.field("target_ccy", pa.string()),
                     pa.field("percentage", pa.float64()),
                     pa.field("position_type", pa.string()),
@@ -258,7 +266,8 @@ class TestCheckRequiredNulls:
 
     def test_pass_on_no_nulls(self) -> None:
         """Required nulls check passes when all required fields are non-null."""
-        table = _make_portfolio_holdings_table()
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)
         result = check_required_nulls(
             "portfolio_holdings", table, portfolio_holdings_schema
         )
@@ -300,27 +309,31 @@ class TestCheckRowCountStability:
 
     def test_first_run_passes(self) -> None:
         """First run (no previous count) passes."""
-        table = _make_portfolio_holdings_table()
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)
         result = check_row_count_stability("portfolio_holdings", table, None)
         assert result.status == PASS
         assert "First run" in result.details
 
     def test_stable_count_passes(self) -> None:
         """Stable row count (no >50% drop) passes."""
-        table = _make_portfolio_holdings_table()  # 1 row
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)  # 1 row
         result = check_row_count_stability("portfolio_holdings", table, 1)
         assert result.status == PASS
 
     def test_large_drop_warns(self) -> None:
         """Row count dropping >50% compared to previous triggers WARN."""
-        table = _make_portfolio_holdings_table()  # 1 row
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)  # 1 row
         result = check_row_count_stability("portfolio_holdings", table, 100)
         assert result.status == WARN
         assert "dropped" in result.details
 
     def test_moderate_change_passes(self) -> None:
         """Row count changing but not >50% drop passes."""
-        table = _make_portfolio_holdings_table()  # 1 row
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)  # 1 row
         result = check_row_count_stability("portfolio_holdings", table, 1)
         assert result.status == PASS
 
@@ -335,7 +348,8 @@ class TestCheckFreshness:
 
     def test_recent_data_passes(self) -> None:
         """Fresh data (within threshold) passes."""
-        table = _make_portfolio_holdings_table()
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)
         result = check_freshness(
             "portfolio_holdings", table, "calculated_at", freshness_days=7
         )
@@ -344,6 +358,7 @@ class TestCheckFreshness:
     def test_stale_data_warns(self) -> None:
         """Data older than the freshness threshold triggers WARN."""
         # Build a table with old timestamps
+        fernet_key = generate_key()
         old_ts = datetime.now(timezone.utc) - timedelta(days=30)
         table = pa.table(
             {
@@ -351,8 +366,8 @@ class TestCheckFreshness:
                 "broker": ["IBKR"],
                 "ticker": ["VWCE"],
                 "security_ccy": ["EUR"],
-                "security_value": [5000.0],
-                "target_value": [5000.0],
+                "security_value": [encrypt_float(5000.0, fernet_key)],
+                "target_value": [encrypt_float(5000.0, fernet_key)],
                 "target_ccy": ["EUR"],
                 "percentage": [100.0],
                 "position_type": ["EQUITY"],
@@ -383,8 +398,8 @@ class TestCheckFreshness:
                 "broker": pa.array([], type=pa.string()),
                 "ticker": pa.array([], type=pa.string()),
                 "security_ccy": pa.array([], type=pa.string()),
-                "security_value": pa.array([], type=pa.float64()),
-                "target_value": pa.array([], type=pa.float64()),
+                "security_value": pa.array([], type=pa.binary()),
+                "target_value": pa.array([], type=pa.binary()),
                 "target_ccy": pa.array([], type=pa.string()),
                 "percentage": pa.array([], type=pa.float64()),
                 "position_type": pa.array([], type=pa.string()),
@@ -442,7 +457,8 @@ class TestCheckReconciliation:
 
     def test_skip_for_non_holdings_table(self) -> None:
         """Reconciliation is not applicable for tables other than consolidated_holdings."""
-        table = _make_portfolio_holdings_table()
+        fernet_key = generate_key()
+        table = _make_portfolio_holdings_table(fernet_key)
         result = check_reconciliation("portfolio_holdings", table, None)
         assert result.status == PASS
         assert "not applicable" in result.details
@@ -472,7 +488,7 @@ class TestRunValidation:
         # Write test tables
         holdings = _make_holdings_table(fernet_key)
         cdc = _make_cdc_table(fernet_key)
-        portfolio_holdings = _make_portfolio_holdings_table()
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
 
         write_deltalake(
             storage.normalized_path("consolidated_holdings"),
@@ -522,7 +538,7 @@ class TestRunValidation:
         )
 
         # Also need portfolio_holdings table to not trigger "table not found" WARNs
-        portfolio_holdings = _make_portfolio_holdings_table()
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -553,7 +569,7 @@ class TestRunValidation:
         ]
         holdings = _rows_to_table(holdings_rows, consolidated_holdings_schema)
         cdc = _make_cdc_table(fernet_key)
-        portfolio_holdings = _make_portfolio_holdings_table()
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
 
         write_deltalake(
             storage.normalized_path("consolidated_holdings"),
@@ -590,7 +606,7 @@ class TestDataQualityRoundTrip:
         # Write tables so validation has something to check
         holdings = _make_holdings_table(fernet_key)
         cdc = _make_cdc_table(fernet_key)
-        portfolio_holdings = _make_portfolio_holdings_table()
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
 
         write_deltalake(
             storage.normalized_path("consolidated_holdings"),

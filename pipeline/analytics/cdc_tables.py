@@ -24,7 +24,7 @@ from pipeline.analytics.models import (
     dividend_income_schema,
     interest_income_schema,
 )
-from pipeline.crypto import decrypt_float
+from pipeline.crypto import decrypt_float, encrypt_float
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,28 @@ def _decrypt_column(
         )
         .alias(alias)
     )
+
+
+def _encrypt_gold_values(
+    df: pl.DataFrame, columns: list[str], fernet_key: bytes
+) -> pl.DataFrame:
+    """Encrypt float columns to binary Fernet tokens for gold-layer storage.
+
+    Decision: docs/adr/0084-encrypt-gold-value-columns.md
+    """
+    for col in columns:
+        if col in df.columns:
+            df = df.with_columns(
+                pl.col(col)
+                .map_elements(
+                    lambda v, _k=fernet_key: (
+                        encrypt_float(v, _k) if v is not None else None
+                    ),
+                    return_dtype=pl.Binary,
+                )
+                .alias(col),
+            )
+    return df
 
 
 def _add_period_columns(df: pl.DataFrame) -> pl.DataFrame:
@@ -273,8 +295,8 @@ def build_dividend_income(
                 "description": pa.array([], type=pa.string()),
                 "security_ccy": pa.array([], type=pa.string()),
                 "instrument_ccy": pa.array([], type=pa.string()),
-                "cash_amount": pa.array([], type=pa.float64()),
-                "target_value": pa.array([], type=pa.float64()),
+                "cash_amount": pa.array([], type=pa.binary()),
+                "target_value": pa.array([], type=pa.binary()),
                 "target_ccy": pa.array([], type=pa.string()),
                 "event_count": pa.array([], type=pa.int64()),
             },
@@ -335,6 +357,9 @@ def build_dividend_income(
             .alias("target_ccy")
         )
 
+        # Encrypt gold value columns before writing.
+        agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
+
         result = pa.table(
             {
                 "calculated_at": [now] * len(agg),
@@ -389,8 +414,8 @@ def build_interest_income(
                 "period_quarter": pa.array([], type=pa.string()),
                 "broker": pa.array([], type=pa.string()),
                 "security_ccy": pa.array([], type=pa.string()),
-                "cash_amount": pa.array([], type=pa.float64()),
-                "target_value": pa.array([], type=pa.float64()),
+                "cash_amount": pa.array([], type=pa.binary()),
+                "target_value": pa.array([], type=pa.binary()),
                 "target_ccy": pa.array([], type=pa.string()),
                 "event_count": pa.array([], type=pa.int64()),
             },
@@ -434,6 +459,9 @@ def build_interest_income(
             .otherwise(pl.col("target_ccy"))
             .alias("target_ccy")
         )
+
+        # Encrypt gold value columns before writing.
+        agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
 
         result = pa.table(
             {
@@ -483,8 +511,8 @@ def build_cash_flow_summary(
                 "broker": pa.array([], type=pa.string()),
                 "event_type": pa.array([], type=pa.string()),
                 "security_ccy": pa.array([], type=pa.string()),
-                "cash_amount": pa.array([], type=pa.float64()),
-                "target_value": pa.array([], type=pa.float64()),
+                "cash_amount": pa.array([], type=pa.binary()),
+                "target_value": pa.array([], type=pa.binary()),
                 "target_ccy": pa.array([], type=pa.string()),
                 "event_count": pa.array([], type=pa.int64()),
             },
@@ -529,6 +557,9 @@ def build_cash_flow_summary(
             .otherwise(pl.col("target_ccy"))
             .alias("target_ccy")
         )
+
+        # Encrypt gold value columns before writing.
+        agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
 
         result = pa.table(
             {

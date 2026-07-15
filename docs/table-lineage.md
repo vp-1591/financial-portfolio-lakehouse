@@ -24,11 +24,11 @@ flowchart LR
     n_cdc_events["cdc_events"]
   end
 
-  subgraph gold["Analytics / Gold Layer (decrypted)"]
-    g_holdings["portfolio_holdings<br/>(ticker, broker, security_ccy,<br/>security_value, target_value,<br/>target_ccy, percentage, position_type)"]
-    g_dividends["dividend_income"]
-    g_interest["interest_income"]
-    g_cashflow["cash_flow_summary"]
+  subgraph gold["Analytics / Gold Layer (encrypted values)"]
+    g_holdings["portfolio_holdings<br/>(ticker, broker, security_ccy,<br/>security_value†, target_value†,<br/>target_ccy, percentage, position_type)"]
+    g_dividends["dividend_income<br/>(cash_amount†, target_value†)"]
+    g_interest["interest_income<br/>(cash_amount†, target_value†)"]
+    g_cashflow["cash_flow_summary<br/>(cash_amount†, target_value†)"]
     g_quality["data_quality"]
   end
 
@@ -111,8 +111,14 @@ flowchart LR
   gold tables.
 - **`cdc_events` self-references.** `normalize_currency()` reads, enriches, and overwrites
   the same table (adds `target_fx_rate`, `target_value`, `target_ccy`).
-- **Allocation charts and the positions chart** read from `portfolio_holdings`. The
-  donut charts group by `broker` or `security_ccy` and sum `target_value`; the
-  positions chart renders each row individually using the `percentage` column.
+- **Gold value columns are Fernet-encrypted.** Columns marked with † (`security_value`,
+  `target_value`, `cash_amount`) are stored as `pa.binary()` using `encrypt_float()`.
+  Metadata columns (`ticker`, `broker`, `security_ccy`, `percentage`, `position_type`,
+  etc.) remain plaintext.
+- **Allocation charts use `percentage`.** The donut charts (`allocation_by_broker`,
+  `allocation_by_currency`) and the positions chart group by `broker`/`security_ccy` and
+  sum the plaintext `percentage` column — no decryption needed. Charts that display
+  absolute monetary values (Passive Income, Cash Flow, Total Value card) decrypt at
+  render time.
 - **Data quality** (dotted lines) reads all normalized and gold tables but is not a
   data-flow dependency.

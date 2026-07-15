@@ -12,19 +12,19 @@ import plotly.graph_objects as go
 
 
 def allocation_by_broker(holdings: pl.DataFrame) -> go.Figure:
-    """Pie chart: portfolio value by broker."""
+    """Pie chart: portfolio allocation by broker using percentage column."""
     if holdings.is_empty():
         return _empty_figure("Portfolio Allocation by Broker")
     agg = (
         holdings.group_by("broker")
-        .agg(pl.col("target_value").sum())
-        .sort("target_value", descending=True)
+        .agg(pl.col("percentage").sum())
+        .sort("percentage", descending=True)
     )
     fig = go.Figure(
         data=[
             go.Pie(
                 labels=agg["broker"].to_list(),
-                values=agg["target_value"].to_list(),
+                values=agg["percentage"].to_list(),
                 textinfo="label+percent",
                 hole=0.4,
             )
@@ -80,19 +80,19 @@ def positions_chart(holdings: pl.DataFrame) -> go.Figure:
 
 
 def allocation_by_currency(holdings: pl.DataFrame) -> go.Figure:
-    """Donut chart: portfolio value by instrument trading currency."""
+    """Donut chart: portfolio allocation by instrument trading currency using percentage column."""
     if holdings.is_empty():
         return _empty_figure("Currency Exposure")
     agg = (
         holdings.group_by("security_ccy")
-        .agg(pl.col("target_value").sum())
-        .sort("target_value", descending=True)
+        .agg(pl.col("percentage").sum())
+        .sort("percentage", descending=True)
     )
     fig = go.Figure(
         data=[
             go.Pie(
                 labels=agg["security_ccy"].to_list(),
-                values=agg["target_value"].to_list(),
+                values=agg["percentage"].to_list(),
                 textinfo="label+percent",
                 hole=0.4,
             )

@@ -3,6 +3,10 @@
 Each loader function reads a gold Delta table through the query connection
 and returns a Polars DataFrame.  Missing tables return an empty DataFrame
 with the expected columns so the report can render partial data gracefully.
+
+Gold value columns (``security_value``, ``target_value``, ``cash_amount``)
+are stored as Fernet-encrypted ``pa.binary()``.  The loader decrypts them
+after reading so that chart and renderer code receives plaintext floats.
 """
 
 from __future__ import annotations
@@ -19,10 +23,10 @@ _PORTFOLIO_HOLDINGS_COLUMNS = {
     "broker": pl.String,
     "ticker": pl.String,
     "security_ccy": pl.String,
-    "security_value": pl.Float64,
-    "target_value": pl.Float64,
+    "security_value": pl.Binary,  # Fernet-encrypted
+    "target_value": pl.Binary,  # Fernet-encrypted
     "target_ccy": pl.String,
-    "percentage": pl.Float64,
+    "percentage": pl.Float64,  # plaintext
     "position_type": pl.String,
     "identifier": pl.String,
     "description": pl.String,
@@ -37,8 +41,8 @@ _DIVIDEND_INCOME_COLUMNS = {
     "isin": pl.String,
     "description": pl.String,
     "security_ccy": pl.String,
-    "cash_amount": pl.Float64,
-    "target_value": pl.Float64,
+    "cash_amount": pl.Binary,  # Fernet-encrypted
+    "target_value": pl.Binary,  # Fernet-encrypted
     "target_ccy": pl.String,
     "event_count": pl.Int64,
 }
@@ -49,8 +53,8 @@ _INTEREST_INCOME_COLUMNS = {
     "period_quarter": pl.String,
     "broker": pl.String,
     "security_ccy": pl.String,
-    "cash_amount": pl.Float64,
-    "target_value": pl.Float64,
+    "cash_amount": pl.Binary,  # Fernet-encrypted
+    "target_value": pl.Binary,  # Fernet-encrypted
     "target_ccy": pl.String,
     "event_count": pl.Int64,
 }
@@ -62,8 +66,8 @@ _CASH_FLOW_SUMMARY_COLUMNS = {
     "broker": pl.String,
     "event_type": pl.String,
     "security_ccy": pl.String,
-    "cash_amount": pl.Float64,
-    "target_value": pl.Float64,
+    "cash_amount": pl.Binary,  # Fernet-encrypted
+    "target_value": pl.Binary,  # Fernet-encrypted
     "target_ccy": pl.String,
     "event_count": pl.Int64,
 }
@@ -128,11 +132,27 @@ def load_all() -> dict[str, pl.DataFrame]:
     """Load all analytics tables needed by the report.
 
     Returns a dict keyed by table name; missing tables produce empty DataFrames.
+    Gold value columns are decrypted after loading so that chart and renderer
+    code receives plaintext floats.
     """
-    return {
+    from pipeline.query import decrypt_df
+
+    tables = {
         "portfolio_holdings": load_portfolio_holdings(),
         "dividend_income": load_dividend_income(),
         "interest_income": load_interest_income(),
         "cash_flow_summary": load_cash_flow_summary(),
         "data_quality": load_data_quality(),
     }
+    # Decrypt Fernet-encrypted value columns in gold tables.
+    # Decision: docs/adr/0084-encrypt-gold-value-columns.md
+    for key in (
+        "portfolio_holdings",
+        "dividend_income",
+        "interest_income",
+        "cash_flow_summary",
+    ):
+        if not tables[key].is_empty():
+            tables[key] = decrypt_df(tables[key])
+
+    return tables
