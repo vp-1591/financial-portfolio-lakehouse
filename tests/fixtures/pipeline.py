@@ -1,4 +1,4 @@
-"""End-to-end pipeline fixtures: raw -> normalized -> consolidated -> allocation.
+"""End-to-end pipeline fixtures: raw -> normalized -> consolidated -> holdings.
 
 Provides helpers that set up a complete pipeline environment with fixture
 data, using a temporary directory and a test ``StorageConfig``.
@@ -50,7 +50,7 @@ def setup_pipeline_env(
         "normalized/xtb_snapshot",
         "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_allocation",
+        "analytics/portfolio_holdings",
     ]:
         (data / subdir).mkdir(parents=True, exist_ok=True)
 

@@ -41,7 +41,7 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
             "consolidated_holdings"
         ),
         # Analytics table paths
-        "ANALYTICS_PORTFOLIO_ALLOCATION": config.analytics_path("portfolio_allocation"),
+        "ANALYTICS_PORTFOLIO_HOLDINGS": config.analytics_path("portfolio_holdings"),
     }
     if name in mapping:
         return mapping[name]

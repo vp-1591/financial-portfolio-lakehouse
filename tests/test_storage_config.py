@@ -488,8 +488,8 @@ class TestPathsModule:
         assert pipeline.paths.NORMALIZED_CONSOLIDATED_HOLDINGS == str(
             data / "normalized" / "consolidated_holdings"
         )
-        assert pipeline.paths.ANALYTICS_PORTFOLIO_ALLOCATION == str(
-            data / "analytics" / "portfolio_allocation"
+        assert pipeline.paths.ANALYTICS_PORTFOLIO_HOLDINGS == str(
+            data / "analytics" / "portfolio_holdings"
         )
 
     def test_paths_unknown_attribute_raises(self):
@@ -547,8 +547,8 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        assert config.analytics_path("portfolio_allocation") == str(
-            data / "analytics" / "portfolio_allocation"
+        assert config.analytics_path("portfolio_holdings") == str(
+            data / "analytics" / "portfolio_holdings"
         )
 
     def test_staging_path_local_backend(self, tmp_path: Path) -> None:

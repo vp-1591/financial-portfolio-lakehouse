@@ -46,7 +46,6 @@ def _setup_storage(tmp_path: Path) -> None:
         "normalized/xtb_snapshot",
         "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_allocation",
         "analytics/portfolio_holdings",
     ]:
         (data / subdir).mkdir(parents=True, exist_ok=True)
@@ -187,3 +186,31 @@ class TestBuildPortfolioHoldings:
         fernet_key = generate_key()
         with pytest.raises(FileNotFoundError, match="Consolidated holdings"):
             build_portfolio_holdings(fernet_key=fernet_key)
+
+    def test_percentage_column_present(self, tmp_path: Path):
+        """Result table includes the percentage column."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        assert "percentage" in result.column_names
+
+    def test_percentage_values_positive(self, tmp_path: Path):
+        """All percentage values are positive."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        percentages = result.column("percentage").to_pylist()
+        assert all(p > 0 for p in percentages)
+
+    def test_percentage_sums_to_100(self, tmp_path: Path):
+        """Percentage values sum to approximately 100."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        total_pct = sum(result.column("percentage").to_pylist())
+        assert abs(total_pct - 100.0) < 0.1, (
+            f"Percentages sum to {total_pct}, expected ~100"
+        )

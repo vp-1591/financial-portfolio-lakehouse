@@ -5,7 +5,7 @@ Covers bugs found during end-to-end runs:
 - Missing parent directory creation for Delta table paths
 - Transform functions must decrypt payloads before JSON parsing
 - T212 auth uses Basic Auth, not Bearer token
-- allocate_percentages handles missing Delta table gracefully
+- build_portfolio_holdings handles missing Delta table gracefully
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
-import pytest
 
 from pipeline.crypto import encrypt, generate_key
 from pipeline.raw.ingest import encrypt_raw_payloads
@@ -266,7 +265,7 @@ class TestDirectoryCreation:
     """Test that Delta table writes create parent directories if missing.
 
     On first run, data/ subdirectories don't exist yet.
-    ingest_raw, consolidate_holdings, and allocate_percentages must
+    ingest_raw, consolidate_holdings, and build_portfolio_holdings must
     create them before writing.
     """
 
@@ -312,56 +311,3 @@ class TestDirectoryCreation:
         result = consolidate_holdings(holdings, key, converter, table_path=table_path)
         assert result.num_rows == 1
         assert Path(table_path).exists()
-
-    def test_allocate_creates_parent_dirs(self, tmp_path: Path) -> None:
-
-        from pipeline.analytics.allocation import allocate_percentages
-
-        key = generate_key()
-
-        # First create the consolidated holdings table
-        holdings_path = str(tmp_path / "normalized" / "consolidated_holdings")
-        from pipeline.normalized.consolidate import (
-            CurrencyConverter,
-            Holding,
-            consolidate_holdings,
-        )
-
-        converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
-        holdings = [Holding("TestBroker", "AAPL", "USD", 100.0)]
-        consolidate_holdings(holdings, key, converter, table_path=holdings_path)
-
-        # Now allocate should create analytics dir
-        analytics_path = str(tmp_path / "analytics" / "portfolio_allocation")
-        result = allocate_percentages(
-            table_path=holdings_path,
-            fernet_key=key,
-            analytics_path=analytics_path,
-        )
-        assert result.num_rows == 1
-        assert Path(analytics_path).exists()
-
-
-class TestAllocateMissingTable:
-    """Test that allocate_percentages raises FileNotFoundError when
-    the consolidated_holdings Delta table doesn't exist.
-
-    Previously this raised a low-level Delta error with no context.
-    """
-
-    def test_allocate_raises_filenotfound_for_missing_table(
-        self, tmp_path: Path
-    ) -> None:
-        from pipeline.analytics.allocation import allocate_percentages
-
-        key = generate_key()
-        missing_path = str(tmp_path / "nonexistent" / "consolidated_holdings")
-
-        with pytest.raises(
-            FileNotFoundError, match="Consolidated holdings table not found"
-        ):
-            allocate_percentages(
-                table_path=missing_path,
-                fernet_key=key,
-                analytics_path=str(tmp_path / "analytics" / "allocation"),
-            )

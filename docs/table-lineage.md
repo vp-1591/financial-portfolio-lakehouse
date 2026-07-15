@@ -25,8 +25,7 @@ flowchart LR
   end
 
   subgraph gold["Analytics / Gold Layer (decrypted)"]
-    g_allocation["portfolio_allocation<br/>(ticker, broker, percentage)"]
-    g_holdings["portfolio_holdings<br/>(ticker, broker, security_ccy,<br/>security_value, target_value,<br/>target_ccy, position_type)"]
+    g_holdings["portfolio_holdings<br/>(ticker, broker, security_ccy,<br/>security_value, target_value,<br/>target_ccy, percentage, position_type)"]
     g_dividends["dividend_income"]
     g_interest["interest_income"]
     g_cashflow["cash_flow_summary"]
@@ -64,7 +63,6 @@ flowchart LR
   n_cdc_events -.->|normalize_currency| n_cdc_events
 
   %% Consolidated → Gold
-  n_consolidated -->|allocate_percentages| g_allocation
   n_consolidated -->|build_portfolio_holdings| g_holdings
 
   %% cdc_events → Gold
@@ -81,7 +79,6 @@ flowchart LR
   n_xtb_cdc -.->|validate| g_quality
   n_consolidated -.->|validate| g_quality
   n_cdc_events -.->|validate| g_quality
-  g_allocation -.->|validate| g_quality
   g_holdings -.->|validate| g_quality
   g_dividends -.->|validate| g_quality
   g_interest -.->|validate| g_quality
@@ -96,9 +93,6 @@ flowchart LR
   g_cashflow -->|load_cash_flow_summary| c_cashflow
   g_quality -->|load_data_quality| c_dq
 
-  %% portfolio_allocation: fallback only, no charts
-  g_allocation -.->|"fallback when<br/>holdings empty"| c_alloc
-
   %% Styles
   classDef raw fill:#fce4ec,stroke:#e57373,color:#333
   classDef norm fill:#e3f2fd,stroke:#64b5f6,color:#333
@@ -106,7 +100,7 @@ flowchart LR
   classDef chart fill:#fff3e0,stroke:#ffb74d,color:#333
   class r_ibkr_snap,r_ibkr_cdc,r_t212_snap,r_t212_cdc,r_xtb_snap,r_xtb_cdc raw
   class n_ibkr_snap,n_ibkr_cdc,n_t212_snap,n_t212_cdc,n_xtb_snap,n_xtb_cdc,n_consolidated,n_cdc_events norm
-  class g_allocation,g_holdings,g_dividends,g_interest,g_cashflow,g_quality gold
+  class g_holdings,g_dividends,g_interest,g_cashflow,g_quality gold
   class c_alloc,c_type,c_ccy,c_income,c_cashflow,c_dq chart
 ```
 
@@ -117,10 +111,7 @@ flowchart LR
   gold tables.
 - **`cdc_events` self-references.** `normalize_currency()` reads, enriches, and overwrites
   the same table (adds `target_fx_rate`, `target_value`, `target_ccy`).
-- **All three allocation charts** read from `portfolio_holdings`, not
-  `portfolio_allocation`. They group by `broker`, `position_type`, or `security_ccy`
-  and sum `target_value` at render time.
-- **`portfolio_allocation`** is a degraded fallback only — it renders a plain HTML table
-  when `portfolio_holdings` is empty, with no charts.
+- **All three allocation charts** read from `portfolio_holdings`. They group by
+  `broker`, `position_type`, or `security_ccy` and sum `target_value` at render time.
 - **Data quality** (dotted lines) reads all normalized and gold tables but is not a
   data-flow dependency.

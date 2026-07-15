@@ -110,7 +110,7 @@ def _setup_storage(tmp_path: Path) -> None:
     for subdir in [
         "normalized/cdc_events",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_allocation",
+        "analytics/portfolio_holdings",
         "analytics/data_quality",
         "analytics/dividend_income",
         "analytics/interest_income",
