@@ -1,5 +1,7 @@
 # ADR 0058: Broker-Neutral CDC Events Schema
 
+> **Superseded by [ADR 0077](./0077-currency-unification-phase2-schema-redesign.md)** — ADR 0077 replaced the column definitions (`currency` → `security_ccy`, `net_amount` → removed, `base_currency` → `target_ccy`, `fx_rate_to_base` → `target_fx_rate`, `amount_base` → `target_value`).
+
 ## Context
 
 The pipeline had three broker-specific CDC (Change Data Capture) schemas with incompatible column names and semantics:

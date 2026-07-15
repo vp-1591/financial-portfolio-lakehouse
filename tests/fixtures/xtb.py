@@ -217,12 +217,12 @@ def xtb_normalized_snapshot(
                 "Cash PLN",
             ],
             "asset_class": ["STK", "STK", "CASH"],
-            "value": [
+            "security_value": [
                 encrypt_float(1000.0, fernet_key),
                 encrypt_float(2500.0, fernet_key),
                 encrypt_float(5000.0, fernet_key),
             ],
-            "value_currency": ["EUR", "PLN", "PLN"],
+            "security_ccy": ["EUR", "PLN", "PLN"],
             "isin": ["IE00BK5BQT80", "PL9999900006", ""],
         },
         schema=xtb_snapshot_normalized_schema,

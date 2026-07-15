@@ -56,11 +56,12 @@ class Trading212Connector:
                 Holding(
                     broker="Trading 212",
                     ticker=str(row["label"]),
-                    currency=str(row.get("value_currency", "")),
-                    value=row["value_decrypted"],
+                    currency=str(row.get("security_ccy", "")),
+                    value=row["security_value_decrypted"],
                     identifier=identifier,
-                    security_currency=str(row.get("security_currency", "")),
+                    security_currency=str(row.get("security_ccy", "")),
                     description=str(row.get("name", "")),
+                    position_type=str(row.get("position_type", "EQUITY")),
                 )
             )
         return holdings

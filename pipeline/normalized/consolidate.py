@@ -35,6 +35,7 @@ class Holding:
     identifier: str = ""
     security_currency: str = ""
     description: str = ""
+    position_type: str = "EQUITY"  # EQUITY | CASH
 
 
 @dataclass(frozen=True)
@@ -283,11 +284,13 @@ def consolidate_holdings(
     fetched_ats: list[datetime] = []
     brokers: list[str] = []
     tickers: list[str] = []
-    currencies: list[str] = []
-    values: list[bytes] = []
+    security_values: list[bytes] = []  # encrypted native-currency value
+    security_ccys: list[str] = []
+    target_ccys: list[str] = []
+    values: list[bytes] = []  # encrypted target_value
     identifiers: list[str] = []
-    security_currencies: list[str] = []
     descriptions: list[str] = []
+    position_types: list[str] = []
 
     for holding in holdings:
         converted_value = converter.convert(holding.value, holding.currency)
@@ -303,22 +306,26 @@ def consolidate_holdings(
         fetched_ats.append(now)
         brokers.append(holding.broker)
         tickers.append(holding.ticker)
-        currencies.append(converter.target_currency)
+        security_values.append(encrypt_float(holding.value, fernet_key))
+        security_ccys.append(holding.security_currency or "-")
+        target_ccys.append(converter.target_currency)
         values.append(encrypt_float(converted_value, fernet_key))
         identifiers.append(identifier or "-")
-        security_currencies.append(holding.security_currency or "-")
         descriptions.append(holding.description or "-")
+        position_types.append(holding.position_type)
 
     table = pa.table(
         {
             "fetched_at": fetched_ats,
             "broker": brokers,
             "ticker": tickers,
-            "base_currency": currencies,
-            "value": values,
+            "security_value": security_values,
+            "security_ccy": security_ccys,
+            "target_ccy": target_ccys,
+            "target_value": values,
             "identifier": identifiers,
-            "security_currency": security_currencies,
             "description": descriptions,
+            "position_type": position_types,
         },
         schema=consolidated_holdings_schema,
     )

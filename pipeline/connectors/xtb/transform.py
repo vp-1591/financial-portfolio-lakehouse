@@ -44,8 +44,8 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                     "label": pos.label,
                     "name": pos.name,
                     "asset_class": pos.asset_class,
-                    "value": pos.value,
-                    "value_currency": pos.currency,
+                    "security_value": pos.value,
+                    "security_ccy": pos.currency,
                     "isin": pos.isin,
                 }
             )
@@ -54,7 +54,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         records,
         xtb_snapshot_normalized_schema,
         fernet_key,
-        encrypt_columns=["value"],
+        encrypt_columns=["security_value"],
     )
 
 
@@ -107,9 +107,15 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                     "event_type": _classify_xtb_event_type(op.operation_type),
                     "raw_event_type": op.operation_type,
                     "event_datetime": op.operation_date,
-                    "value_currency": op.currency,
+                    "security_ccy": op.currency,
                     "cash_amount": op.amount,
                     "description": op.comment,
+                    # XTB does not provide FX rates; target columns are
+                    # populated by the normalize_currency step.
+                    "target_fx_rate": None,
+                    "target_value": None,
+                    "target_ccy": None,
+                    "instrument_ccy": None,
                 }
             )
 
@@ -117,5 +123,5 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         records,
         cdc_events_normalized_schema,
         fernet_key,
-        encrypt_columns=["cash_amount"],
+        encrypt_columns=["cash_amount", "target_fx_rate", "target_value"],
     )

@@ -68,7 +68,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | active | — |
 | 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |
 | 0057 | Fix Bronze→Silver Dedup and Cash Extraction Bugs | 2026-07-10 | active | — |
-| 0058 | Broker-Neutral CDC Events Schema | 2026-07-10 | active | — |
+| 0058 | Broker-Neutral CDC Events Schema | 2026-07-10 | superseded | 0077 |
 | 0059 | Fix T212 CDC Paginated Response Bug and Test Isolation Leak | 2026-07-10 | active | — |
 | 0060 | Fix T212 CDC Transform for Nested JSON Structures | 2026-07-11 | active | — |
 | 0061 | Handle Missing Struct Fields in T212 CDC Transform | 2026-07-11 | active | — |
@@ -84,8 +84,13 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0071 | IBKR Demo Initial Deposit Injection | 2026-07-14 | active | — |
 | 0072 | DQ Table Overwrite and Empty-Table Freshness | 2026-07-14 | active | — |
 | 0073 | Currency Exposure Donut Chart (Phase 1) | 2026-07-14 | active | — |
-| 0074 | Remove Overloaded Currency Column, Rename to Explicit Names | 2026-07-14 | active | — |
+| 0074 | Remove Overloaded Currency Column, Rename to Explicit Names | 2026-07-14 | superseded | 0077 |
 | 0075 | Cash Flow Breakdown Outlier Toggle | 2026-07-14 | active | — |
+| 0076 | Fix T212 walletImpact.fxRate Usage (Phase 1: Currency Unification) | 2026-07-14 | superseded | 0077 |
+| 0077 | Currency Unification Phase 2 — Schema Redesign | 2026-07-14 | active | — |
+| 0078 | Currency Unification Phase 3: Data Quality Fixes | 2026-07-14 | active | — |
+| 0079 | Fix IBKR Demo Deposit Currency After Phase 2 Rename | 2026-07-15 | active | — |
+| 0080 | Store security_value and position_type in Consolidated Holdings; Add instrument_ccy to CDC Events | 2026-07-15 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

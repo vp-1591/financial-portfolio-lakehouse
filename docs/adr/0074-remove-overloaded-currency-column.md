@@ -1,5 +1,7 @@
 # 0074 — Remove Overloaded `currency` Column, Rename to Explicit Names
 
+> **Superseded by [ADR 0077](./0077-currency-unification-phase2-schema-redesign.md)** — ADR 0077 redesigns the schema with clearer column names (security_ccy, target_ccy) that replace the names introduced here (value_currency, base_currency, security_currency).
+
 ## Context
 
 The `currency` column was overloaded across the pipeline — it meant "account base currency" in IBKR snapshots, "wallet currency" in T212, "position currency" in XTB, "target currency after FX" in `consolidated_holdings`, and "native value currency" in `portfolio_holdings` and CDC tables. This ambiguity caused a visible bug where the "Allocation by Currency" chart grouped T212 positions by wallet currency (PLN) instead of instrument currency (GBX/GBP) — fixed in Phase 1 (ADR 0073).

@@ -34,15 +34,14 @@ def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
             "position_type": ["EQUITY", "EQUITY", "CASH"],
             "label": ["VWCE", "AAPL", "CASH EUR"],
             "asset_class": ["STK", "STK", "CASH"],
-            "value": [
+            "security_value": [
                 encrypt_float(5000.0, fernet_key),
                 encrypt_float(2700.0, fernet_key),
                 encrypt_float(2000.0, fernet_key),
             ],
-            "value_currency": ["EUR", "USD", "EUR"],
+            "security_ccy": ["EUR", "USD", "EUR"],
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
             "description": ["Vanguard FTSE All-World", "Apple Inc", "Cash EUR"],
-            "security_currency": ["EUR", "USD", "EUR"],
         },
         schema=ibkr_snapshot_normalized_schema,
     )
@@ -140,7 +139,7 @@ class TestQueryCLI:
         _setup_env(tmp_path)
 
         args = _make_args(
-            "SELECT label, value FROM ibkr_snapshot_normalized", decrypt=True
+            "SELECT label, security_value FROM ibkr_snapshot_normalized", decrypt=True
         )
         result = cmd_query(args)
 
@@ -157,12 +156,12 @@ class TestQueryCLI:
         """Without --decrypt, binary columns remain as binary in output."""
         _setup_env(tmp_path)
 
-        args = _make_args("SELECT label, value FROM ibkr_snapshot_normalized")
+        args = _make_args("SELECT label, security_value FROM ibkr_snapshot_normalized")
         result = cmd_query(args)
 
         assert result == 0
         captured = capsys.readouterr()
-        # Without decrypt, the 'value' column should still contain binary data
+        # Without decrypt, the 'security_value' column should still contain binary data
         # (Polars will show it as bytes or a hex-like representation)
         # Just verify the command succeeds and labels are present
         assert "VWCE" in captured.out
@@ -185,7 +184,7 @@ class TestQueryCLI:
         _setup_env(tmp_path)
 
         args = _make_args(
-            "SELECT label, value_currency FROM ibkr_snapshot_normalized", fmt="csv"
+            "SELECT label, security_ccy FROM ibkr_snapshot_normalized", fmt="csv"
         )
         result = cmd_query(args)
 
@@ -203,7 +202,7 @@ class TestQueryCLI:
         _setup_env(tmp_path)
 
         args = _make_args(
-            "SELECT label, value_currency FROM ibkr_snapshot_normalized", fmt="json"
+            "SELECT label, security_ccy FROM ibkr_snapshot_normalized", fmt="json"
         )
         result = cmd_query(args)
 

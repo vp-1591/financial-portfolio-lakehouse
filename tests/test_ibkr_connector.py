@@ -345,10 +345,10 @@ class TestFlexTransformSnapshot:
             raw, fernet_key, base_currency_override="CHF"
         )
 
-        # The position has no native currency, so value_currency/security_currency
-        # fall back to the overridden base currency (CHF).
-        currencies = result.column("value_currency").to_pylist()
-        assert all(c == "CHF" for c in currencies)
+        # The position has no native currency, so security_ccy
+        # falls back to "USD" (the default for unknown currencies).
+        currencies = result.column("security_ccy").to_pylist()
+        assert all(c == "USD" for c in currencies)
 
     def test_transform_produces_cash_from_base_summary_fallback(
         self, fernet_key: bytes
@@ -385,7 +385,7 @@ class TestFlexTransformSnapshot:
         labels = result.column("label").to_pylist()
         assert labels[cash_idx] == "CASH USD"
 
-        values = result.column("value").to_pylist()
+        values = result.column("security_value").to_pylist()
         cash_value = decrypt_float(values[cash_idx], fernet_key)
         assert cash_value == pytest.approx(10500.0)
 
@@ -456,7 +456,7 @@ class TestFlexTransformSnapshot:
         labels = result.column("label").to_pylist()
         assert labels[cash_idx] == "CASH CHF"
 
-        currencies = result.column("value_currency").to_pylist()
+        currencies = result.column("security_ccy").to_pylist()
         assert currencies[cash_idx] == "CHF"
 
 
@@ -728,6 +728,21 @@ class TestCdcTransform:
                 f"Compact datetime not normalised: {dt}"
             )
 
+    def test_transform_cdc_settle_date_normalized(self, fernet_key: bytes) -> None:
+        """IBKR settle_date compact formats are normalised to ISO 8601."""
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        settle_dates = result.column("settle_date").to_pylist()
+        # All non-empty settle_date values should be ISO 8601 (no compact YYYYMMDD)
+        for sd in settle_dates:
+            if sd:
+                assert "-" in sd, f"Compact settle_date not normalised: {sd}"
+
 
 class TestNormalizeIbkrDatetime:
     """Tests for _normalize_ibkr_datetime helper."""
@@ -763,6 +778,147 @@ class TestNormalizeIbkrDatetime:
         from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert _normalize_ibkr_datetime("") == ""
+
+
+class TestIbkrFeeConversion:
+    """Tests for IBKR trade fee conversion when commission currency differs from trade currency."""
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    def _build_trade_xml(
+        self,
+        account_id: str = "U123456",
+        account_currency: str = "EUR",
+        trade_currency: str = "USD",
+        fx_rate_to_base: str = "0.9",
+        ib_commission: str = "-1.0",
+        ib_commission_currency: str = "USD",
+    ) -> str:
+        """Build Flex XML with a single Trade having the specified commission currency."""
+        return (
+            '<FlexQueryResponse queryName="test_fee" type="AF">'
+            '<FlexStatements count="1">'
+            f'<FlexStatement accountId="{account_id}" fromDate="20260101" toDate="20260625">'
+            "<AccountInformation>"
+            f'<AccountInformation accountId="{account_id}" currency="{account_currency}"/>'
+            "</AccountInformation>"
+            "<Trades>"
+            f'<Trade accountId="{account_id}" symbol="AAPL" description="Apple Inc"'
+            f' isin="US0378331005" currency="{trade_currency}" fxRateToBase="{fx_rate_to_base}"'
+            ' dateTime="20260115;103000"'
+            ' tradeDate="20260115" settleDateTarget="20260117"'
+            ' quantity="10" tradePrice="150.0" proceeds="-1500.0"'
+            f' ibCommission="{ib_commission}" ibCommissionCurrency="{ib_commission_currency}"'
+            ' netCash="-1501.0"'
+            ' buySell="BUY" transactionType="ExTrade"'
+            f' ibExecutionId="e001" tradeId="T001" transactionId="TX001"'
+            ' taxes="0.0" conid="265598" securityId="US0378331005"'
+            ' multiplier="1" openCloseIndicator="O"/>'
+            "</Trades>"
+            "<CashTransactions/>"
+            "<Transfers/>"
+            "<TransactionFees/>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+
+    def _build_raw_table(self, xml_str: str, fernet_key: bytes) -> pa.Table:
+        """Build a raw-layer table with a Flex XML payload."""
+        import hashlib
+
+        from pipeline.crypto import encrypt
+
+        xml_bytes = xml_str.encode("utf-8")
+        encrypted_payload = encrypt(xml_bytes, fernet_key)
+        now = datetime.now(timezone.utc)
+        payload_hash = hashlib.sha256(xml_bytes).hexdigest()
+
+        return pa.table(
+            {
+                "fetched_at": [now],
+                "broker": ["IBKR"],
+                "source": ["flex_cdc"],
+                "payload": [encrypted_payload],
+                "payload_hash": [payload_hash],
+                "source_file": [""],
+            },
+            schema=RAW_SCHEMA,
+        )
+
+    def test_trade_fee_same_currency(self, fernet_key: bytes) -> None:
+        """When ibCommissionCurrency matches trade currency, fee is unchanged."""
+        from pipeline.connectors.ibkr.transform import transform_cdc
+        from pipeline.crypto import decrypt_float
+
+        xml_str = self._build_trade_xml(
+            trade_currency="USD",
+            ib_commission_currency="USD",
+            ib_commission="-1.0",
+        )
+        raw = self._build_raw_table(xml_str, fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        event_types = result.column("event_type").to_pylist()
+        trade_idx = event_types.index("TRADE")
+        fee = decrypt_float(result.column("fee_amount")[trade_idx].as_py(), fernet_key)
+        assert fee == pytest.approx(1.0)  # abs(-1.0), no conversion
+
+    def test_trade_fee_commission_in_base_currency(self, fernet_key: bytes) -> None:
+        """When commission currency matches base currency, fee is converted via 1/fxRateToBase."""
+        from pipeline.connectors.ibkr.transform import transform_cdc
+        from pipeline.crypto import decrypt_float
+
+        # EUR account, USD trade, commission in EUR (base), fxRateToBase=0.9 (USD→EUR)
+        # fee_amount = 1.0 EUR / 0.9 = 1.111... USD
+        xml_str = self._build_trade_xml(
+            account_currency="EUR",
+            trade_currency="USD",
+            fx_rate_to_base="0.9",
+            ib_commission="-1.0",
+            ib_commission_currency="EUR",
+        )
+        raw = self._build_raw_table(xml_str, fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        event_types = result.column("event_type").to_pylist()
+        trade_idx = event_types.index("TRADE")
+        fee = decrypt_float(result.column("fee_amount")[trade_idx].as_py(), fernet_key)
+        assert fee == pytest.approx(1.0 / 0.9, abs=1e-4)
+
+    def test_trade_fee_cross_currency_warning(self, fernet_key: bytes, caplog) -> None:
+        """When commission currency differs from both trade and base, fee is left unconverted with a warning."""
+        import logging
+
+        from pipeline.connectors.ibkr.transform import transform_cdc
+        from pipeline.crypto import decrypt_float
+
+        # EUR account, USD trade, commission in GBP (neither trade nor base currency)
+        xml_str = self._build_trade_xml(
+            account_currency="EUR",
+            trade_currency="USD",
+            fx_rate_to_base="0.9",
+            ib_commission="-0.50",
+            ib_commission_currency="GBP",
+        )
+        raw = self._build_raw_table(xml_str, fernet_key)
+
+        with caplog.at_level(logging.WARNING):
+            result = transform_cdc(raw, fernet_key)
+
+        event_types = result.column("event_type").to_pylist()
+        trade_idx = event_types.index("TRADE")
+        fee = decrypt_float(result.column("fee_amount")[trade_idx].as_py(), fernet_key)
+        # Fee is left in GBP (0.50) since we can't convert it
+        assert fee == pytest.approx(0.50)
+
+        # A warning should have been logged
+        warning_msgs = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert any("differs from" in msg and "GBP" in msg for msg in warning_msgs)
 
 
 class TestClassifyIbkrCashType:
@@ -862,7 +1018,7 @@ class TestInjectDemoDeposit:
     def _make_records(
         self,
         account_id: str = "U123456",
-        base_currency: str = "EUR",
+        security_ccy: str = "EUR",
         event_datetime: str = "2026-03-01T00:00:00Z",
     ) -> list[dict]:
         """Build minimal CDC record dicts for testing."""
@@ -877,15 +1033,12 @@ class TestInjectDemoDeposit:
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": event_datetime,
-                "value_currency": base_currency,
+                "security_ccy": security_ccy,
                 "cash_amount": 42.50,
                 "settle_date": "2026-03-04",
                 "ticker": "VWCE",
                 "isin": "IE00BK5BQT80",
                 "description": "Vanguard FTSE All-World",
-                "base_currency": base_currency,
-                "fx_rate_to_base": 1.0,
-                "amount_base": 42.50,
             }
         ]
 
@@ -894,7 +1047,9 @@ class TestInjectDemoDeposit:
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
-        result = _inject_demo_deposit(records, is_demo=False)
+        result = _inject_demo_deposit(
+            records, is_demo=False, base_currency_by_account={"U123456": "EUR"}
+        )
         assert result is records
         assert len(result) == 1
 
@@ -903,15 +1058,16 @@ class TestInjectDemoDeposit:
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
-        result = _inject_demo_deposit(records, is_demo=True)
+        result = _inject_demo_deposit(
+            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        )
         assert len(result) == 2  # original + deposit
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
         assert deposit["account_id"] == "U123456"
-        assert deposit["value_currency"] == "EUR"
+        assert deposit["security_ccy"] == "EUR"
         assert deposit["cash_amount"] == 1_000_000.0
-        assert deposit["amount_base"] == 1_000_000.0
-        assert deposit["fx_rate_to_base"] == 1.0
+        assert deposit["target_fx_rate"] == 1.0
         assert deposit["source"] == "CashTransaction"
         assert deposit["raw_event_type"] == "Deposits & Withdrawals"
         assert deposit["description"] == "Initial demo account deposit"
@@ -923,7 +1079,9 @@ class TestInjectDemoDeposit:
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records(event_datetime="2026-06-15T10:30:00Z")
-        result = _inject_demo_deposit(records, is_demo=True)
+        result = _inject_demo_deposit(
+            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        )
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
         assert deposit["event_datetime"] == "2026-06-14T00:00:00Z"
@@ -937,21 +1095,33 @@ class TestInjectDemoDeposit:
         # After normalization this becomes 2026-03-01T00:00:00Z
         # But the records here use the already-normalized format.
         # Test with ISO format since _inject_demo_deposit normalizes.
-        result = _inject_demo_deposit(records, is_demo=True)
+        result = _inject_demo_deposit(
+            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        )
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
         assert deposit["settle_date"] == "2026-02-28"
 
     def test_fallback_date_when_no_records(self) -> None:
-        """When no records exist, deposit uses the fallback date 2020-01-01."""
+        """When no records exist but accounts are known, deposit still gets injected."""
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
-        result = _inject_demo_deposit([], is_demo=True)
-        # No records → no accounts to derive → returns empty list
-        assert result == []
+        result = _inject_demo_deposit(
+            [], is_demo=True, base_currency_by_account={"U999": "EUR"}
+        )
+        # No records but accounts known → injects deposit for the known account
+        assert len(result) == 1
+        assert result[0]["account_id"] == "U999"
+        assert result[0]["security_ccy"] == "EUR"
 
     def test_multi_account_gets_deposit_per_account(self) -> None:
-        """Each unique (account_id, base_currency) pair gets its own deposit."""
+        """Each unique account_id gets its own deposit in its base currency.
+
+        The deposit currency comes from base_currency_by_account (the
+        account's base currency), NOT from security_ccy of existing events.
+        This is critical: account U111 trades USD stocks but its base
+        currency is EUR — the deposit must be EUR.
+        """
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         now = datetime.now(timezone.utc)
@@ -965,15 +1135,12 @@ class TestInjectDemoDeposit:
                 "event_type": "TRADE",
                 "raw_event_type": "ExTrade",
                 "event_datetime": "2026-05-01T00:00:00Z",
-                "value_currency": "USD",
+                "security_ccy": "USD",
                 "cash_amount": -100.0,
                 "settle_date": "2026-05-03",
                 "ticker": "AAPL",
                 "isin": "",
                 "description": "Apple Inc",
-                "base_currency": "USD",
-                "fx_rate_to_base": 1.0,
-                "amount_base": -100.0,
             },
             {
                 "fetched_at": now,
@@ -984,39 +1151,76 @@ class TestInjectDemoDeposit:
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": "2026-05-10T00:00:00Z",
-                "value_currency": "EUR",
+                "security_ccy": "EUR",
                 "cash_amount": 50.0,
                 "settle_date": "2026-05-13",
                 "ticker": "VWCE",
                 "isin": "",
                 "description": "Vanguard",
-                "base_currency": "EUR",
-                "fx_rate_to_base": 1.0,
-                "amount_base": 50.0,
             },
         ]
 
-        result = _inject_demo_deposit(records, is_demo=True)
+        # U111 has base currency EUR (even though it trades USD stocks)
+        # U222 has base currency EUR
+        result = _inject_demo_deposit(
+            records,
+            is_demo=True,
+            base_currency_by_account={"U111": "EUR", "U222": "EUR"},
+        )
         deposits = [r for r in result if r["event_type"] == "DEPOSIT"]
         assert len(deposits) == 2
 
-        # Each account gets its own deposit with correct currency
+        # Each account gets its own deposit with the correct BASE currency
         by_account = {d["account_id"]: d for d in deposits}
         assert "U111" in by_account
         assert "U222" in by_account
-        assert by_account["U111"]["value_currency"] == "USD"
-        assert by_account["U222"]["value_currency"] == "EUR"
+        # Both deposits are in EUR (the account base currency),
+        # NOT in the security currency (USD for U111's AAPL trade).
+        assert by_account["U111"]["security_ccy"] == "EUR"
+        assert by_account["U222"]["security_ccy"] == "EUR"
         # Both deposits dated one day before earliest event (2026-05-01)
         assert by_account["U111"]["event_datetime"] == "2026-04-30T00:00:00Z"
         assert by_account["U222"]["event_datetime"] == "2026-04-30T00:00:00Z"
+
+    def test_deposit_uses_base_currency_not_security_ccy(self) -> None:
+        """Deposit currency must come from base_currency_by_account, not
+        security_ccy of existing events.
+
+        Regression test: the old code inferred the deposit currency from
+        security_ccy of the first event per account, which was wrong when
+        a EUR-based account's first trade was in USD.  The fix passes
+        base_currency_by_account explicitly so deposits always use the
+        account's true base currency.
+        """
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        # Account U999 is EUR-based but its only trade is in USD.
+        records = self._make_records(account_id="U999", security_ccy="USD")
+        result = _inject_demo_deposit(
+            records,
+            is_demo=True,
+            # The account's actual base currency is EUR, not USD.
+            base_currency_by_account={"U999": "EUR"},
+        )
+
+        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        # The deposit MUST be in EUR (the account's base currency),
+        # not USD (the security's trading currency).
+        assert deposit["security_ccy"] == "EUR"
+        assert deposit["target_fx_rate"] == 1.0  # EUR == EUR target
 
     def test_deterministic_event_id_is_stable(self) -> None:
         """Calling _inject_demo_deposit twice produces the same event_ids."""
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
-        result1 = _inject_demo_deposit(list(records), is_demo=True)
-        result2 = _inject_demo_deposit(list(records), is_demo=True)
+        bca = {"U123456": "EUR"}
+        result1 = _inject_demo_deposit(
+            list(records), is_demo=True, base_currency_by_account=bca
+        )
+        result2 = _inject_demo_deposit(
+            list(records), is_demo=True, base_currency_by_account=bca
+        )
 
         deposits1 = [r for r in result1 if r["event_type"] == "DEPOSIT"]
         deposits2 = [r for r in result2 if r["event_type"] == "DEPOSIT"]

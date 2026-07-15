@@ -73,10 +73,10 @@ def _make_holdings_table(
                 "fetched_at": now,
                 "broker": "IBKR",
                 "ticker": "VWCE",
-                "base_currency": "EUR",
-                "value": encrypt_float(5000.0, fernet_key),
+                "target_ccy": "EUR",
+                "target_value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
-                "security_currency": "EUR",
+                "security_ccy": "EUR",
                 "description": "Vanguard FTSE All-World",
             }
         ]
@@ -100,7 +100,7 @@ def _make_cdc_table(
                 "event_type": "DIVIDEND",
                 "raw_event_type": "Dividends",
                 "event_datetime": "2026-03-01 00:00:00",
-                "value_currency": "EUR",
+                "security_ccy": "EUR",
                 "cash_amount": encrypt_float(42.5, fernet_key),
                 "settle_date": None,
                 "ticker": "VWCE",
@@ -112,10 +112,9 @@ def _make_cdc_table(
                 "gross_amount": None,
                 "fee_amount": None,
                 "tax_amount": None,
-                "net_amount": None,
-                "base_currency": "EUR",
-                "fx_rate_to_base": None,
-                "amount_base": encrypt_float(42.5, fernet_key),
+                "target_fx_rate": None,
+                "target_value": encrypt_float(42.5, fernet_key),
+                "target_ccy": "EUR",
             }
         ]
     return _rows_to_table(rows, cdc_events_normalized_schema)
@@ -131,7 +130,7 @@ def _make_allocation_table() -> pa.Table:
             "percentage": [100.0],
             "broker": ["IBKR"],
             "identifier": ["IE00BK5BQT80"],
-            "security_currency": ["EUR"],
+            "security_ccy": ["EUR"],
             "description": ["Vanguard FTSE All-World"],
         },
         schema=portfolio_allocation_schema,
@@ -146,13 +145,12 @@ def _make_portfolio_holdings_table() -> pa.Table:
             "calculated_at": [now],
             "broker": ["IBKR"],
             "ticker": ["VWCE"],
-            "value_currency": ["EUR"],
-            "value": [5000.0],
-            "value_base": [5000.0],
-            "base_currency": ["EUR"],
+            "security_ccy": ["EUR"],
+            "security_value": [5000.0],
+            "target_value": [5000.0],
+            "target_ccy": ["EUR"],
             "position_type": ["EQUITY"],
             "identifier": ["IE00BK5BQT80"],
-            "security_currency": ["EUR"],
             "description": ["Vanguard FTSE All-World"],
         },
         schema=portfolio_holdings_schema,
@@ -244,7 +242,7 @@ class TestCheckSchema:
                 "percentage": ["not_a_float"],  # wrong type
                 "broker": ["IBKR"],
                 "identifier": ["IE00BK5BQT80"],
-                "security_currency": ["EUR"],
+                "security_ccy": ["EUR"],
                 "description": ["Vanguard FTSE All-World"],
             },
             schema=pa.schema(
@@ -254,7 +252,7 @@ class TestCheckSchema:
                     pa.field("percentage", pa.string()),  # mismatch
                     pa.field("broker", pa.string()),
                     pa.field("identifier", pa.string()),
-                    pa.field("security_currency", pa.string()),
+                    pa.field("security_ccy", pa.string()),
                     pa.field("description", pa.string()),
                 ]
             ),
@@ -293,10 +291,10 @@ class TestCheckRequiredNulls:
                 "fetched_at": now,
                 "broker": None,  # null in required field
                 "ticker": "VWCE",
-                "base_currency": "EUR",
-                "value": encrypt_float(5000.0, fernet_key),
+                "target_ccy": "EUR",
+                "target_value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
-                "security_currency": "EUR",
+                "security_ccy": "EUR",
                 "description": "Vanguard FTSE All-World",
             }
         ]
@@ -370,7 +368,7 @@ class TestCheckFreshness:
                 "percentage": [100.0],
                 "broker": ["IBKR"],
                 "identifier": ["IE00BK5BQT80"],
-                "security_currency": ["EUR"],
+                "security_ccy": ["EUR"],
                 "description": ["Vanguard FTSE All-World"],
             },
             schema=portfolio_allocation_schema,
@@ -398,7 +396,7 @@ class TestCheckFreshness:
                 "percentage": pa.array([], type=pa.float64()),
                 "broker": pa.array([], type=pa.string()),
                 "identifier": pa.array([], type=pa.string()),
-                "security_currency": pa.array([], type=pa.string()),
+                "security_ccy": pa.array([], type=pa.string()),
                 "description": pa.array([], type=pa.string()),
             },
             schema=portfolio_allocation_schema,
@@ -436,10 +434,10 @@ class TestCheckReconciliation:
                 "fetched_at": now,
                 "broker": "XTB",
                 "ticker": "VWCE",
-                "base_currency": "EUR",
-                "value": encrypt_float(5000.0, fernet_key),
+                "target_ccy": "EUR",
+                "target_value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
-                "security_currency": "EUR",
+                "security_ccy": "EUR",
                 "description": "Vanguard FTSE All-World",
             }
         ]
@@ -567,10 +565,10 @@ class TestRunValidation:
                 "fetched_at": old_ts,
                 "broker": "IBKR",
                 "ticker": "VWCE",
-                "base_currency": "EUR",
-                "value": encrypt_float(5000.0, fernet_key),
+                "target_ccy": "EUR",
+                "target_value": encrypt_float(5000.0, fernet_key),
                 "identifier": "IE00BK5BQT80",
-                "security_currency": "EUR",
+                "security_ccy": "EUR",
                 "description": "Vanguard FTSE All-World",
             }
         ]
@@ -676,11 +674,10 @@ def _make_ibkr_snapshot_table(fernet_key: bytes) -> pa.Table:
             "position_type": ["EQUITY"],
             "label": ["VWCE"],
             "asset_class": ["STK"],
-            "value": [encrypt_float(5000.0, fernet_key)],
-            "value_currency": ["EUR"],
+            "security_value": [encrypt_float(5000.0, fernet_key)],
+            "security_ccy": ["EUR"],
             "isin": ["IE00BK5BQT80"],
             "description": ["Vanguard FTSE All-World"],
-            "security_currency": ["EUR"],
         },
         schema=ibkr_snapshot_normalized_schema,
     )
@@ -760,7 +757,7 @@ class TestScopedValidation:
 
         # Write snapshot with a missing column
         snapshot = _make_ibkr_snapshot_table(fernet_key)
-        bad_snapshot = snapshot.drop_columns(["value_currency"])
+        bad_snapshot = snapshot.drop_columns(["security_ccy"])
         write_deltalake(
             storage.normalized_path("ibkr_snapshot"), bad_snapshot, mode="overwrite"
         )

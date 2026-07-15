@@ -263,7 +263,10 @@ class TestBuildNormalizedTable:
         from pipeline.normalized.models import xtb_snapshot_normalized_schema
 
         result = build_normalized_table(
-            [], xtb_snapshot_normalized_schema, fernet_key, encrypt_columns=["value"]
+            [],
+            xtb_snapshot_normalized_schema,
+            fernet_key,
+            encrypt_columns=["security_value"],
         )
         assert result.num_rows == 0
         assert result.schema.equals(xtb_snapshot_normalized_schema)
@@ -280,8 +283,8 @@ class TestBuildNormalizedTable:
                 "label": "VWCE.DE",
                 "name": "Vanguard FTSE All-World",
                 "asset_class": "EQUITY",
-                "value": 1000.0,
-                "value_currency": "EUR",
+                "security_value": 1000.0,
+                "security_ccy": "EUR",
                 "isin": "IE00BK5BQT80",
             }
         ]
@@ -289,13 +292,13 @@ class TestBuildNormalizedTable:
             records,
             xtb_snapshot_normalized_schema,
             fernet_key,
-            encrypt_columns=["value"],
+            encrypt_columns=["security_value"],
         )
         assert result.num_rows == 1
         assert result.column("label")[0].as_py() == "VWCE.DE"
         assert result.column("isin")[0].as_py() == "IE00BK5BQT80"
         # Verify encryption round-trip
-        encrypted_value = result.column("value")[0].as_py()
+        encrypted_value = result.column("security_value")[0].as_py()
         assert decrypt_float(encrypted_value, fernet_key) == 1000.0
 
     def test_multiple_encrypt_columns(self, fernet_key: bytes) -> None:
@@ -312,7 +315,7 @@ class TestBuildNormalizedTable:
                 "event_type": "TRADE",
                 "raw_event_type": "ORDER",
                 "event_datetime": "2024-01-01",
-                "value_currency": "USD",
+                "security_ccy": "USD",
                 "cash_amount": 1800.0,
                 "ticker": "AAPL",
                 "isin": "US0378331005",
@@ -358,17 +361,16 @@ class TestBuildNormalizedTable:
                 "label": "AAPL",
                 "name": "Apple Inc",
                 "asset_class": "EQUITY",
-                "value": 500.0,
-                "value_currency": "USD",
+                "security_value": 500.0,
+                "security_ccy": "USD",
                 "isin": "US0378331005",
-                "security_currency": "USD",
             }
         ]
         result = build_normalized_table(
             records,
             trading212_snapshot_normalized_schema,
             fernet_key,
-            encrypt_columns=["value"],
+            encrypt_columns=["security_value"],
         )
         assert list(result.schema.names) == list(
             trading212_snapshot_normalized_schema.names

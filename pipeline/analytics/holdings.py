@@ -1,9 +1,12 @@
-"""Consolidated holdings + per-broker snapshots → portfolio holdings gold table.
+"""Consolidated holdings → portfolio holdings gold table.
 
-Reads ``consolidated_holdings`` (base-currency values, already FX-converted)
-and each broker's ``*_snapshot_normalized`` table (native-currency values,
-position type).  Joins on ``(broker, ticker)`` to produce a gold table with
-both native and base values plus ``position_type`` (EQUITY / CASH / UNKNOWN).
+Reads ``consolidated_holdings`` (which includes both ``security_value`` in native
+currency and ``target_value`` in EUR, plus ``position_type``) and produces a gold
+table suitable for the report's portfolio summary section.
+
+Previously this function re-read broker snapshots to recover ``security_value``
+and ``position_type`` that were dropped during consolidation.  Now these columns
+are stored directly in ``consolidated_holdings``, so no snapshot join is needed.
 """
 
 from __future__ import annotations
@@ -28,10 +31,9 @@ def build_portfolio_holdings(
 ) -> pa.Table:
     """Build the ``portfolio_holdings`` analytics table.
 
-    Reads ``consolidated_holdings`` (for base-currency value) and each broker's
-    normalized snapshot (for native-currency value, currency, and position type),
-    then joins them on ``(broker, ticker)`` to produce a gold table suitable
-    for the report's portfolio summary section.
+    Reads ``consolidated_holdings`` (which now includes ``security_value``,
+    ``security_ccy``, and ``position_type``) and produces a gold table with
+    both native and target values plus ``position_type``.
 
     Parameters
     ----------
@@ -45,7 +47,6 @@ def build_portfolio_holdings(
         Path to write the ``portfolio_holdings`` Delta table.
         Defaults to the analytics-layer path from storage config.
     """
-    from pipeline.connectors.registry import all as all_connectors
     from pipeline.storage import get_storage
 
     storage = get_storage()
@@ -63,7 +64,7 @@ def build_portfolio_holdings(
         analytics_path = storage.analytics_path("portfolio_holdings")
 
     # ------------------------------------------------------------------
-    # 1. Read consolidated_holdings and decrypt value → value_base
+    # 1. Read consolidated_holdings and decrypt both value columns
     # ------------------------------------------------------------------
     try:
         dt = DeltaTable(table_path, storage_options=storage_opts)
@@ -76,143 +77,49 @@ def build_portfolio_holdings(
     arrow_table = dt.to_pyarrow_table()
     cons = pl.from_arrow(arrow_table)
 
-    # Decrypt the value column (already base-currency from consolidate step)
+    # Decrypt both value columns (native-currency and target-currency)
     cons = cons.with_columns(
-        pl.col("value")
+        pl.col("security_value")
         .map_elements(
             lambda v: decrypt_float(v, fernet_key),
             return_dtype=pl.Float64,
         )
-        .alias("value_base")
+        .alias("security_value_decrypted"),
+        pl.col("target_value")
+        .map_elements(
+            lambda v: decrypt_float(v, fernet_key),
+            return_dtype=pl.Float64,
+        )
+        .alias("target_value_decrypted"),
     )
 
     # ------------------------------------------------------------------
-    # 2. Read each broker snapshot for native value, currency, position_type
-    # ------------------------------------------------------------------
-    snapshot_frames: list[pl.DataFrame] = []
-    for connector in all_connectors():
-        snap_path = storage.normalized_path(f"{connector.name}_snapshot")
-        try:
-            snap_dt = DeltaTable(str(snap_path), storage_options=storage_opts)
-        except Exception:
-            logger.debug(
-                "Skipping %s: no normalized snapshot data", connector.display_name
-            )
-            continue
-
-        snap_arrow = snap_dt.to_pyarrow_table()
-        snap = pl.from_arrow(snap_arrow)
-
-        # Determine the label column name (IBKR/T212 use "label", XTB also has it)
-        label_col = "label" if "label" in snap.columns else "name"
-
-        # Decrypt the value column for native currency amount
-        snap = snap.with_columns(
-            pl.col("value")
-            .map_elements(
-                lambda v: decrypt_float(v, fernet_key),
-                return_dtype=pl.Float64,
-            )
-            .alias("value_native")
-        )
-
-        # Native currency of the holding's value (from the snapshot).
-        snap = snap.select(
-            [
-                pl.lit(connector.display_name).alias("broker"),
-                pl.col(label_col).alias("ticker"),
-                pl.col("position_type"),
-                pl.col("value_currency"),
-                pl.col("value_native").alias("value"),
-            ]
-        )
-        snapshot_frames.append(snap)
-
-    snapshots: pl.DataFrame
-    if snapshot_frames:
-        snapshots = pl.concat(snapshot_frames)
-    else:
-        logger.warning("No broker snapshots found; position_type will be UNKNOWN")
-        snapshots = pl.DataFrame(
-            {
-                "broker": pl.Series([], dtype=pl.String),
-                "ticker": pl.Series([], dtype=pl.String),
-                "position_type": pl.Series([], dtype=pl.String),
-                "value_currency": pl.Series([], dtype=pl.String),
-                "value": pl.Series([], dtype=pl.Float64),
-            }
-        )
-
-    # ------------------------------------------------------------------
-    # 3. Left join: consolidated (source of truth) ← snapshot (enrichment)
-    # ------------------------------------------------------------------
-    cons_selected = cons.select(
-        [
-            "broker",
-            "ticker",
-            # consolidated.base_currency is the base/target currency (always
-            # EUR in test fixtures) — the currency value_base is denominated in.
-            "base_currency",
-            "value_base",
-            "identifier",
-            "security_currency",
-            "description",
-        ]
-    )
-
-    result = cons_selected.join(snapshots, on=["broker", "ticker"], how="left")
-
-    # Fill in defaults for unmatched rows (no snapshot match)
-    result = result.with_columns(
-        [
-            # Native value: use snapshot value if matched, else fall back to value_base
-            pl.when(pl.col("value").is_null())
-            .then(pl.col("value_base"))
-            .otherwise(pl.col("value"))
-            .alias("value"),
-            # Native currency: use snapshot value_currency if matched, else
-            # fall back to the consolidated base_currency.
-            pl.when(pl.col("value_currency").is_null())
-            .then(pl.col("base_currency"))
-            .otherwise(pl.col("value_currency"))
-            .alias("value_currency"),
-            # Position type: UNKNOWN for unmatched rows
-            pl.when(pl.col("position_type").is_null())
-            .then(pl.lit("UNKNOWN"))
-            .otherwise(pl.col("position_type"))
-            .alias("position_type"),
-        ]
-    )
-
-    # ------------------------------------------------------------------
-    # 4. Build the final table matching the schema
+    # 2. Build the final table matching the schema
     # ------------------------------------------------------------------
     now = datetime.now(timezone.utc)
 
-    # Select columns in schema order and cast types
-    result = result.select(
+    result = cons.select(
         [
             pl.lit(now).alias("calculated_at"),
             "broker",
             "ticker",
-            "value_currency",
-            "value",
-            "value_base",
-            "base_currency",
+            "security_ccy",
+            "security_value_decrypted",
+            "target_value_decrypted",
+            "target_ccy",
             "position_type",
             "identifier",
-            "security_currency",
             "description",
         ]
     )
 
-    # Log warnings for unmatched rows
-    unknown_count = result.filter(pl.col("position_type") == "UNKNOWN").height
-    if unknown_count > 0:
-        logger.warning(
-            "%d holdings had no snapshot match; position_type set to UNKNOWN",
-            unknown_count,
-        )
+    # Rename final columns to match schema
+    result = result.rename(
+        {
+            "security_value_decrypted": "security_value",
+            "target_value_decrypted": "target_value",
+        }
+    )
 
     # Convert to PyArrow and cast to match the schema
     arrow_result = result.to_arrow()

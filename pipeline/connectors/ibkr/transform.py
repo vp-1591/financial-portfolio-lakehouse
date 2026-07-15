@@ -17,7 +17,6 @@ from pipeline.connectors.ibkr.client import (
     as_float,
     parse_account_info,
     parse_cash_report,
-    parse_conversion_rates,
     parse_positions,
     parse_cash_transactions,
     parse_trades,
@@ -36,6 +35,19 @@ from pipeline.normalized.models import (
 
 logger = logging.getLogger(__name__)
 
+_IBKR_CDC_ENCRYPT_COLUMNS = [
+    "cash_amount",
+    "quantity",
+    "price",
+    "gross_amount",
+    "fee_amount",
+    "tax_amount",
+    "target_fx_rate",
+    "target_value",
+]
+
+_IBKR_SNAPSHOT_ENCRYPT_COLUMNS = ["security_value"]
+
 
 def transform_snapshot(
     raw: pa.Table, fernet_key: bytes, base_currency_override: str | None = None
@@ -46,6 +58,9 @@ def transform_snapshot(
     This function parses the XML, extracts OpenPosition, AccountInformation,
     CashReportCurrency, and ConversionRate elements, and produces the
     normalized IBKR snapshot schema.
+
+    Phase 2: Position values are stored in their native (security) currency
+    as ``security_value``, not pre-converted to account base currency.
 
     Parameters
     ----------
@@ -81,9 +96,8 @@ def transform_snapshot(
         positions = parse_positions(root)
         account_infos = parse_account_info(root)
         cash_result: CashReportResult = parse_cash_report(root)
-        conversion_rates = parse_conversion_rates(root)
 
-        # Build account_id -> base_currency lookup
+        # Build account_id -> base_currency lookup (needed for account ID detection)
         base_currency_by_account: dict[str, str] = {}
         for info in account_infos:
             acct_id = str(info.get("accountId", ""))
@@ -97,21 +111,6 @@ def transform_snapshot(
         if base_currency_override:
             for acct_id in base_currency_by_account:
                 base_currency_by_account[acct_id] = base_currency_override.upper()
-
-        # Build FX rate lookup from positions and conversion rates
-        fx_rate_lookup: dict[tuple[str, str], float] = {}
-        for pos in positions:
-            pos_acct = str(pos.get("accountId", ""))
-            pos_currency = str(pos.get("currency", "") or "").upper()
-            if pos_acct and pos_currency:
-                fx_rate_lookup[(pos_acct, pos_currency)] = as_float(
-                    pos.get("fxRateToBase"), 1.0
-                )
-        for acct_id in base_currency_by_account:
-            for ccy, rate in conversion_rates.items():
-                key = (acct_id, ccy)
-                if key not in fx_rate_lookup:
-                    fx_rate_lookup[key] = rate
 
         # Determine which account(s) this payload covers
         account_ids_in_payload = set(base_currency_by_account.keys())
@@ -139,16 +138,11 @@ def transform_snapshot(
                 continue
 
             currency = str(pos.get("currency", "") or "").upper()
-            fx_rate = as_float(pos.get("fxRateToBase"), 1.0)
-            base_currency = base_currency_by_account.get(acct_id, currency)
 
-            if base_currency_override:
-                base_currency = base_currency_override.upper()
-
-            if currency and currency != base_currency and fx_rate and fx_rate != 0:
-                base_value = value * fx_rate
-            else:
-                base_value = value
+            # Phase 2: store position value in native (security) currency,
+            # not pre-converted to account base currency.
+            security_value = value
+            security_ccy = currency if currency else "USD"
 
             label = _flex_position_label(pos)
             asset_class = str(pos.get("assetClass", "") or "STK").upper()
@@ -164,11 +158,10 @@ def transform_snapshot(
                     "position_type": "EQUITY",
                     "label": label,
                     "asset_class": asset_class,
-                    "value": base_value,
-                    "value_currency": currency if currency else base_currency,
+                    "security_value": security_value,
+                    "security_ccy": security_ccy,
                     "isin": isin,
                     "description": description,
-                    "security_currency": currency if currency else base_currency,
                 }
             )
 
@@ -200,23 +193,11 @@ def transform_snapshot(
                 if not currency or ending_cash == 0:
                     continue
 
-                base_currency = base_currency_by_account.get(acct_id, currency)
-                if base_currency_override:
-                    base_currency = base_currency_override.upper()
+                # Phase 2: store cash value in native currency, not pre-converted.
+                security_value = ending_cash
+                security_ccy = currency if currency else "USD"
 
-                fx_rate = fx_rate_lookup.get((acct_id, currency))
-                if fx_rate is None:
-                    if currency != base_currency:
-                        fx_rate = 1.0
-                    else:
-                        fx_rate = 1.0
-
-                if currency != base_currency and fx_rate and fx_rate != 0:
-                    base_value = ending_cash * fx_rate
-                else:
-                    base_value = ending_cash
-
-                if base_value != 0:
+                if security_value != 0:
                     records.append(
                         {
                             "fetched_at": fetched_at,
@@ -224,11 +205,10 @@ def transform_snapshot(
                             "position_type": "CASH",
                             "label": f"CASH {currency}",
                             "asset_class": "CASH",
-                            "value": base_value,
-                            "value_currency": currency,
+                            "security_value": security_value,
+                            "security_ccy": security_ccy,
                             "isin": "",
                             "description": f"Cash {currency}",
-                            "security_currency": currency,
                         }
                     )
 
@@ -236,12 +216,16 @@ def transform_snapshot(
         records,
         ibkr_snapshot_normalized_schema,
         fernet_key,
-        encrypt_columns=["value"],
+        encrypt_columns=_IBKR_SNAPSHOT_ENCRYPT_COLUMNS,
     )
 
 
 def transform_cdc(
-    raw: pa.Table, fernet_key: bytes, *, is_demo: bool = False
+    raw: pa.Table,
+    fernet_key: bytes,
+    *,
+    is_demo: bool = False,
+    target_currency: str = "EUR",
 ) -> pa.Table:
     """Transform raw IBKR CDC Flex XML data into the broker-neutral CDC events schema.
 
@@ -252,8 +236,23 @@ def transform_cdc(
     When ``is_demo`` is True, a synthetic initial deposit of
     ``_DEMO_INITIAL_DEPOSIT_AMOUNT`` is injected for each account,
     dated one day before the earliest existing event.
+
+    Parameters
+    ----------
+    raw:
+        Raw-layer table from :func:`fetch_cdc_via_flex`.
+    fernet_key:
+        Fernet key for encrypting value columns.
+    is_demo:
+        Whether demo mode is active.
+    target_currency:
+        The pipeline target currency (default EUR). Used to decide whether
+        IBKR's ``fxRateToBase`` can be used directly as ``target_fx_rate``
+        (when account base == target_currency) or must be deferred to
+        ``normalize_currency()`` (when they differ).
     """
     records: list[dict[str, Any]] = []
+    base_currency_by_account: dict[str, str] = {}
 
     sources = raw.column("source").to_pylist()
     fetched_ats_col = raw.column("fetched_at").to_pylist()
@@ -290,46 +289,49 @@ def transform_cdc(
         # Process Trades
         for trade in parse_trades(root):
             records.append(
-                _process_ibkr_trade(trade, fetched_at, base_currency_by_account)
+                _process_ibkr_trade(
+                    trade, fetched_at, base_currency_by_account, target_currency
+                )
             )
 
         # Process CashTransactions
         for ct in parse_cash_transactions(root):
             records.append(
-                _process_ibkr_cash_transaction(ct, fetched_at, base_currency_by_account)
+                _process_ibkr_cash_transaction(
+                    ct, fetched_at, base_currency_by_account, target_currency
+                )
             )
 
         # Process Transfers
         for transfer in parse_transfers(root):
             records.append(
-                _process_ibkr_transfer(transfer, fetched_at, base_currency_by_account)
+                _process_ibkr_transfer(
+                    transfer, fetched_at, base_currency_by_account, target_currency
+                )
             )
 
         # Process TransactionFees
         for fee in parse_transaction_fees(root):
             records.append(
-                _process_ibkr_transaction_fee(fee, fetched_at, base_currency_by_account)
+                _process_ibkr_transaction_fee(
+                    fee, fetched_at, base_currency_by_account, target_currency
+                )
             )
 
     # Inject a synthetic initial deposit for each demo account so that
     # the cash flow breakdown chart makes sense.
-    _inject_demo_deposit(records, is_demo=is_demo)
+    _inject_demo_deposit(
+        records,
+        is_demo=is_demo,
+        base_currency_by_account=base_currency_by_account,
+        target_currency=target_currency,
+    )
 
     result = build_normalized_table(
         records,
         cdc_events_normalized_schema,
         fernet_key,
-        encrypt_columns=[
-            "cash_amount",
-            "quantity",
-            "price",
-            "gross_amount",
-            "fee_amount",
-            "tax_amount",
-            "net_amount",
-            "fx_rate_to_base",
-            "amount_base",
-        ],
+        encrypt_columns=_IBKR_CDC_ENCRYPT_COLUMNS,
     )
 
     # IBKR Flex CDC queries return the full account history on every fetch.
@@ -396,14 +398,16 @@ _DEMO_INITIAL_DEPOSIT_AMOUNT = 1_000_000.0
 def _inject_demo_deposit(
     records: list[dict[str, Any]],
     is_demo: bool,
+    base_currency_by_account: dict[str, str],
+    target_currency: str = "EUR",
 ) -> list[dict[str, Any]]:
     """Inject a synthetic initial deposit for each IBKR demo account.
 
     When ``is_demo`` is True, adds a DEPOSIT event dated one day before
     the earliest existing event so that the deposit precedes all other
-    activity.  Each unique ``(account_id, base_currency)`` pair from the
-    existing records gets its own deposit of ``_DEMO_INITIAL_DEPOSIT_AMOUNT``
-    in the account's base currency.
+    activity.  Each unique ``account_id`` from ``base_currency_by_account``
+    gets its own deposit of ``_DEMO_INITIAL_DEPOSIT_AMOUNT`` in the
+    account's base currency.
 
     The function is a no-op when ``is_demo`` is False.
 
@@ -413,6 +417,8 @@ def _inject_demo_deposit(
         CDC event records already parsed from the Flex XML payload.
     is_demo:
         Whether demo mode is active.
+    base_currency_by_account:
+        Mapping of account_id → base currency (e.g. ``{"U1234567": "EUR"}``).
 
     Returns
     -------
@@ -422,12 +428,8 @@ def _inject_demo_deposit(
     if not is_demo:
         return records
 
-    if not records:
-        # No events at all — inject a deposit at a safe fallback date.
-        # This is unlikely in practice but handled for completeness.
-        logger.info(
-            "IBKR demo: no CDC events found; injecting deposit at fallback date"
-        )
+    if not records and not base_currency_by_account:
+        # No events and no accounts — nothing to inject.
         return records
 
     # Find the earliest event_datetime across all records.
@@ -458,16 +460,20 @@ def _inject_demo_deposit(
     deposit_date_str = deposit_date.strftime("%Y-%m-%dT%H:%M:%SZ")
     settle_date_str = deposit_date.strftime("%Y-%m-%d")
 
-    # Use the fetched_at from the first record.
-    fetched_at = records[0].get("fetched_at", datetime.now(timezone.utc))
+    # Use the fetched_at from the first record, or fallback to now.
+    fetched_at = (
+        records[0].get("fetched_at", datetime.now(timezone.utc))
+        if records
+        else datetime.now(timezone.utc)
+    )
 
-    # Collect unique (account_id, base_currency) pairs.
-    accounts: dict[str, str] = {}
-    for rec in records:
-        acct_id = rec.get("account_id", "")
-        base_ccy = rec.get("base_currency", "")
-        if acct_id and base_ccy and acct_id not in accounts:
-            accounts[acct_id] = base_ccy
+    # Decision: docs/adr/0079-fix-ibkr-demo-deposit-currency.md
+    # Use the authoritative base_currency_by_account mapping (derived from
+    # the Flex XML <Account> elements) rather than inferring the deposit
+    # currency from security_ccy of existing events, which would be wrong
+    # when the first trade is in a foreign currency (e.g. USD for a EUR
+    # account).
+    accounts = dict(base_currency_by_account)
 
     # If no account info could be extracted, fall back to an empty account.
     if not accounts:
@@ -486,15 +492,20 @@ def _inject_demo_deposit(
                 "event_type": "DEPOSIT",
                 "raw_event_type": "Deposits & Withdrawals",
                 "event_datetime": deposit_date_str,
-                "value_currency": base_ccy,
+                "security_ccy": base_ccy,
                 "cash_amount": _DEMO_INITIAL_DEPOSIT_AMOUNT,
                 "settle_date": settle_date_str,
                 "ticker": "",
                 "isin": "",
                 "description": "Initial demo account deposit",
-                "base_currency": base_ccy,
-                "fx_rate_to_base": 1.0,
-                "amount_base": _DEMO_INITIAL_DEPOSIT_AMOUNT,
+                # Demo deposits are in account base currency. If that matches
+                # target_currency, target_fx_rate is 1.0; otherwise null.
+                "target_fx_rate": 1.0
+                if base_ccy.upper() == target_currency.upper()
+                else None,
+                "target_value": None,
+                "target_ccy": None,
+                "instrument_ccy": None,
             }
         )
 
@@ -561,6 +572,7 @@ def _process_ibkr_trade(
     trade: dict[str, Any],
     fetched_at: datetime,
     base_currency_by_account: dict[str, str],
+    target_currency: str = "EUR",
 ) -> dict[str, Any]:
     """Map a Trade element to the broker-neutral CDC schema."""
     acct_id = str(trade.get("accountId", ""))
@@ -577,6 +589,50 @@ def _process_ibkr_trade(
     base_currency = base_currency_by_account.get(acct_id, currency)
     fx_rate = as_float(trade.get("fxRateToBase"), 1.0)
 
+    # Phase 2: target_fx_rate is only set when account base currency matches
+    # target_currency, making fxRateToBase a direct security_ccy → target_ccy rate.
+    # When they differ, target_fx_rate is left null for normalize_currency().
+    target_fx_rate = (
+        fx_rate if base_currency.upper() == target_currency.upper() else None
+    )
+
+    # Decision: docs/adr/0078-currency-unification-phase3-data-quality-fixes.md
+    # Phase 3: Convert fee_amount from ibCommissionCurrency to security_ccy when
+    # they differ.  When commission currency matches base_currency, we can reverse
+    # fxRateToBase (which converts security_ccy → base_ccy) to get the fee in
+    # security_ccy.  Otherwise, log a warning and leave the fee in its native currency.
+    raw_fee = abs(as_float(trade.get("ibCommission")))
+    commission_ccy = str(trade.get("ibCommissionCurrency", "") or "").upper()
+    if commission_ccy and commission_ccy != currency:
+        if commission_ccy == base_currency and fx_rate != 0:
+            fee_amount = raw_fee / fx_rate
+            logger.info(
+                "IBKR trade %s: commission currency %s differs from trade currency %s; "
+                "converted fee %.4f %s → %.4f %s using fxRateToBase %.4f",
+                event_id,
+                commission_ccy,
+                currency,
+                raw_fee,
+                commission_ccy,
+                fee_amount,
+                currency,
+                fx_rate,
+            )
+        else:
+            fee_amount = raw_fee
+            logger.warning(
+                "IBKR trade %s: commission currency %s differs from trade currency %s "
+                "and base currency %s; fee %.4f %s left in commission currency",
+                event_id,
+                commission_ccy,
+                currency,
+                base_currency,
+                raw_fee,
+                commission_ccy,
+            )
+    else:
+        fee_amount = raw_fee
+
     return {
         "fetched_at": fetched_at,
         "broker": "IBKR",
@@ -586,9 +642,9 @@ def _process_ibkr_trade(
         "event_type": "TRADE",
         "raw_event_type": str(trade.get("transactionType", "ExTrade")),
         "event_datetime": _normalize_ibkr_datetime(str(trade.get("dateTime", ""))),
-        "value_currency": currency,
+        "security_ccy": currency,
         "cash_amount": as_float(trade.get("netCash")),
-        "settle_date": str(trade.get("settleDateTarget", "")),
+        "settle_date": _normalize_ibkr_datetime(str(trade.get("settleDateTarget", ""))),
         "ticker": str(trade.get("symbol", "")),
         "isin": str(trade.get("isin", "")),
         "description": str(trade.get("description", "")),
@@ -596,12 +652,12 @@ def _process_ibkr_trade(
         "price": as_float(trade.get("tradePrice")),
         "side": str(trade.get("buySell", "")),
         "gross_amount": as_float(trade.get("proceeds")),
-        "fee_amount": abs(as_float(trade.get("ibCommission"))),
+        "fee_amount": fee_amount,
         "tax_amount": as_float(trade.get("taxes")),
-        "net_amount": as_float(trade.get("netCash")),
-        "base_currency": base_currency,
-        "fx_rate_to_base": fx_rate,
-        "amount_base": as_float(trade.get("netCash")) * fx_rate,
+        "target_fx_rate": target_fx_rate,
+        "target_value": None,
+        "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 
@@ -609,6 +665,7 @@ def _process_ibkr_cash_transaction(
     ct: dict[str, Any],
     fetched_at: datetime,
     base_currency_by_account: dict[str, str],
+    target_currency: str = "EUR",
 ) -> dict[str, Any]:
     """Map a CashTransaction element to the broker-neutral CDC schema."""
     acct_id = str(ct.get("accountId", ""))
@@ -625,6 +682,10 @@ def _process_ibkr_cash_transaction(
     fx_rate = as_float(ct.get("fxRateToBase"), 1.0)
     cash_type = str(ct.get("type", ""))
 
+    target_fx_rate = (
+        fx_rate if base_currency.upper() == target_currency.upper() else None
+    )
+
     return {
         "fetched_at": fetched_at,
         "broker": "IBKR",
@@ -634,15 +695,16 @@ def _process_ibkr_cash_transaction(
         "event_type": _classify_ibkr_cash_type(cash_type, amount),
         "raw_event_type": cash_type,
         "event_datetime": _normalize_ibkr_datetime(str(ct.get("dateTime", ""))),
-        "value_currency": currency,
+        "security_ccy": currency,
         "cash_amount": amount,
-        "settle_date": str(ct.get("settleDate", "")),
+        "settle_date": _normalize_ibkr_datetime(str(ct.get("settleDate", ""))),
         "ticker": str(ct.get("symbol", "")),
         "isin": str(ct.get("isin", "")),
         "description": str(ct.get("description", "")),
-        "base_currency": base_currency,
-        "fx_rate_to_base": fx_rate,
-        "amount_base": amount * fx_rate,
+        "target_fx_rate": target_fx_rate,
+        "target_value": None,
+        "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 
@@ -650,6 +712,7 @@ def _process_ibkr_transfer(
     transfer: dict[str, Any],
     fetched_at: datetime,
     base_currency_by_account: dict[str, str],
+    target_currency: str = "EUR",
 ) -> dict[str, Any]:
     """Map a Transfer element to the broker-neutral CDC schema."""
     acct_id = str(transfer.get("accountId", ""))
@@ -665,6 +728,10 @@ def _process_ibkr_transfer(
     fx_rate = as_float(transfer.get("fxRateToBase"), 1.0)
     cash_transfer = as_float(transfer.get("cashTransfer"))
 
+    target_fx_rate = (
+        fx_rate if base_currency.upper() == target_currency.upper() else None
+    )
+
     return {
         "fetched_at": fetched_at,
         "broker": "IBKR",
@@ -674,17 +741,19 @@ def _process_ibkr_transfer(
         "event_type": "TRANSFER",
         "raw_event_type": str(transfer.get("type", "")),
         "event_datetime": _normalize_ibkr_datetime(str(transfer.get("dateTime", ""))),
-        "value_currency": currency,
+        "security_ccy": currency,
         "cash_amount": cash_transfer,
-        "settle_date": str(transfer.get("settleDate", "")),
+        "settle_date": _normalize_ibkr_datetime(str(transfer.get("settleDate", ""))),
         "ticker": str(transfer.get("symbol", "")),
         "isin": str(transfer.get("isin", "")),
         "description": str(transfer.get("description", "")),
         "quantity": as_float(transfer.get("quantity")),
         "price": as_float(transfer.get("transferPrice")),
         "side": str(transfer.get("direction", "")),
-        "base_currency": base_currency,
-        "fx_rate_to_base": fx_rate,
+        "target_fx_rate": target_fx_rate,
+        "target_value": None,
+        "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 
@@ -692,6 +761,7 @@ def _process_ibkr_transaction_fee(
     fee: dict[str, Any],
     fetched_at: datetime,
     base_currency_by_account: dict[str, str],
+    target_currency: str = "EUR",
 ) -> dict[str, Any]:
     """Map a TransactionFee element to the broker-neutral CDC schema."""
     acct_id = str(fee.get("accountId", ""))
@@ -707,6 +777,10 @@ def _process_ibkr_transaction_fee(
     fx_rate = as_float(fee.get("fxRateToBase"), 1.0)
     tax_amount = as_float(fee.get("taxAmount"))
 
+    target_fx_rate = (
+        fx_rate if base_currency.upper() == target_currency.upper() else None
+    )
+
     return {
         "fetched_at": fetched_at,
         "broker": "IBKR",
@@ -716,17 +790,19 @@ def _process_ibkr_transaction_fee(
         "event_type": "FEE",
         "raw_event_type": str(fee.get("taxDescription", "")),
         "event_datetime": _normalize_ibkr_datetime(str(fee.get("date", ""))),
-        "value_currency": currency,
+        "security_ccy": currency,
         "cash_amount": tax_amount,
-        "settle_date": str(fee.get("settleDate", "")),
+        "settle_date": _normalize_ibkr_datetime(str(fee.get("settleDate", ""))),
         "ticker": str(fee.get("symbol", "")),
         "isin": str(fee.get("isin", "")),
         "description": str(fee.get("taxDescription", "")),
         "quantity": as_float(fee.get("quantity")),
         "price": as_float(fee.get("tradePrice")),
         "fee_amount": tax_amount,
-        "base_currency": base_currency,
-        "fx_rate_to_base": fx_rate,
+        "target_fx_rate": target_fx_rate,
+        "target_value": None,
+        "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 

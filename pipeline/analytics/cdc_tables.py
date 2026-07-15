@@ -36,12 +36,11 @@ logger = logging.getLogger(__name__)
 # Binary (Fernet-encrypted) columns in cdc_events that need decryption.
 _ENCRYPTED_COLUMNS: list[tuple[str, str]] = [
     ("cash_amount", "cash_amount_decrypted"),
-    ("amount_base", "amount_base_decrypted"),
-    ("fx_rate_to_base", "fx_rate_to_base_decrypted"),
+    ("target_fx_rate", "target_fx_rate_decrypted"),
+    ("target_value", "target_value_decrypted"),
     ("gross_amount", "gross_amount_decrypted"),
     ("fee_amount", "fee_amount_decrypted"),
     ("tax_amount", "tax_amount_decrypted"),
-    ("net_amount", "net_amount_decrypted"),
     ("quantity", "quantity_decrypted"),
     ("price", "price_decrypted"),
 ]
@@ -181,13 +180,20 @@ def _read_cdc_events(
         if col in df.columns:
             df = _decrypt_column(df, col, alias, fernet_key)
 
-    # Resolve amount_base: fall back to cash_amount * fx_rate_to_base where null.
-    df = df.with_columns(
-        pl.when(pl.col("amount_base_decrypted").is_null())
-        .then(pl.col("cash_amount_decrypted") * pl.col("fx_rate_to_base_decrypted"))
-        .otherwise(pl.col("amount_base_decrypted"))
-        .alias("amount_base_resolved")
-    )
+    # Resolve target_value: fall back to cash_amount * target_fx_rate where null.
+    # This handles rows where normalize_currency() hasn't been run yet.
+    if "target_value_decrypted" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("target_value_decrypted").is_null())
+            .then(pl.col("cash_amount_decrypted") * pl.col("target_fx_rate_decrypted"))
+            .otherwise(pl.col("target_value_decrypted"))
+            .alias("target_value_resolved")
+        )
+    else:
+        # No target columns at all — fall back to cash_amount
+        df = df.with_columns(
+            pl.col("cash_amount_decrypted").alias("target_value_resolved")
+        )
 
     # Add period columns.
     df = _add_period_columns(df)
@@ -265,10 +271,11 @@ def build_dividend_income(
                 "ticker": pa.array([], type=pa.string()),
                 "isin": pa.array([], type=pa.string()),
                 "description": pa.array([], type=pa.string()),
-                "value_currency": pa.array([], type=pa.string()),
+                "security_ccy": pa.array([], type=pa.string()),
+                "instrument_ccy": pa.array([], type=pa.string()),
                 "cash_amount": pa.array([], type=pa.float64()),
-                "amount_base": pa.array([], type=pa.float64()),
-                "base_currency": pa.array([], type=pa.string()),
+                "target_value": pa.array([], type=pa.float64()),
+                "target_ccy": pa.array([], type=pa.string()),
                 "event_count": pa.array([], type=pa.int64()),
             },
             schema=dividend_income_schema,
@@ -283,8 +290,7 @@ def build_dividend_income(
                     "ticker",
                     "isin",
                     "description",
-                    "value_currency",
-                    "base_currency",
+                    "security_ccy",
                 ]
             )
             .agg(
@@ -292,18 +298,42 @@ def build_dividend_income(
                     pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
                     # Use sum() then replace 0.0 with null when all source values
                     # were null — Polars sum() on all-null Float64 returns 0.0.
-                    pl.when(pl.col("amount_base_resolved").null_count() == pl.len())
+                    pl.when(pl.col("target_value_resolved").null_count() == pl.len())
                     .then(None)
-                    .otherwise(pl.col("amount_base_resolved").sum())
-                    .alias("amount_base"),
+                    .otherwise(pl.col("target_value_resolved").sum())
+                    .alias("target_value"),
+                    # Take the first non-null target_ccy in each group.
+                    pl.col("target_ccy")
+                    .filter(pl.col("target_ccy").is_not_null())
+                    .first()
+                    .alias("target_ccy"),
+                    # Take the first non-null instrument_ccy in each group (display column).
+                    pl.col("instrument_ccy")
+                    .filter(pl.col("instrument_ccy").is_not_null())
+                    .first()
+                    .alias("instrument_ccy"),
                     pl.col("event_id").count().alias("event_count"),
                 ]
             )
             .sort(["period_month", "broker", "ticker"])
         )
-        # Cast amount_base to Float64 — Polars sum() on an all-null column
+        # Cast target_value to Float64 — Polars sum() on an all-null column
         # produces Null type, which breaks PyArrow schema inference.
-        agg = agg.with_columns(pl.col("amount_base").cast(pl.Float64))
+        agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
+
+        # Fill null target_ccy with the target currency string.
+        # This handles groups where all events had null target_ccy (pre-normalize).
+        # Get the first non-null target_ccy from the full dataset as a fallback.
+        target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
+        default_target_ccy = (
+            target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+        )
+        agg = agg.with_columns(
+            pl.when(pl.col("target_ccy").is_null())
+            .then(pl.lit(default_target_ccy))
+            .otherwise(pl.col("target_ccy"))
+            .alias("target_ccy")
+        )
 
         result = pa.table(
             {
@@ -314,10 +344,11 @@ def build_dividend_income(
                 "ticker": agg["ticker"].to_list(),
                 "isin": agg["isin"].to_list(),
                 "description": agg["description"].to_list(),
-                "value_currency": agg["value_currency"].to_list(),
+                "security_ccy": agg["security_ccy"].to_list(),
+                "instrument_ccy": agg["instrument_ccy"].to_list(),
                 "cash_amount": agg["cash_amount"].to_list(),
-                "amount_base": agg["amount_base"].to_list(),
-                "base_currency": agg["base_currency"].to_list(),
+                "target_value": agg["target_value"].to_list(),
+                "target_ccy": agg["target_ccy"].to_list(),
                 "event_count": agg["event_count"].to_list(),
             },
             schema=dividend_income_schema,
@@ -357,10 +388,10 @@ def build_interest_income(
                 "period_month": pa.array([], type=pa.string()),
                 "period_quarter": pa.array([], type=pa.string()),
                 "broker": pa.array([], type=pa.string()),
-                "value_currency": pa.array([], type=pa.string()),
+                "security_ccy": pa.array([], type=pa.string()),
                 "cash_amount": pa.array([], type=pa.float64()),
-                "amount_base": pa.array([], type=pa.float64()),
-                "base_currency": pa.array([], type=pa.string()),
+                "target_value": pa.array([], type=pa.float64()),
+                "target_ccy": pa.array([], type=pa.string()),
                 "event_count": pa.array([], type=pa.int64()),
             },
             schema=interest_income_schema,
@@ -372,27 +403,37 @@ def build_interest_income(
                     "period_month",
                     "period_quarter",
                     "broker",
-                    "value_currency",
-                    "base_currency",
+                    "security_ccy",
                 ]
             )
             .agg(
                 [
                     pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
-                    # Use sum() then replace 0.0 with null when all source values
-                    # were null — Polars sum() on all-null Float64 returns 0.0.
-                    pl.when(pl.col("amount_base_resolved").null_count() == pl.len())
+                    pl.when(pl.col("target_value_resolved").null_count() == pl.len())
                     .then(None)
-                    .otherwise(pl.col("amount_base_resolved").sum())
-                    .alias("amount_base"),
+                    .otherwise(pl.col("target_value_resolved").sum())
+                    .alias("target_value"),
+                    pl.col("target_ccy")
+                    .filter(pl.col("target_ccy").is_not_null())
+                    .first()
+                    .alias("target_ccy"),
                     pl.col("event_id").count().alias("event_count"),
                 ]
             )
-            .sort(["period_month", "broker", "value_currency"])
+            .sort(["period_month", "broker", "security_ccy"])
         )
-        # Cast amount_base to Float64 — Polars sum() on an all-null column
-        # produces Null type, which breaks PyArrow schema inference.
-        agg = agg.with_columns(pl.col("amount_base").cast(pl.Float64))
+        agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
+
+        target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
+        default_target_ccy = (
+            target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+        )
+        agg = agg.with_columns(
+            pl.when(pl.col("target_ccy").is_null())
+            .then(pl.lit(default_target_ccy))
+            .otherwise(pl.col("target_ccy"))
+            .alias("target_ccy")
+        )
 
         result = pa.table(
             {
@@ -400,10 +441,10 @@ def build_interest_income(
                 "period_month": agg["period_month"].to_list(),
                 "period_quarter": agg["period_quarter"].to_list(),
                 "broker": agg["broker"].to_list(),
-                "value_currency": agg["value_currency"].to_list(),
+                "security_ccy": agg["security_ccy"].to_list(),
                 "cash_amount": agg["cash_amount"].to_list(),
-                "amount_base": agg["amount_base"].to_list(),
-                "base_currency": agg["base_currency"].to_list(),
+                "target_value": agg["target_value"].to_list(),
+                "target_ccy": agg["target_ccy"].to_list(),
                 "event_count": agg["event_count"].to_list(),
             },
             schema=interest_income_schema,
@@ -441,10 +482,10 @@ def build_cash_flow_summary(
                 "period_quarter": pa.array([], type=pa.string()),
                 "broker": pa.array([], type=pa.string()),
                 "event_type": pa.array([], type=pa.string()),
-                "value_currency": pa.array([], type=pa.string()),
+                "security_ccy": pa.array([], type=pa.string()),
                 "cash_amount": pa.array([], type=pa.float64()),
-                "amount_base": pa.array([], type=pa.float64()),
-                "base_currency": pa.array([], type=pa.string()),
+                "target_value": pa.array([], type=pa.float64()),
+                "target_ccy": pa.array([], type=pa.string()),
                 "event_count": pa.array([], type=pa.int64()),
             },
             schema=cash_flow_summary_schema,
@@ -457,27 +498,37 @@ def build_cash_flow_summary(
                     "period_quarter",
                     "broker",
                     "event_type",
-                    "value_currency",
-                    "base_currency",
+                    "security_ccy",
                 ]
             )
             .agg(
                 [
                     pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
-                    # Use sum() then replace 0.0 with null when all source values
-                    # were null — Polars sum() on all-null Float64 returns 0.0.
-                    pl.when(pl.col("amount_base_resolved").null_count() == pl.len())
+                    pl.when(pl.col("target_value_resolved").null_count() == pl.len())
                     .then(None)
-                    .otherwise(pl.col("amount_base_resolved").sum())
-                    .alias("amount_base"),
+                    .otherwise(pl.col("target_value_resolved").sum())
+                    .alias("target_value"),
+                    pl.col("target_ccy")
+                    .filter(pl.col("target_ccy").is_not_null())
+                    .first()
+                    .alias("target_ccy"),
                     pl.col("event_id").count().alias("event_count"),
                 ]
             )
             .sort(["period_month", "broker", "event_type"])
         )
-        # Cast amount_base to Float64 — Polars sum() on an all-null column
-        # produces Null type, which breaks PyArrow schema inference.
-        agg = agg.with_columns(pl.col("amount_base").cast(pl.Float64))
+        agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
+
+        target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
+        default_target_ccy = (
+            target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+        )
+        agg = agg.with_columns(
+            pl.when(pl.col("target_ccy").is_null())
+            .then(pl.lit(default_target_ccy))
+            .otherwise(pl.col("target_ccy"))
+            .alias("target_ccy")
+        )
 
         result = pa.table(
             {
@@ -486,10 +537,10 @@ def build_cash_flow_summary(
                 "period_quarter": agg["period_quarter"].to_list(),
                 "broker": agg["broker"].to_list(),
                 "event_type": agg["event_type"].to_list(),
-                "value_currency": agg["value_currency"].to_list(),
+                "security_ccy": agg["security_ccy"].to_list(),
                 "cash_amount": agg["cash_amount"].to_list(),
-                "amount_base": agg["amount_base"].to_list(),
-                "base_currency": agg["base_currency"].to_list(),
+                "target_value": agg["target_value"].to_list(),
+                "target_ccy": agg["target_ccy"].to_list(),
                 "event_count": agg["event_count"].to_list(),
             },
             schema=cash_flow_summary_schema,
