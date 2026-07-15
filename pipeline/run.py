@@ -386,8 +386,8 @@ def cmd_analytics(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    # Build portfolio_holdings gold table (enriches consolidated holdings
-    # with native currency, position type from broker snapshots).
+    # Build portfolio_holdings gold table (reads security_value,
+    # position_type, security_ccy, and target_ccy from consolidated_holdings).
     from pipeline.analytics.holdings import build_portfolio_holdings
 
     try:

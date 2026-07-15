@@ -37,7 +37,7 @@ portfolio_holdings_schema = pa.schema(
             "target_value", pa.float64()
         ),  # value in target_ccy (from consolidated_holdings)
         pa.field("target_ccy", pa.string()),  # == consolidated_holdings.target_ccy
-        pa.field("position_type", pa.string()),  # EQUITY | CASH | UNKNOWN
+        pa.field("position_type", pa.string()),  # EQUITY | CASH
         pa.field("identifier", pa.string()),
         pa.field("description", pa.string()),
     ]

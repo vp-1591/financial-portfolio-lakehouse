@@ -384,6 +384,7 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         ).cast(pl.Float64),
         price=fill.struct.field("price").cast(pl.Float64),
         side=order.struct.field("side"),
+        # Decision: docs/adr/0078-fix-t212-wallet-fx-rate.md
         # gross_amount, fee_amount, and tax_amount are converted from wallet ccy
         # to security_ccy using walletImpact.fxRate (the wallet→security rate),
         # the same rate used for cash_amount conversion.

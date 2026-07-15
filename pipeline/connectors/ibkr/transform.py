@@ -467,6 +467,7 @@ def _inject_demo_deposit(
         else datetime.now(timezone.utc)
     )
 
+    # Decision: docs/adr/0079-fix-ibkr-demo-deposit-currency.md
     # Use the authoritative base_currency_by_account mapping (derived from
     # the Flex XML <Account> elements) rather than inferring the deposit
     # currency from security_ccy of existing events, which would be wrong
@@ -595,6 +596,7 @@ def _process_ibkr_trade(
         fx_rate if base_currency.upper() == target_currency.upper() else None
     )
 
+    # Decision: docs/adr/0078-currency-unification-phase3-data-quality-fixes.md
     # Phase 3: Convert fee_amount from ibCommissionCurrency to security_ccy when
     # they differ.  When commission currency matches base_currency, we can reverse
     # fxRateToBase (which converts security_ccy → base_ccy) to get the fee in
