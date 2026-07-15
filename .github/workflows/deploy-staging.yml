@@ -107,29 +107,51 @@ jobs:
               FAILED|TIMED_OUT|ABORTED)
                 echo "::error::Step Function execution failed with status: $STATUS"
                 # Print execution history for diagnostics.
-                # ECS RunTask failures surface as TaskFailed events, but the error
-                # and cause are nested inside taskFailedEventDetails — not at the
-                # top level of the event object. Projecting top-level error/cause
-                # returns None for these events.
+                # ECS RunTask failures surface as TaskFailed events, but the
+                # cause field contains the entire ECS task JSON (network
+                # interfaces, container ARNs, etc.). Parse it to show only
+                # the useful bits: exit code, stopped reason, task definition.
                 echo "=== Execution History ==="
 
                 echo "--- Task Failures ---"
                 aws stepfunctions get-execution-history \
                   --execution-arn "$EXECUTION_ARN" \
-                  --query 'events[?type==`TaskFailed`].{id:id, error:taskFailedEventDetails.error, cause:taskFailedEventDetails.cause}' \
-                  --output table || true
+                  --query 'events[?type==`TaskFailed`].taskFailedEventDetails' \
+                  --output json 2>&1 | python3 -c '
+                  import json,sys
+                  for d in json.load(sys.stdin):
+                    e=d.get("error","unknown"); c=d.get("cause","")
+                    try:
+                      j=json.loads(c); ct=j.get("Containers",[{}])
+                      x=next((i.get("exitCode") for i in ct if i.get("exitCode") is not None),"N/A")
+                      td=j.get("taskDefinitionArn","N/A").split("/")[-1]
+                      sr=j.get("stoppedReason","N/A")
+                      print(f"  error={e}  task={td}  exitCode={x}  reason={sr}")
+                    except (json.JSONDecodeError,AttributeError):
+                      print(f"  error={e}  cause={c[:500]}")
+                  ' || echo "(failed to fetch TaskFailed events)"
 
                 echo "--- Task Timeouts ---"
                 aws stepfunctions get-execution-history \
                   --execution-arn "$EXECUTION_ARN" \
-                  --query 'events[?type==`TaskTimedOut`].{id:id, error:taskTimedOutEventDetails.error, cause:taskTimedOutEventDetails.cause}' \
-                  --output table || true
+                  --query 'events[?type==`TaskTimedOut`].taskTimedOutEventDetails' \
+                  --output json 2>&1 | python3 -c '
+                  import json,sys
+                  for d in json.load(sys.stdin):
+                    e=d.get("error","unknown"); c=d.get("cause","")[:500]
+                    print(f"  error={e}  cause={c}")
+                  ' || echo "(failed to fetch TaskTimedOut events)"
 
                 echo "--- Execution Failure ---"
                 aws stepfunctions get-execution-history \
                   --execution-arn "$EXECUTION_ARN" \
-                  --query 'events[?type==`ExecutionFailed`].{id:id, error:executionFailedEventDetails.error, cause:executionFailedEventDetails.cause}' \
-                  --output table || true
+                  --query 'events[?type==`ExecutionFailed`].executionFailedEventDetails' \
+                  --output json 2>&1 | python3 -c '
+                  import json,sys
+                  for d in json.load(sys.stdin):
+                    e=d.get("error","unknown"); c=d.get("cause","")[:500]
+                    print(f"  error={e}  cause={c}")
+                  ' || echo "(failed to fetch ExecutionFailed events)"
                 exit 1
                 ;;
               RUNNING)
@@ -156,29 +178,47 @@ jobs:
             exit 0
           fi
 
-          # Get the execution start time to scope the log query
-          START_MS=$(aws stepfunctions describe-execution \
+          # Get the execution start time to scope the log query.
+          # AWS CLI v2 returns startDate as epoch seconds (e.g., 1721234567.890).
+          # Split into whole seconds and fractional milliseconds, pad to 3 digits.
+          START_SECONDS=$(aws stepfunctions describe-execution \
             --execution-arn "$EXECUTION_ARN" \
             --query 'startDate' \
-            --output text | xargs -I{} date -d {} +%s%3N 2>/dev/null || echo "0")
+            --output text)
+
+          if [ -z "$START_SECONDS" ]; then
+            echo "::warning::Could not determine execution start time; fetching all log events"
+            START_MS="0"
+          else
+            SECS="${START_SECONDS%%.*}"
+            FRAC="${START_SECONDS#*.}"
+            # Pad or truncate fractional part to exactly 3 digits
+            FRAC="$(echo "${FRAC}000" | cut -c1-3)"
+            START_MS="${SECS}${FRAC}"
+            echo "Execution start: ${START_SECONDS}s → START_MS=${START_MS}ms"
+          fi
 
           # Connector names that run in the CI-triggered pipeline (excludes XTB,
-          # which is triggered by S3 file arrival instead)
+          # which is triggered by S3 file arrival instead).
+          # Note: consolidate-allocate only runs after all connectors succeed,
+          # so its log group may be empty when the pipeline failed at the
+          # connector stage.
           CONNECTORS="ibkr trading212 consolidate-allocate"
 
           for NAME in $CONNECTORS; do
             LOG_GROUP="/ecs/portfolio-pipeline-demo-${NAME}"
             echo "=== Container logs: ${NAME} ==="
             echo "Log group: ${LOG_GROUP}"
-            if aws logs filter-log-events \
+            EVENTS=$(aws logs filter-log-events \
               --log-group-name "$LOG_GROUP" \
               --start-time "$START_MS" \
               --limit 500 \
-              --query 'events[].message' \
-              --output text 2>/dev/null; then
+              --query 'events[*].message' \
+              --output json 2>&1) || {
+              echo "::warning::Failed to fetch logs from ${LOG_GROUP}: ${EVENTS}"
               echo ""
-            else
-              echo "(no log events found or log group does not exist)"
-              echo ""
-            fi
+              continue
+            }
+            echo "$EVENTS" | python3 -c 'import json,sys;[print(m) for m in json.load(sys.stdin)]' 2>/dev/null || echo "$EVENTS"
+            echo ""
           done

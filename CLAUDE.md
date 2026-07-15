@@ -21,6 +21,10 @@ it clarifies ambiguities before drafting.
 
 The workflow order is: `analyze → roadmap → plan → implement → ADR → review`.
 
+## Deploy logs
+
+When a staging deploy fails, the application error (Python tracebacks) is in the "Print container logs on failure". Check the `=== Container logs: <connector> ===` sections.
+
 ## Environment
 
 Always use the project's Python virtual environment for dependency installs and code execution:
