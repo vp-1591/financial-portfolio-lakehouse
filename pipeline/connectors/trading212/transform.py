@@ -369,6 +369,7 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
             [order.struct.field("createdAt"), fill.struct.field("filledAt")]
         ),
         security_ccy=security_ccy,
+        instrument_ccy=pl.lit(None),
         cash_amount=cash_amount_security_ccy,
         settle_date=pl.coalesce(
             [fill.struct.field("filledAt"), order.struct.field("createdAt")]
@@ -443,6 +444,7 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
         raw_event_type=pl.coalesce([pl.col("type"), pl.lit("DIVIDEND")]),
         event_datetime=pl.col("paidOn").cast(pl.Utf8),
         security_ccy=pl.coalesce([pl.col("currency"), pl.col("tickerCurrency")]),
+        instrument_ccy=pl.col("tickerCurrency"),
         cash_amount=amount,
         settle_date=pl.col("paidOn").cast(pl.Utf8),
         ticker=pl.coalesce([pl.col("ticker"), instrument.struct.field("ticker")]),
@@ -486,6 +488,7 @@ def _transform_transactions(
         raw_event_type=raw_type,
         event_datetime=pl.col("dateTime").cast(pl.Utf8),
         security_ccy=pl.col("currency").cast(pl.Utf8),
+        instrument_ccy=pl.lit(None),
         cash_amount=amount,
         settle_date=pl.lit(""),
         ticker=pl.lit(""),

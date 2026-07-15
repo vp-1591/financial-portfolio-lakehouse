@@ -504,6 +504,7 @@ def _inject_demo_deposit(
                 else None,
                 "target_value": None,
                 "target_ccy": None,
+                "instrument_ccy": None,
             }
         )
 
@@ -654,6 +655,7 @@ def _process_ibkr_trade(
         "target_fx_rate": target_fx_rate,
         "target_value": None,
         "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 
@@ -700,6 +702,7 @@ def _process_ibkr_cash_transaction(
         "target_fx_rate": target_fx_rate,
         "target_value": None,
         "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 
@@ -748,6 +751,7 @@ def _process_ibkr_transfer(
         "target_fx_rate": target_fx_rate,
         "target_value": None,
         "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 
@@ -796,6 +800,7 @@ def _process_ibkr_transaction_fee(
         "target_fx_rate": target_fx_rate,
         "target_value": None,
         "target_ccy": None,
+        "instrument_ccy": None,
     }
 
 

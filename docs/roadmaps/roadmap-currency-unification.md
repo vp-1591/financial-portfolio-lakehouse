@@ -93,7 +93,8 @@ Relevant roadmap: [currency-column-clarity](roadmap-currency-column-clarity.md)
 
 | Column | Type | Nullable | Meaning |
 |--------|------|----------|---------|
-| `security_ccy` | string | no | The currency `cash_amount` is denominated in. For security events (trades, dividends): the instrument's trading currency (USD, GBP, GBX). For cash events (deposits, fees): the event's native currency (PLN, EUR). |
+| `security_ccy` | string | no | The currency `cash_amount`, `gross_amount`, `fee_amount`, and `tax_amount` are denominated in. For all event types this is the amount currency — not necessarily the instrument's trading currency (see `instrument_ccy`). |
+| `instrument_ccy` | string | yes | The instrument's trading currency, when known (e.g. USD for AAPL, GBX for SGLN.L). Null when unknown or N/A (deposits, fees). For cross-currency dividends, this differs from `security_ccy`: a GBX-denominated stock paying a GBP dividend has `security_ccy=GBP, instrument_ccy=GBX`. |
 | `cash_amount` | binary | no | Fernet-encrypted signed cash impact **in `security_ccy`**. For T212 orders: converted from wallet currency using `walletImpact.fxRate`. For T212 dividends/transactions: converted from native currency using `CurrencyConverter` when needed. For IBKR: already in trade currency. |
 | `target_fx_rate` | binary | yes | The rate from `security_ccy` to `target_ccy` used to compute `target_value`. Always satisfies `target_value = cash_amount × target_fx_rate`. IBKR: set from `fxRateToBase` at connector stage (historical, trade-date rate). T212: set by `normalize_currency()` via `CurrencyConverter` (the raw `walletImpact.fxRate` is consumed in the connector to compute `cash_amount` in `security_ccy` and then dropped). Set to `1.0` when `security_ccy == target_ccy`. |
 | `target_value` | binary | no | Fernet-encrypted `cash_amount` converted to the pipeline target currency (EUR). Computed by the normalization step. |
@@ -118,10 +119,11 @@ Relevant roadmap: [currency-column-clarity](roadmap-currency-column-clarity.md)
 
 | Column | Type | Meaning |
 |--------|------|---------|
-| `security_value` | binary | Fernet-encrypted. Position value in `security_ccy` (from snapshot, not converted). |
-| `security_ccy` | string | Instrument's trading currency (from snapshot). |
+| `security_value` | binary | Fernet-encrypted. Position value in `security_ccy` (from snapshot, stored directly — no longer re-derived via snapshot join). |
+| `security_ccy` | string | Amount currency (from snapshot). |
 | `target_value` | binary | Fernet-encrypted. Position value converted to `target_ccy` via `CurrencyConverter`. |
 | `target_ccy` | string | Always "EUR". The reporting target currency. |
+| `position_type` | string | EQUITY or CASH (from snapshot, stored directly). |
 | (other columns) | — | `fetched_at`, `broker`, `ticker`, `identifier`, `description` — unchanged |
 
 **Removed:** `base_currency` (replaced by `target_ccy`), `value` (replaced by `security_value`).
@@ -130,11 +132,12 @@ Relevant roadmap: [currency-column-clarity](roadmap-currency-column-clarity.md)
 
 | Column | Type | Meaning |
 |--------|------|---------|
-| `security_value` | float64 | Position value in `security_ccy` (from snapshot). |
-| `security_ccy` | string | Instrument's trading currency. |
+| `security_value` | float64 | Position value in `security_ccy` (from consolidated holdings, no longer via snapshot join). |
+| `security_ccy` | string | Amount currency. |
 | `target_value` | float64 | Position value in `target_ccy` (from consolidated holdings). |
 | `target_ccy` | string | Always "EUR". |
-| (other columns) | — | `calculated_at`, `broker`, `ticker`, `position_type`, `identifier`, `description` — unchanged |
+| `position_type` | string | EQUITY or CASH (from consolidated holdings, no longer via snapshot join). |
+| (other columns) | — | `calculated_at`, `broker`, `ticker`, `identifier`, `description` — unchanged |
 
 **Removed:** `value` (renamed to `security_value`), `value_base` (renamed to `target_value`), `value_currency` (replaced by `security_ccy`), `base_currency` (replaced by `target_ccy`).
 
@@ -143,6 +146,7 @@ Relevant roadmap: [currency-column-clarity](roadmap-currency-column-clarity.md)
 | Column | Type | Meaning |
 |--------|------|---------|
 | `security_ccy` | string | The currency `cash_amount` is denominated in. |
+| `instrument_ccy` | string | The instrument's trading currency (nullable, dividends only). When it differs from `security_ccy`, the dividend was paid in a different currency than the instrument trades in. |
 | `cash_amount` | float64 | Sum of raw amounts **in `security_ccy`**. |
 | `target_value` | float64 | Sum converted to `target_ccy`. No longer nullable. |
 | `target_ccy` | string | Always "EUR". No longer nullable. |
@@ -222,7 +226,10 @@ Wire `target_value` computation into the normalization step.
       transform, FX conversion is deferred to `normalize_currency()` in the
       normalization step. `security_ccy` is set to
       `pl.coalesce([pl.col('currency'), pl.col('tickerCurrency')])`,
-      preferring the dividend's payment currency.
+      preferring the dividend's payment currency (the amount currency).
+      `instrument_ccy` is set to `tickerCurrency` (the instrument's trading
+      currency), capturing the distinction between payout and trading currency
+      for cross-currency dividends.
 - [x] `_transform_transactions()`: Set `security_ccy` from transaction
       currency (deposits/fees have no security, so this is the native
       currency).
@@ -272,9 +279,8 @@ Wire `target_value` computation into the normalization step.
 
 - [x] **`consolidated_holdings`**: Remove `base_currency`, `value`. Add
       `security_ccy`, `target_value` (in `target_ccy`), `target_ccy`.
-      **Deviation:** `security_value` was NOT added to
-      `consolidated_holdings_schema` — it is derived from snapshots during
-      `build_portfolio_holdings()` rather than stored in the consolidated table.
+      `security_value` and `position_type` are now stored in
+      `consolidated_holdings` (previously re-derived from snapshots).
 - [x] **`portfolio_holdings`**: Remove `value`, `value_base`, `value_currency`,
       `base_currency`. Add `security_value`, `security_ccy`, `target_value`,
       `target_ccy`.

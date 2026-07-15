@@ -1,11 +1,12 @@
 """Normalize target currency columns in CDC events.
 
 After connector transforms write CDC events with ``cash_amount`` in
-``security_ccy`` and (optionally) ``target_fx_rate`` from the broker,
-this module fills in ``target_value`` and ``target_ccy`` using a
-``CurrencyConverter``.  Rows where ``security_ccy`` already equals
-``target_ccy`` get ``target_fx_rate = 1.0`` and ``target_value =
-cash_amount`` directly, with no API call needed.
+``security_ccy`` (the currency the monetary columns are denominated in)
+and (optionally) ``target_fx_rate`` from the broker, this module fills
+in ``target_value`` and ``target_ccy`` using a ``CurrencyConverter``.
+Rows where ``security_ccy`` already equals ``target_ccy`` get
+``target_fx_rate = 1.0`` and ``target_value = cash_amount`` directly,
+with no API call needed.
 """
 
 from __future__ import annotations

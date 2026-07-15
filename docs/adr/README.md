@@ -90,6 +90,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0077 | Currency Unification Phase 2 — Schema Redesign | 2026-07-14 | active | — |
 | 0078 | Currency Unification Phase 3: Data Quality Fixes | 2026-07-14 | active | — |
 | 0079 | Fix IBKR Demo Deposit Currency After Phase 2 Rename | 2026-07-15 | active | — |
+| 0080 | Store security_value and position_type in Consolidated Holdings; Add instrument_ccy to CDC Events | 2026-07-15 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

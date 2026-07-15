@@ -272,6 +272,7 @@ def build_dividend_income(
                 "isin": pa.array([], type=pa.string()),
                 "description": pa.array([], type=pa.string()),
                 "security_ccy": pa.array([], type=pa.string()),
+                "instrument_ccy": pa.array([], type=pa.string()),
                 "cash_amount": pa.array([], type=pa.float64()),
                 "target_value": pa.array([], type=pa.float64()),
                 "target_ccy": pa.array([], type=pa.string()),
@@ -306,6 +307,11 @@ def build_dividend_income(
                     .filter(pl.col("target_ccy").is_not_null())
                     .first()
                     .alias("target_ccy"),
+                    # Take the first non-null instrument_ccy in each group (display column).
+                    pl.col("instrument_ccy")
+                    .filter(pl.col("instrument_ccy").is_not_null())
+                    .first()
+                    .alias("instrument_ccy"),
                     pl.col("event_id").count().alias("event_count"),
                 ]
             )
@@ -339,6 +345,7 @@ def build_dividend_income(
                 "isin": agg["isin"].to_list(),
                 "description": agg["description"].to_list(),
                 "security_ccy": agg["security_ccy"].to_list(),
+                "instrument_ccy": agg["instrument_ccy"].to_list(),
                 "cash_amount": agg["cash_amount"].to_list(),
                 "target_value": agg["target_value"].to_list(),
                 "target_ccy": agg["target_ccy"].to_list(),

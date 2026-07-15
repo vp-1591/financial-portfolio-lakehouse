@@ -115,6 +115,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                     "target_fx_rate": None,
                     "target_value": None,
                     "target_ccy": None,
+                    "instrument_ccy": None,
                 }
             )
 

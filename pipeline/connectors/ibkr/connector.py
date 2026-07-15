@@ -79,6 +79,7 @@ class IbkrConnector:
                     identifier=identifier,
                     security_currency=str(row.get("security_ccy", "")),
                     description=str(row.get("description", "")),
+                    position_type=str(row.get("position_type", "EQUITY")),
                 )
             )
         return holdings

@@ -884,6 +884,7 @@ class TestCdcTransform:
 
         assert result.num_rows == 1
         assert result.column("security_ccy")[0].as_py() == "EUR"
+        assert result.column("instrument_ccy")[0].as_py() == "USD"
 
         # Verify the currency mismatch warning was logged
         assert any(
@@ -925,6 +926,9 @@ class TestCdcTransform:
             result = transform_cdc(raw, fernet_key)
 
         assert result.num_rows == 1
+        # Same currency: instrument_ccy equals security_ccy
+        assert result.column("security_ccy")[0].as_py() == "USD"
+        assert result.column("instrument_ccy")[0].as_py() == "USD"
         # No currency mismatch warning should be logged
         assert not any(
             "differs from tickerCurrency" in record.message for record in caplog.records

@@ -3,10 +3,15 @@
 Phase 2 (Currency Unification) replaces overloaded column names with
 unambiguous ones:
 
-- ``security_ccy`` — the currency a monetary amount is denominated in.
-  For security events (trades, dividends): the instrument's trading
-  currency (USD, GBP, GBX).  For cash events (deposits, fees): the
-  event's native currency (PLN, EUR).
+- ``security_ccy`` — the currency that ``cash_amount``, ``gross_amount``,
+  ``fee_amount``, and ``tax_amount`` are denominated in.  For all event
+  types this is the amount currency, not necessarily the instrument's
+  trading currency (see ``instrument_ccy``).
+- ``instrument_ccy`` — the instrument's trading currency, when known
+  (e.g. USD for AAPL).  Null when unknown or N/A (deposits, fees).
+  For cross-currency dividends this differs from ``security_ccy``:
+  a GBX-denominated stock paying a GBP dividend has
+  ``security_ccy=GBP, instrument_ccy=GBX``.
 - ``security_value`` — position value in ``security_ccy`` (snapshots).
 - ``target_value`` — value converted to the pipeline target currency
   (EUR) via ``target_fx_rate``.
@@ -84,6 +89,9 @@ cdc_events_normalized_schema = pa.schema(
         pa.field("event_datetime", pa.string()),
         pa.field("security_ccy", pa.string()),  # Currency cash_amount is denominated in
         pa.field(
+            "instrument_ccy", pa.string()
+        ),  # Instrument's trading currency (nullable; null when unknown/N/A)
+        pa.field(
             "cash_amount", pa.binary()
         ),  # Fernet-encrypted; signed cash impact in security_ccy
         # Nullable trade/security columns
@@ -117,10 +125,12 @@ consolidated_holdings_schema = pa.schema(
         pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
         pa.field("broker", pa.string()),
         pa.field("ticker", pa.string()),
-        pa.field("target_value", pa.binary()),  # Fernet-encrypted; in target_ccy
-        pa.field("identifier", pa.string()),
+        pa.field("security_value", pa.binary()),  # Fernet-encrypted; in security_ccy
         pa.field("security_ccy", pa.string()),
+        pa.field("target_value", pa.binary()),  # Fernet-encrypted; in target_ccy
         pa.field("target_ccy", pa.string()),  # Always "EUR"
+        pa.field("identifier", pa.string()),
         pa.field("description", pa.string()),
+        pa.field("position_type", pa.string()),  # EQUITY | CASH
     ]
 )

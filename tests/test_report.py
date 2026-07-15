@@ -126,6 +126,7 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
             "isin": ["IE00BK5BQT80"],
             "description": ["Vanguard FTSE All-World"],
             "security_ccy": ["EUR"],
+            "instrument_ccy": [None],
             "cash_amount": [42.5],
             "target_value": [42.5],
             "target_ccy": ["EUR"],

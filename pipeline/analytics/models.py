@@ -66,7 +66,10 @@ dividend_income_schema = pa.schema(
         pa.field("ticker", pa.string(), nullable=True),
         pa.field("isin", pa.string(), nullable=True),
         pa.field("description", pa.string(), nullable=True),
-        pa.field("security_ccy", pa.string()),
+        pa.field("security_ccy", pa.string()),  # Amount currency
+        pa.field(
+            "instrument_ccy", pa.string(), nullable=True
+        ),  # Instrument's trading currency
         pa.field("cash_amount", pa.float64()),
         pa.field("target_value", pa.float64(), nullable=True),
         pa.field("target_ccy", pa.string(), nullable=True),
