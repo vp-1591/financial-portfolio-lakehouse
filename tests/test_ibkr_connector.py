@@ -1047,7 +1047,9 @@ class TestInjectDemoDeposit:
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
-        result = _inject_demo_deposit(records, is_demo=False)
+        result = _inject_demo_deposit(
+            records, is_demo=False, base_currency_by_account={"U123456": "EUR"}
+        )
         assert result is records
         assert len(result) == 1
 
@@ -1056,7 +1058,9 @@ class TestInjectDemoDeposit:
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
-        result = _inject_demo_deposit(records, is_demo=True)
+        result = _inject_demo_deposit(
+            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        )
         assert len(result) == 2  # original + deposit
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
@@ -1075,7 +1079,9 @@ class TestInjectDemoDeposit:
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records(event_datetime="2026-06-15T10:30:00Z")
-        result = _inject_demo_deposit(records, is_demo=True)
+        result = _inject_demo_deposit(
+            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        )
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
         assert deposit["event_datetime"] == "2026-06-14T00:00:00Z"
@@ -1089,21 +1095,33 @@ class TestInjectDemoDeposit:
         # After normalization this becomes 2026-03-01T00:00:00Z
         # But the records here use the already-normalized format.
         # Test with ISO format since _inject_demo_deposit normalizes.
-        result = _inject_demo_deposit(records, is_demo=True)
+        result = _inject_demo_deposit(
+            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        )
 
         deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
         assert deposit["settle_date"] == "2026-02-28"
 
     def test_fallback_date_when_no_records(self) -> None:
-        """When no records exist, deposit uses the fallback date 2020-01-01."""
+        """When no records exist but accounts are known, deposit still gets injected."""
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
-        result = _inject_demo_deposit([], is_demo=True)
-        # No records → no accounts to derive → returns empty list
-        assert result == []
+        result = _inject_demo_deposit(
+            [], is_demo=True, base_currency_by_account={"U999": "EUR"}
+        )
+        # No records but accounts known → injects deposit for the known account
+        assert len(result) == 1
+        assert result[0]["account_id"] == "U999"
+        assert result[0]["security_ccy"] == "EUR"
 
     def test_multi_account_gets_deposit_per_account(self) -> None:
-        """Each unique (account_id, security_ccy) pair gets its own deposit."""
+        """Each unique account_id gets its own deposit in its base currency.
+
+        The deposit currency comes from base_currency_by_account (the
+        account's base currency), NOT from security_ccy of existing events.
+        This is critical: account U111 trades USD stocks but its base
+        currency is EUR — the deposit must be EUR.
+        """
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         now = datetime.now(timezone.utc)
@@ -1142,27 +1160,67 @@ class TestInjectDemoDeposit:
             },
         ]
 
-        result = _inject_demo_deposit(records, is_demo=True)
+        # U111 has base currency EUR (even though it trades USD stocks)
+        # U222 has base currency EUR
+        result = _inject_demo_deposit(
+            records,
+            is_demo=True,
+            base_currency_by_account={"U111": "EUR", "U222": "EUR"},
+        )
         deposits = [r for r in result if r["event_type"] == "DEPOSIT"]
         assert len(deposits) == 2
 
-        # Each account gets its own deposit with correct currency
+        # Each account gets its own deposit with the correct BASE currency
         by_account = {d["account_id"]: d for d in deposits}
         assert "U111" in by_account
         assert "U222" in by_account
-        assert by_account["U111"]["security_ccy"] == "USD"
+        # Both deposits are in EUR (the account base currency),
+        # NOT in the security currency (USD for U111's AAPL trade).
+        assert by_account["U111"]["security_ccy"] == "EUR"
         assert by_account["U222"]["security_ccy"] == "EUR"
         # Both deposits dated one day before earliest event (2026-05-01)
         assert by_account["U111"]["event_datetime"] == "2026-04-30T00:00:00Z"
         assert by_account["U222"]["event_datetime"] == "2026-04-30T00:00:00Z"
+
+    def test_deposit_uses_base_currency_not_security_ccy(self) -> None:
+        """Deposit currency must come from base_currency_by_account, not
+        security_ccy of existing events.
+
+        Regression test: the old code inferred the deposit currency from
+        security_ccy of the first event per account, which was wrong when
+        a EUR-based account's first trade was in USD.  The fix passes
+        base_currency_by_account explicitly so deposits always use the
+        account's true base currency.
+        """
+        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
+
+        # Account U999 is EUR-based but its only trade is in USD.
+        records = self._make_records(account_id="U999", security_ccy="USD")
+        result = _inject_demo_deposit(
+            records,
+            is_demo=True,
+            # The account's actual base currency is EUR, not USD.
+            base_currency_by_account={"U999": "EUR"},
+        )
+
+        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        # The deposit MUST be in EUR (the account's base currency),
+        # not USD (the security's trading currency).
+        assert deposit["security_ccy"] == "EUR"
+        assert deposit["target_fx_rate"] == 1.0  # EUR == EUR target
 
     def test_deterministic_event_id_is_stable(self) -> None:
         """Calling _inject_demo_deposit twice produces the same event_ids."""
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
-        result1 = _inject_demo_deposit(list(records), is_demo=True)
-        result2 = _inject_demo_deposit(list(records), is_demo=True)
+        bca = {"U123456": "EUR"}
+        result1 = _inject_demo_deposit(
+            list(records), is_demo=True, base_currency_by_account=bca
+        )
+        result2 = _inject_demo_deposit(
+            list(records), is_demo=True, base_currency_by_account=bca
+        )
 
         deposits1 = [r for r in result1 if r["event_type"] == "DEPOSIT"]
         deposits2 = [r for r in result2 if r["event_type"] == "DEPOSIT"]

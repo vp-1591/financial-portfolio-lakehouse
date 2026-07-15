@@ -89,6 +89,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0076 | Fix T212 walletImpact.fxRate Usage (Phase 1: Currency Unification) | 2026-07-14 | superseded | 0077 |
 | 0077 | Currency Unification Phase 2 — Schema Redesign | 2026-07-14 | active | — |
 | 0078 | Currency Unification Phase 3: Data Quality Fixes | 2026-07-14 | active | — |
+| 0079 | Fix IBKR Demo Deposit Currency After Phase 2 Rename | 2026-07-15 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

@@ -252,6 +252,7 @@ def transform_cdc(
         ``normalize_currency()`` (when they differ).
     """
     records: list[dict[str, Any]] = []
+    base_currency_by_account: dict[str, str] = {}
 
     sources = raw.column("source").to_pylist()
     fetched_ats_col = raw.column("fetched_at").to_pylist()
@@ -319,7 +320,12 @@ def transform_cdc(
 
     # Inject a synthetic initial deposit for each demo account so that
     # the cash flow breakdown chart makes sense.
-    _inject_demo_deposit(records, is_demo=is_demo, target_currency=target_currency)
+    _inject_demo_deposit(
+        records,
+        is_demo=is_demo,
+        base_currency_by_account=base_currency_by_account,
+        target_currency=target_currency,
+    )
 
     result = build_normalized_table(
         records,
@@ -392,15 +398,16 @@ _DEMO_INITIAL_DEPOSIT_AMOUNT = 1_000_000.0
 def _inject_demo_deposit(
     records: list[dict[str, Any]],
     is_demo: bool,
+    base_currency_by_account: dict[str, str],
     target_currency: str = "EUR",
 ) -> list[dict[str, Any]]:
     """Inject a synthetic initial deposit for each IBKR demo account.
 
     When ``is_demo`` is True, adds a DEPOSIT event dated one day before
     the earliest existing event so that the deposit precedes all other
-    activity.  Each unique ``(account_id, base_currency)`` pair from the
-    existing records gets its own deposit of ``_DEMO_INITIAL_DEPOSIT_AMOUNT``
-    in the account's base currency.
+    activity.  Each unique ``account_id`` from ``base_currency_by_account``
+    gets its own deposit of ``_DEMO_INITIAL_DEPOSIT_AMOUNT`` in the
+    account's base currency.
 
     The function is a no-op when ``is_demo`` is False.
 
@@ -410,6 +417,8 @@ def _inject_demo_deposit(
         CDC event records already parsed from the Flex XML payload.
     is_demo:
         Whether demo mode is active.
+    base_currency_by_account:
+        Mapping of account_id → base currency (e.g. ``{"U1234567": "EUR"}``).
 
     Returns
     -------
@@ -419,12 +428,8 @@ def _inject_demo_deposit(
     if not is_demo:
         return records
 
-    if not records:
-        # No events at all — inject a deposit at a safe fallback date.
-        # This is unlikely in practice but handled for completeness.
-        logger.info(
-            "IBKR demo: no CDC events found; injecting deposit at fallback date"
-        )
+    if not records and not base_currency_by_account:
+        # No events and no accounts — nothing to inject.
         return records
 
     # Find the earliest event_datetime across all records.
@@ -455,17 +460,19 @@ def _inject_demo_deposit(
     deposit_date_str = deposit_date.strftime("%Y-%m-%dT%H:%M:%SZ")
     settle_date_str = deposit_date.strftime("%Y-%m-%d")
 
-    # Use the fetched_at from the first record.
-    fetched_at = records[0].get("fetched_at", datetime.now(timezone.utc))
+    # Use the fetched_at from the first record, or fallback to now.
+    fetched_at = (
+        records[0].get("fetched_at", datetime.now(timezone.utc))
+        if records
+        else datetime.now(timezone.utc)
+    )
 
-    # Collect unique (account_id, security_ccy) pairs from existing records.
-    # Use security_ccy instead of base_currency (Phase 2: column renamed).
-    accounts: dict[str, str] = {}
-    for rec in records:
-        acct_id = rec.get("account_id", "")
-        ccy = rec.get("security_ccy", "")
-        if acct_id and ccy and acct_id not in accounts:
-            accounts[acct_id] = ccy
+    # Use the authoritative base_currency_by_account mapping (derived from
+    # the Flex XML <Account> elements) rather than inferring the deposit
+    # currency from security_ccy of existing events, which would be wrong
+    # when the first trade is in a foreign currency (e.g. USD for a EUR
+    # account).
+    accounts = dict(base_currency_by_account)
 
     # If no account info could be extracted, fall back to an empty account.
     if not accounts:
