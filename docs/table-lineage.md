@@ -34,7 +34,7 @@ flowchart LR
 
   subgraph charts["Report Charts"]
     c_alloc["Allocation by Broker"]
-    c_type["Allocation by Position Type"]
+    c_positions["Positions"]
     c_ccy["Currency Exposure"]
     c_income["Passive Income Timeline"]
     c_cashflow["Cash Flow Breakdown"]
@@ -86,7 +86,7 @@ flowchart LR
 
   %% Gold → Report charts
   g_holdings -->|load_portfolio_holdings| c_alloc
-  g_holdings -->|load_portfolio_holdings| c_type
+  g_holdings -->|load_portfolio_holdings| c_positions
   g_holdings -->|load_portfolio_holdings| c_ccy
   g_dividends -->|load_dividend_income| c_income
   g_interest -->|load_interest_income| c_income
@@ -101,7 +101,7 @@ flowchart LR
   class r_ibkr_snap,r_ibkr_cdc,r_t212_snap,r_t212_cdc,r_xtb_snap,r_xtb_cdc raw
   class n_ibkr_snap,n_ibkr_cdc,n_t212_snap,n_t212_cdc,n_xtb_snap,n_xtb_cdc,n_consolidated,n_cdc_events norm
   class g_holdings,g_dividends,g_interest,g_cashflow,g_quality gold
-  class c_alloc,c_type,c_ccy,c_income,c_cashflow,c_dq chart
+  class c_alloc,c_positions,c_ccy,c_income,c_cashflow,c_dq chart
 ```
 
 ## Notes
@@ -111,7 +111,8 @@ flowchart LR
   gold tables.
 - **`cdc_events` self-references.** `normalize_currency()` reads, enriches, and overwrites
   the same table (adds `target_fx_rate`, `target_value`, `target_ccy`).
-- **All three allocation charts** read from `portfolio_holdings`. They group by
-  `broker`, `position_type`, or `security_ccy` and sum `target_value` at render time.
+- **Allocation charts and the positions chart** read from `portfolio_holdings`. The
+  donut charts group by `broker` or `security_ccy` and sum `target_value`; the
+  positions chart renders each row individually using the `percentage` column.
 - **Data quality** (dotted lines) reads all normalized and gold tables but is not a
   data-flow dependency.

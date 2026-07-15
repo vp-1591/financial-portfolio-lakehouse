@@ -93,6 +93,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0080 | Store security_value and position_type in Consolidated Holdings; Add instrument_ccy to CDC Events | 2026-07-15 | active | — |
 | 0081 | Fix Deploy Log Readability in GitHub Actions | 2026-07-15 | active | — |
 | 0082 | Fold portfolio_allocation into portfolio_holdings | 2026-07-15 | active | — |
+| 0083 | Replace "Allocation by Position Type" donut with "Positions" bar chart and EQUITY/CASH summary card | 2026-07-15 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

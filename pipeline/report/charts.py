@@ -37,27 +37,43 @@ def allocation_by_broker(holdings: pl.DataFrame) -> go.Figure:
     return fig
 
 
-def allocation_by_position_type(holdings: pl.DataFrame) -> go.Figure:
-    """Pie chart: EQUITY vs CASH by value."""
+def positions_chart(holdings: pl.DataFrame) -> go.Figure:
+    """Horizontal bar chart: all holdings ranked by portfolio weight.
+
+    Shows each position as a bar sorted by percentage descending.
+    CASH rows are coloured differently from EQUITY rows so the
+    EQUITY/CASH split is visible at a glance.
+    """
     if holdings.is_empty():
-        return _empty_figure("Allocation by Position Type")
-    agg = (
-        holdings.group_by("position_type")
-        .agg(pl.col("target_value").sum())
-        .sort("target_value", descending=True)
+        return _empty_figure("Positions")
+
+    df = holdings.select("ticker", "percentage", "position_type").sort(
+        "percentage", descending=True
     )
+
+    # Green for EQUITY, amber for CASH, gray for any unknown type
+    colors = [
+        "#2ecc71" if pt == "EQUITY" else "#f39c12" if pt == "CASH" else "#95a5a6"
+        for pt in df["position_type"].to_list()
+    ]
+
     fig = go.Figure(
         data=[
-            go.Pie(
-                labels=agg["position_type"].to_list(),
-                values=agg["target_value"].to_list(),
-                textinfo="label+percent",
-                hole=0.4,
+            go.Bar(
+                x=df["percentage"].to_list(),
+                y=df["ticker"].to_list(),
+                orientation="h",
+                marker_color=colors,
+                text=[f"{p:.1f}%" for p in df["percentage"].to_list()],
+                textposition="auto",
+                hovertemplate="%{y}<extra></extra><br>%{x:.2f}%",
             )
         ],
         layout=go.Layout(
-            title="Allocation by Position Type",
-            margin=dict(l=20, r=20, t=40, b=20),
+            title="Positions",
+            xaxis_title="Portfolio Weight (%)",
+            yaxis=dict(autorange="reversed"),
+            margin=dict(l=20, r=20, t=40, b=40),
         ),
     )
     return fig

@@ -11,6 +11,7 @@ from pipeline.report.charts import (
     _classify_outliers,
     data_quality_chart,
     passive_income_timeline,
+    positions_chart,
 )
 
 
@@ -32,6 +33,11 @@ def _holdings_default_schema() -> dict[str, type]:
     }
 
 
+def _holdings_with_positions(rows: list[dict]) -> pl.DataFrame:
+    """Build a minimal holdings DataFrame with position_type for positions chart tests."""
+    return pl.DataFrame(rows)
+
+
 def _cash_flow(rows: list[list]) -> pl.DataFrame:
     """Build a minimal cash_flow_summary DataFrame for chart tests."""
     return pl.DataFrame(
@@ -44,6 +50,171 @@ def _cash_flow(rows: list[list]) -> pl.DataFrame:
         },
         orient="row",
     )
+
+
+# ---------------------------------------------------------------------------
+# positions_chart – horizontal bar chart ranked by portfolio weight
+# ---------------------------------------------------------------------------
+
+
+class TestPositionsChart:
+    """Tests for the positions horizontal bar chart."""
+
+    def test_horizontal_bar_orientation(self) -> None:
+        """Chart uses horizontal bars (orientation='h')."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 30.0, "position_type": "EQUITY"},
+                {"ticker": "CASH", "percentage": 10.0, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+        assert isinstance(bar, go.Bar)
+        assert bar.orientation == "h"
+
+    def test_sorted_by_percentage_descending(self) -> None:
+        """Bars are sorted by percentage descending (largest at top)."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "MSFT", "percentage": 40.0, "position_type": "EQUITY"},
+                {"ticker": "AAPL", "percentage": 50.0, "position_type": "EQUITY"},
+                {"ticker": "CASH", "percentage": 10.0, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+        # Y-axis labels should be in descending order: AAPL, MSFT, CASH
+        assert list(bar.y) == ["AAPL", "MSFT", "CASH"]
+        # X values match: 50, 40, 10
+        assert list(bar.x) == [50.0, 40.0, 10.0]
+
+    def test_cash_rows_different_color(self) -> None:
+        """CASH rows use a different color from EQUITY rows."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 60.0, "position_type": "EQUITY"},
+                {"ticker": "CASH", "percentage": 40.0, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+        colors = list(bar.marker.color)
+        assert len(colors) == 2
+        assert colors[0] != colors[1]  # EQUITY and CASH have different colors
+
+    def test_equity_color_is_green(self) -> None:
+        """EQUITY rows use the green color."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 100.0, "position_type": "EQUITY"},
+            ]
+        )
+        fig = positions_chart(df)
+        assert list(fig.data[0].marker.color) == ["#2ecc71"]
+
+    def test_cash_color_is_amber(self) -> None:
+        """CASH rows use the amber color."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "CASH", "percentage": 100.0, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        assert list(fig.data[0].marker.color) == ["#f39c12"]
+
+    def test_percentage_annotations(self) -> None:
+        """Each bar is annotated with its percentage value."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 55.5, "position_type": "EQUITY"},
+                {"ticker": "CASH", "percentage": 44.5, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+        assert bar.textposition == "auto"
+        assert list(bar.text) == ["55.5%", "44.5%"]
+
+    def test_title(self) -> None:
+        """Chart title is 'Positions'."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 100.0, "position_type": "EQUITY"},
+            ]
+        )
+        fig = positions_chart(df)
+        assert fig.layout.title.text == "Positions"
+
+    def test_yaxis_reversed(self) -> None:
+        """Y-axis is reversed so highest percentage is at the top."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 70.0, "position_type": "EQUITY"},
+                {"ticker": "CASH", "percentage": 30.0, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        assert fig.layout.yaxis.autorange == "reversed"
+
+    def test_xaxis_title(self) -> None:
+        """X-axis title shows 'Portfolio Weight (%)'."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 100.0, "position_type": "EQUITY"},
+            ]
+        )
+        fig = positions_chart(df)
+        assert fig.layout.xaxis.title.text == "Portfolio Weight (%)"
+
+    def test_empty_input(self) -> None:
+        """Empty DataFrame returns _empty_figure with title 'Positions'."""
+        df = pl.DataFrame(
+            {
+                "ticker": pl.Series([], dtype=pl.String),
+                "percentage": pl.Series([], dtype=pl.Float64),
+                "position_type": pl.Series([], dtype=pl.String),
+            }
+        )
+        fig = positions_chart(df)
+        assert fig.layout.title.text == "Positions"
+        assert len(fig.data) == 0  # no traces
+
+    def test_all_equity(self) -> None:
+        """When all positions are EQUITY, all bars are green."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 60.0, "position_type": "EQUITY"},
+                {"ticker": "MSFT", "percentage": 40.0, "position_type": "EQUITY"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+        assert all(c == "#2ecc71" for c in bar.marker.color)
+
+    def test_all_cash(self) -> None:
+        """When all positions are CASH, all bars are amber."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "EUR", "percentage": 70.0, "position_type": "CASH"},
+                {"ticker": "USD", "percentage": 30.0, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+        assert all(c == "#f39c12" for c in bar.marker.color)
+
+    def test_single_position(self) -> None:
+        """Single position renders as one bar."""
+        df = _holdings_with_positions(
+            [
+                {"ticker": "VOO", "percentage": 100.0, "position_type": "EQUITY"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+        assert len(bar.y) == 1
+        assert bar.y[0] == "VOO"
 
 
 # ---------------------------------------------------------------------------
