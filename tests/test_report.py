@@ -48,7 +48,6 @@ def _setup_storage(tmp_path: Path) -> None:
         "normalized/xtb_snapshot",
         "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_allocation",
         "analytics/portfolio_holdings",
         "analytics/dividend_income",
         "analytics/interest_income",
@@ -70,8 +69,7 @@ def _setup_storage(tmp_path: Path) -> None:
 
 
 def _build_all_gold_tables(fernet_key: bytes) -> None:
-    """Write broker snapshots, build consolidated_holdings, allocation, holdings."""
-    from pipeline.analytics.allocation import allocate_percentages
+    """Write broker snapshots, build consolidated_holdings, holdings."""
 
     config = get_storage()
 
@@ -104,7 +102,6 @@ def _build_all_gold_tables(fernet_key: bytes) -> None:
     )
 
     # Build analytics tables
-    allocate_percentages(fernet_key=fernet_key)
     build_portfolio_holdings(fernet_key=fernet_key)
 
 
@@ -365,19 +362,18 @@ class TestCmdReport:
         # Write only a DQ table with FAILs for all gold tables
         dq_fail = pa.table(
             {
-                "checked_at": [now] * 5,
+                "checked_at": [now] * 4,
                 "table_name": [
                     "portfolio_holdings",
-                    "portfolio_allocation",
                     "dividend_income",
                     "interest_income",
                     "cash_flow_summary",
                 ],
-                "check_name": ["schema"] * 5,
-                "status": ["FAIL"] * 5,
-                "details": ["Schema mismatch"] * 5,
-                "threshold": [None] * 5,
-                "actual": [None] * 5,
+                "check_name": ["schema"] * 4,
+                "status": ["FAIL"] * 4,
+                "details": ["Schema mismatch"] * 4,
+                "threshold": [None] * 4,
+                "actual": [None] * 4,
             },
             schema=data_quality_schema,
         )

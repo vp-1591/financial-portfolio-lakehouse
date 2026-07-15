@@ -191,7 +191,6 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     """
     tables = load_all()
     holdings = tables["portfolio_holdings"]
-    allocation = tables["portfolio_allocation"]
     dividends = tables["dividend_income"]
     interest = tables["interest_income"]
     cash_flow = tables["cash_flow_summary"]
@@ -201,9 +200,7 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     # A section is hidden when ALL its dependency tables are empty OR when any
     # dependency table has a FAIL in the DQ results.
     failed = _dq_failed_tables(dq)
-    show_portfolio = (not holdings.is_empty() or not allocation.is_empty()) and not (
-        failed & {"portfolio_holdings", "portfolio_allocation"}
-    )
+    show_portfolio = not holdings.is_empty() and "portfolio_holdings" not in failed
     show_passive = (not dividends.is_empty() or not interest.is_empty()) and not (
         failed & {"dividend_income", "interest_income"}
     )
@@ -222,33 +219,15 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     base_cur = base_currency
 
     if show_portfolio:
-        use_holdings = not holdings.is_empty()
-        if use_holdings and not base_cur:
+        if not base_cur:
             base_cur = holdings["target_ccy"][0]
 
-        if use_holdings:
-            total = holdings["target_value"].sum()
-            summary_cards.append(
-                {"label": "Total Value", "value": f"{total:,.2f} {base_cur}"}
-            )
+        total = holdings["target_value"].sum()
+        summary_cards.append(
+            {"label": "Total Value", "value": f"{total:,.2f} {base_cur}"}
+        )
 
-        if use_holdings:
-            summary_table_html = _summary_table(holdings)
-        elif not allocation.is_empty():
-            summary_table_html = "<p><em>Portfolio holdings not available; showing allocation percentages only.</em></p>"
-            rows_html = []
-            for row in allocation.sort("percentage", descending=True).iter_rows(
-                named=True
-            ):
-                rows_html.append(
-                    f"<tr><td>{row['ticker']}</td><td>{row['broker']}</td>"
-                    f"<td>{row['percentage']:.2f}%</td></tr>"
-                )
-            summary_table_html += (
-                "<table><tr><th>Ticker</th><th>Broker</th><th>%</th></tr>"
-                + "".join(rows_html)
-                + "</table>"
-            )
+        summary_table_html = _summary_table(holdings)
 
     # --- Charts ---
     fig_allocation_broker = (
