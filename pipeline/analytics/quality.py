@@ -30,6 +30,7 @@ from pipeline.analytics.models import (
     data_quality_schema,
     dividend_income_schema,
     interest_income_schema,
+    portfolio_allocation_schema,
     portfolio_holdings_schema,
 )
 from pipeline.normalized.models import (
@@ -76,6 +77,7 @@ TABLE_SCHEMAS: dict[str, pa.Schema] = {
     "trading212_cdc": cdc_events_normalized_schema,
     "xtb_cdc": cdc_events_normalized_schema,
     # Gold tables
+    "portfolio_allocation": portfolio_allocation_schema,
     "portfolio_holdings": portfolio_holdings_schema,
     "dividend_income": dividend_income_schema,
     "interest_income": interest_income_schema,
@@ -93,6 +95,7 @@ FRESHNESS_COLUMNS: dict[str, str] = {
     "trading212_cdc": "fetched_at",
     "xtb_cdc": "fetched_at",
     # Gold tables
+    "portfolio_allocation": "calculated_at",
     "portfolio_holdings": "calculated_at",
     "dividend_income": "calculated_at",
     "interest_income": "calculated_at",
@@ -158,6 +161,12 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "cash_amount",
     ],
     # Gold tables
+    "portfolio_allocation": [
+        "calculated_at",
+        "ticker",
+        "percentage",
+        "broker",
+    ],
     "portfolio_holdings": [
         "calculated_at",
         "broker",
@@ -503,6 +512,7 @@ def run_validation(
         "trading212_cdc": storage.normalized_path("trading212_cdc"),
         "xtb_cdc": storage.normalized_path("xtb_cdc"),
         # Gold tables
+        "portfolio_allocation": storage.analytics_path("portfolio_allocation"),
         "portfolio_holdings": storage.analytics_path("portfolio_holdings"),
         "dividend_income": storage.analytics_path("dividend_income"),
         "interest_income": storage.analytics_path("interest_income"),

@@ -302,6 +302,7 @@ class TestCmdRunConsolidateAnalytics:
         mock_validate.assert_any_call(
             fernet_key=b"test-key",
             tables=[
+                "portfolio_allocation",
                 "portfolio_holdings",
                 "dividend_income",
                 "interest_income",

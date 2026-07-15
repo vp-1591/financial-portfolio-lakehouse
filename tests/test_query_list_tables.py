@@ -39,8 +39,8 @@ class TestParseAlias:
         )
 
     def test_analytics_suffix(self):
-        assert parse_alias("portfolio_holdings_analytics") == (
-            "portfolio_holdings",
+        assert parse_alias("portfolio_allocation_analytics") == (
+            "portfolio_allocation",
             "analytics",
         )
 

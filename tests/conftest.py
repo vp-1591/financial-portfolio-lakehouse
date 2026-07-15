@@ -106,7 +106,7 @@ def tmp_data_dir(tmp_path: Path) -> Path:
         "normalized/xtb_snapshot",
         "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_holdings",
+        "analytics/portfolio_allocation",
     ]:
         (data / subdir).mkdir(parents=True, exist_ok=True)
 

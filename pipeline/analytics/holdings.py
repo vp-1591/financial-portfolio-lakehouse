@@ -121,12 +121,6 @@ def build_portfolio_holdings(
         }
     )
 
-    # Compute percentage: (target_value / total_target_value) * 100, rounded to 4 dp
-    total_target = result["target_value"].sum()
-    result = result.with_columns(
-        ((pl.col("target_value") / total_target) * 100).round(4).alias("percentage")
-    )
-
     # Convert to PyArrow and cast to match the schema
     arrow_result = result.to_arrow()
     casted = {}

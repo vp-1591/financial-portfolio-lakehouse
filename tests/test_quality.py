@@ -11,6 +11,7 @@ from deltalake import write_deltalake
 
 from pipeline.analytics.models import (
     data_quality_schema,
+    portfolio_allocation_schema,
     portfolio_holdings_schema,
 )
 from pipeline.analytics.quality import (
@@ -119,6 +120,23 @@ def _make_cdc_table(
     return _rows_to_table(rows, cdc_events_normalized_schema)
 
 
+def _make_allocation_table() -> pa.Table:
+    """Build a minimal portfolio_allocation table."""
+    now = datetime.now(timezone.utc)
+    return pa.table(
+        {
+            "calculated_at": [now],
+            "ticker": ["VWCE"],
+            "percentage": [100.0],
+            "broker": ["IBKR"],
+            "identifier": ["IE00BK5BQT80"],
+            "security_ccy": ["EUR"],
+            "description": ["Vanguard FTSE All-World"],
+        },
+        schema=portfolio_allocation_schema,
+    )
+
+
 def _make_portfolio_holdings_table() -> pa.Table:
     """Build a minimal portfolio_holdings table."""
     now = datetime.now(timezone.utc)
@@ -131,7 +149,6 @@ def _make_portfolio_holdings_table() -> pa.Table:
             "security_value": [5000.0],
             "target_value": [5000.0],
             "target_ccy": ["EUR"],
-            "percentage": [100.0],
             "position_type": ["EQUITY"],
             "identifier": ["IE00BK5BQT80"],
             "description": ["Vanguard FTSE All-World"],
@@ -153,6 +170,7 @@ def _setup_storage(tmp_path: Path) -> None:
         "normalized/trading212_cdc",
         "normalized/xtb_snapshot",
         "normalized/xtb_cdc",
+        "analytics/portfolio_allocation",
         "analytics/portfolio_holdings",
         "analytics/data_quality",
         "analytics/dividend_income",
@@ -183,69 +201,67 @@ class TestCheckSchema:
 
     def test_pass_on_valid_table(self) -> None:
         """Schema check passes when the table matches expected schema."""
-        table = _make_portfolio_holdings_table()
-        result = check_schema("portfolio_holdings", table, portfolio_holdings_schema)
+        table = _make_allocation_table()
+        result = check_schema(
+            "portfolio_allocation", table, portfolio_allocation_schema
+        )
         assert result.status == PASS
 
     def test_fail_on_missing_column(self) -> None:
         """Schema check fails when a required column is missing."""
-        table = _make_portfolio_holdings_table()
+        table = _make_allocation_table()
         # Drop the 'ticker' column
         table = table.drop_columns(["ticker"])
-        result = check_schema("portfolio_holdings", table, portfolio_holdings_schema)
+        result = check_schema(
+            "portfolio_allocation", table, portfolio_allocation_schema
+        )
         assert result.status == FAIL
         assert "ticker" in result.details
 
     def test_fail_on_extra_column(self) -> None:
         """Schema check fails when an extra column is present."""
-        table = _make_portfolio_holdings_table()
+        table = _make_allocation_table()
         # Add an extra column
         table = table.append_column(
             "extra", pa.array(["oops"] * table.num_rows, type=pa.string())
         )
-        result = check_schema("portfolio_holdings", table, portfolio_holdings_schema)
+        result = check_schema(
+            "portfolio_allocation", table, portfolio_allocation_schema
+        )
         assert result.status == FAIL
         assert "extra" in result.details
 
     def test_fail_on_type_mismatch(self) -> None:
         """Schema check fails when a column has a different type."""
         now = datetime.now(timezone.utc)
-        # Use string instead of float for target_value
+        # Use string instead of float for percentage
         wrong_table = pa.table(
             {
                 "calculated_at": [now],
-                "broker": ["IBKR"],
                 "ticker": ["VWCE"],
-                "security_ccy": ["EUR"],
-                "security_value": ["not_a_float"],  # wrong type
-                "target_value": [5000.0],
-                "target_ccy": ["EUR"],
-                "percentage": [100.0],
-                "position_type": ["EQUITY"],
+                "percentage": ["not_a_float"],  # wrong type
+                "broker": ["IBKR"],
                 "identifier": ["IE00BK5BQT80"],
+                "security_ccy": ["EUR"],
                 "description": ["Vanguard FTSE All-World"],
             },
             schema=pa.schema(
                 [
                     pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
-                    pa.field("broker", pa.string()),
                     pa.field("ticker", pa.string()),
-                    pa.field("security_ccy", pa.string()),
-                    pa.field("security_value", pa.string()),  # mismatch
-                    pa.field("target_value", pa.float64()),
-                    pa.field("target_ccy", pa.string()),
-                    pa.field("percentage", pa.float64()),
-                    pa.field("position_type", pa.string()),
+                    pa.field("percentage", pa.string()),  # mismatch
+                    pa.field("broker", pa.string()),
                     pa.field("identifier", pa.string()),
+                    pa.field("security_ccy", pa.string()),
                     pa.field("description", pa.string()),
                 ]
             ),
         )
         result = check_schema(
-            "portfolio_holdings", wrong_table, portfolio_holdings_schema
+            "portfolio_allocation", wrong_table, portfolio_allocation_schema
         )
         assert result.status == FAIL
-        assert "security_value" in result.details
+        assert "percentage" in result.details
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +274,9 @@ class TestCheckRequiredNulls:
 
     def test_pass_on_no_nulls(self) -> None:
         """Required nulls check passes when all required fields are non-null."""
-        table = _make_portfolio_holdings_table()
+        table = _make_allocation_table()
         result = check_required_nulls(
-            "portfolio_holdings", table, portfolio_holdings_schema
+            "portfolio_allocation", table, portfolio_allocation_schema
         )
         assert result.status == PASS
 
@@ -300,28 +316,28 @@ class TestCheckRowCountStability:
 
     def test_first_run_passes(self) -> None:
         """First run (no previous count) passes."""
-        table = _make_portfolio_holdings_table()
-        result = check_row_count_stability("portfolio_holdings", table, None)
+        table = _make_allocation_table()
+        result = check_row_count_stability("portfolio_allocation", table, None)
         assert result.status == PASS
         assert "First run" in result.details
 
     def test_stable_count_passes(self) -> None:
         """Stable row count (no >50% drop) passes."""
-        table = _make_portfolio_holdings_table()  # 1 row
-        result = check_row_count_stability("portfolio_holdings", table, 1)
+        table = _make_allocation_table()  # 1 row
+        result = check_row_count_stability("portfolio_allocation", table, 1)
         assert result.status == PASS
 
     def test_large_drop_warns(self) -> None:
         """Row count dropping >50% compared to previous triggers WARN."""
-        table = _make_portfolio_holdings_table()  # 1 row
-        result = check_row_count_stability("portfolio_holdings", table, 100)
+        table = _make_allocation_table()  # 1 row
+        result = check_row_count_stability("portfolio_allocation", table, 100)
         assert result.status == WARN
         assert "dropped" in result.details
 
     def test_moderate_change_passes(self) -> None:
         """Row count changing but not >50% drop passes."""
-        table = _make_portfolio_holdings_table()  # 1 row
-        result = check_row_count_stability("portfolio_holdings", table, 1)
+        table = _make_allocation_table()  # 1 row
+        result = check_row_count_stability("portfolio_allocation", table, 1)
         assert result.status == PASS
 
 
@@ -335,9 +351,9 @@ class TestCheckFreshness:
 
     def test_recent_data_passes(self) -> None:
         """Fresh data (within threshold) passes."""
-        table = _make_portfolio_holdings_table()
+        table = _make_allocation_table()
         result = check_freshness(
-            "portfolio_holdings", table, "calculated_at", freshness_days=7
+            "portfolio_allocation", table, "calculated_at", freshness_days=7
         )
         assert result.status == PASS
 
@@ -348,21 +364,17 @@ class TestCheckFreshness:
         table = pa.table(
             {
                 "calculated_at": [old_ts],
-                "broker": ["IBKR"],
                 "ticker": ["VWCE"],
-                "security_ccy": ["EUR"],
-                "security_value": [5000.0],
-                "target_value": [5000.0],
-                "target_ccy": ["EUR"],
                 "percentage": [100.0],
-                "position_type": ["EQUITY"],
+                "broker": ["IBKR"],
                 "identifier": ["IE00BK5BQT80"],
+                "security_ccy": ["EUR"],
                 "description": ["Vanguard FTSE All-World"],
             },
-            schema=portfolio_holdings_schema,
+            schema=portfolio_allocation_schema,
         )
         result = check_freshness(
-            "portfolio_holdings", table, "calculated_at", freshness_days=7
+            "portfolio_allocation", table, "calculated_at", freshness_days=7
         )
         assert result.status == WARN
 
@@ -380,21 +392,17 @@ class TestCheckFreshness:
         table = pa.table(
             {
                 "calculated_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
-                "broker": pa.array([], type=pa.string()),
                 "ticker": pa.array([], type=pa.string()),
-                "security_ccy": pa.array([], type=pa.string()),
-                "security_value": pa.array([], type=pa.float64()),
-                "target_value": pa.array([], type=pa.float64()),
-                "target_ccy": pa.array([], type=pa.string()),
                 "percentage": pa.array([], type=pa.float64()),
-                "position_type": pa.array([], type=pa.string()),
+                "broker": pa.array([], type=pa.string()),
                 "identifier": pa.array([], type=pa.string()),
+                "security_ccy": pa.array([], type=pa.string()),
                 "description": pa.array([], type=pa.string()),
             },
-            schema=portfolio_holdings_schema,
+            schema=portfolio_allocation_schema,
         )
         result = check_freshness(
-            "portfolio_holdings", table, "calculated_at", freshness_days=7
+            "portfolio_allocation", table, "calculated_at", freshness_days=7
         )
         assert result.status == PASS
         assert "empty" in result.details.lower()
@@ -442,8 +450,8 @@ class TestCheckReconciliation:
 
     def test_skip_for_non_holdings_table(self) -> None:
         """Reconciliation is not applicable for tables other than consolidated_holdings."""
-        table = _make_portfolio_holdings_table()
-        result = check_reconciliation("portfolio_holdings", table, None)
+        table = _make_allocation_table()
+        result = check_reconciliation("portfolio_allocation", table, None)
         assert result.status == PASS
         assert "not applicable" in result.details
 
@@ -472,6 +480,7 @@ class TestRunValidation:
         # Write test tables
         holdings = _make_holdings_table(fernet_key)
         cdc = _make_cdc_table(fernet_key)
+        allocation = _make_allocation_table()
         portfolio_holdings = _make_portfolio_holdings_table()
 
         write_deltalake(
@@ -480,6 +489,11 @@ class TestRunValidation:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.analytics_path("portfolio_allocation"),
+            allocation,
+            mode="overwrite",
+        )
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -521,8 +535,15 @@ class TestRunValidation:
             storage.normalized_path("cdc_events"), bad_cdc, mode="overwrite"
         )
 
-        # Also need portfolio_holdings table to not trigger "table not found" WARNs
+        # Also need allocation + portfolio_holdings tables to not trigger
+        # "table not found" WARNs
+        allocation = _make_allocation_table()
         portfolio_holdings = _make_portfolio_holdings_table()
+        write_deltalake(
+            storage.analytics_path("portfolio_allocation"),
+            allocation,
+            mode="overwrite",
+        )
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -553,6 +574,7 @@ class TestRunValidation:
         ]
         holdings = _rows_to_table(holdings_rows, consolidated_holdings_schema)
         cdc = _make_cdc_table(fernet_key)
+        allocation = _make_allocation_table()
         portfolio_holdings = _make_portfolio_holdings_table()
 
         write_deltalake(
@@ -561,6 +583,11 @@ class TestRunValidation:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.analytics_path("portfolio_allocation"),
+            allocation,
+            mode="overwrite",
+        )
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -590,6 +617,7 @@ class TestDataQualityRoundTrip:
         # Write tables so validation has something to check
         holdings = _make_holdings_table(fernet_key)
         cdc = _make_cdc_table(fernet_key)
+        allocation = _make_allocation_table()
         portfolio_holdings = _make_portfolio_holdings_table()
 
         write_deltalake(
@@ -598,6 +626,11 @@ class TestDataQualityRoundTrip:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.analytics_path("portfolio_allocation"),
+            allocation,
+            mode="overwrite",
+        )
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
