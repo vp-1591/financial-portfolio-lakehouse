@@ -12,6 +12,18 @@ from __future__ import annotations
 
 import pyarrow as pa
 
+portfolio_allocation_schema = pa.schema(
+    [
+        pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
+        pa.field("ticker", pa.string()),
+        pa.field("percentage", pa.float64()),
+        pa.field("broker", pa.string()),
+        pa.field("identifier", pa.string()),
+        pa.field("security_ccy", pa.string()),
+        pa.field("description", pa.string()),
+    ]
+)
+
 portfolio_holdings_schema = pa.schema(
     [
         pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
@@ -25,9 +37,6 @@ portfolio_holdings_schema = pa.schema(
             "target_value", pa.float64()
         ),  # value in target_ccy (from consolidated_holdings)
         pa.field("target_ccy", pa.string()),  # == consolidated_holdings.target_ccy
-        pa.field(
-            "percentage", pa.float64()
-        ),  # (target_value / total_target_value) * 100
         pa.field("position_type", pa.string()),  # EQUITY | CASH
         pa.field("identifier", pa.string()),
         pa.field("description", pa.string()),
