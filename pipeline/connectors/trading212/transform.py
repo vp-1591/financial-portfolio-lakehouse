@@ -412,16 +412,15 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
         _ensure_struct_fields(event.get("instrument"), _INSTRUMENT_FIELDS)
 
     # Log warnings for dividends where the payout currency differs from the
-    # instrument's trading currency.  These dividends need FX conversion that
-    # walletImpact.fxRate cannot provide (only available on orders).  Phase 2
-    # will use CurrencyConverter for this conversion.
+    # instrument's trading currency.  FX conversion for these dividends is
+    # handled by normalize_currency() in the normalization step, not here.
     for event in events:
         div_ccy = event.get("currency", "")
         ticker_ccy = event.get("tickerCurrency", "")
         if div_ccy and ticker_ccy and div_ccy != ticker_ccy:
             logger.warning(
                 "T212 dividend %s: currency=%s differs from tickerCurrency=%s; "
-                "FX conversion deferred to Phase 2",
+                "FX conversion handled by normalize_currency()",
                 event.get("ticker", event.get("reference", "?")),
                 div_ccy,
                 ticker_ccy,

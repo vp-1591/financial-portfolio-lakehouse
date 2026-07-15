@@ -68,7 +68,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | active | — |
 | 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |
 | 0057 | Fix Bronze→Silver Dedup and Cash Extraction Bugs | 2026-07-10 | active | — |
-| 0058 | Broker-Neutral CDC Events Schema | 2026-07-10 | active | — |
+| 0058 | Broker-Neutral CDC Events Schema | 2026-07-10 | superseded | 0077 |
 | 0059 | Fix T212 CDC Paginated Response Bug and Test Isolation Leak | 2026-07-10 | active | — |
 | 0060 | Fix T212 CDC Transform for Nested JSON Structures | 2026-07-11 | active | — |
 | 0061 | Handle Missing Struct Fields in T212 CDC Transform | 2026-07-11 | active | — |

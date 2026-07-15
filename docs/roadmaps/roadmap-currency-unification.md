@@ -189,7 +189,7 @@ use it correctly. This immediately fixes Bug 1 and Bug 6 for T212 orders.
 
 ---
 
-### Phase 2 — Schema redesign: `security_ccy` + `target_value` *[status: planned]*
+### Phase 2 — Schema redesign: `security_ccy` + `target_value` *[status: done]*
 
 Replace `value_currency`, `base_currency`, `fx_rate_to_base`, `amount_base`,
 and `value`/`value_base` with the new schema: `security_ccy`, `security_value`,
@@ -200,57 +200,60 @@ Wire `target_value` computation into the normalization step.
 
 #### 2a. Update silver schemas in `pipeline/normalized/models.py`
 
-- [ ] **CDC events**: Remove `value_currency`, `base_currency`,
+- [x] **CDC events**: Remove `value_currency`, `base_currency`,
       `fx_rate_to_base`, `amount_base`, `net_amount` (`net_amount` is always
       identical to `cash_amount` — redundant). Add `security_ccy` (string,
       non-null), `target_fx_rate` (binary, nullable), `target_value` (binary,
       non-null), `target_ccy` (string, non-null). Rename `fee_amount` and
       `tax_amount` semantics: they are now in `security_ccy`.
-- [ ] **Snapshot schemas** (IBKR, T212, XTB): Remove `value`,
+- [x] **Snapshot schemas** (IBKR, T212, XTB): Remove `value`,
       `value_currency`, `security_currency`. Add `security_value` (binary),
       `security_ccy` (string).
 
 #### 2b. Update T212 connector transform
 
-- [ ] `_transform_orders()`: Use `walletImpact.fxRate` as wallet→security
+- [x] `_transform_orders()`: Use `walletImpact.fxRate` as wallet→security
       rate. Convert `net_value` from wallet currency to `security_ccy`. Set
       `security_ccy` from instrument trading currency. The raw
       `walletImpact.fxRate` is consumed for this conversion and then
       dropped — it is not stored in the output schema.
-- [ ] `_transform_dividends()`: Set `security_ccy` from dividend currency.
-      If dividend currency differs from instrument trading currency, use
-      `CurrencyConverter` to convert the dividend amount to `security_ccy`.
-- [ ] `_transform_transactions()`: Set `security_ccy` from transaction
+- [x] `_transform_dividends()`: Set `security_ccy` from dividend currency.
+      **Deviation:** Rather than using `CurrencyConverter` directly in the
+      transform, FX conversion is deferred to `normalize_currency()` in the
+      normalization step. `security_ccy` is set to
+      `pl.coalesce([pl.col('currency'), pl.col('tickerCurrency')])`,
+      preferring the dividend's payment currency.
+- [x] `_transform_transactions()`: Set `security_ccy` from transaction
       currency (deposits/fees have no security, so this is the native
       currency).
-- [ ] `_transform_snapshot()`: Convert position values from wallet currency
+- [x] `_transform_snapshot()`: Convert position values from wallet currency
       to `security_ccy` using `walletImpact.fxRate` for filled positions and
       `CurrencyConverter` for unfilled positions. Set `security_ccy` from
       `position_security_currency()`.
-- [ ] Remove all `fx_rate_to_base`, `base_currency`, `amount_base`,
+- [x] Remove all `fx_rate_to_base`, `base_currency`, `amount_base`,
       `value_currency`, `security_currency`, `net_amount` logic from T212
       transforms.
 
 #### 2c. Update IBKR connector transform
 
-- [ ] `_process_ibkr_trade()`, `_process_ibkr_cash_transaction()`,
+- [x] `_process_ibkr_trade()`, `_process_ibkr_cash_transaction()`,
       `_process_ibkr_transfer()`, `_process_ibkr_transaction_fee()`: Set
       `security_ccy` from trade/transaction currency (the security's trading
       currency). Pass `fxRateToBase` through to the normalization step as
       `target_fx_rate` (it converts security ccy → account base ccy; when
       account base equals target ccy, this is the correct rate). Remove
       `amount_base`, `base_currency`, `value_currency` computation.
-- [ ] `transform_snapshot()`: **Stop pre-converting `value` to account base
+- [x] `transform_snapshot()`: **Stop pre-converting `value` to account base
       currency.** Store `security_value` in the trade currency (the security's
       native currency). Set `security_ccy` from the position's currency.
       Remove `base_value` and `fx_rate` logic.
-- [ ] Remove all `fx_rate_to_base`, `base_currency`, `amount_base`,
+- [x] Remove all `fx_rate_to_base`, `base_currency`, `amount_base`,
       `value_currency`, `security_currency`, `net_amount` logic from IBKR
       transforms.
 
 #### 2d. Create `normalize_currency()` in `pipeline/normalized/`
 
-- [ ] New function that takes a list of CDC event dicts (with `cash_amount` in
+- [x] New function that takes a list of CDC event dicts (with `cash_amount` in
       `security_ccy` and optionally a pre-set `target_fx_rate` from IBKR) and
       a `CurrencyConverter`, and computes `target_value`, `target_fx_rate`,
       and `target_ccy` for each event:
@@ -262,46 +265,48 @@ Wire `target_value` computation into the normalization step.
         `target_value = cash_amount × target_fx_rate`.
       - Otherwise (T212): `target_fx_rate = converter.get_rate(security_ccy, target_ccy)`,
         `target_value = cash_amount × target_fx_rate`.
-- [ ] Same for snapshots: `target_fx_rate = converter.get_rate(security_ccy, target_ccy)`,
+- [x] Same for snapshots: `target_fx_rate = converter.get_rate(security_ccy, target_ccy)`,
       `target_value = security_value × target_fx_rate`.
 
 #### 2e. Update gold schemas and builders
 
-- [ ] **`consolidated_holdings`**: Remove `base_currency`, `value`. Add
-      `security_value` (in `security_ccy`), `security_ccy`, `target_value`
-      (in `target_ccy`), `target_ccy`.
-- [ ] **`portfolio_holdings`**: Remove `value`, `value_base`, `value_currency`,
+- [x] **`consolidated_holdings`**: Remove `base_currency`, `value`. Add
+      `security_ccy`, `target_value` (in `target_ccy`), `target_ccy`.
+      **Deviation:** `security_value` was NOT added to
+      `consolidated_holdings_schema` — it is derived from snapshots during
+      `build_portfolio_holdings()` rather than stored in the consolidated table.
+- [x] **`portfolio_holdings`**: Remove `value`, `value_base`, `value_currency`,
       `base_currency`. Add `security_value`, `security_ccy`, `target_value`,
       `target_ccy`.
-- [ ] **`dividend_income`, `interest_income`, `cash_flow_summary`**: Remove
+- [x] **`dividend_income`, `interest_income`, `cash_flow_summary`**: Remove
       `value_currency`, `base_currency`, `amount_base`. Add `security_ccy`,
       `target_value`, `target_ccy`. `cash_amount` is in `security_ccy`.
-- [ ] **`portfolio_allocation`**: Remove `security_currency` (replace with
+- [x] **`portfolio_allocation`**: Remove `security_currency` (replace with
       `security_ccy` if still needed for the currency exposure chart).
 
 #### 2f. Update downstream consumers
 
-- [ ] **`pipeline/analytics/holdings.py`**: Update column references from
+- [x] **`pipeline/analytics/holdings.py`**: Update column references from
       `value`/`value_base`/`value_currency`/`base_currency`/`security_currency`
       to `security_value`/`target_value`/`security_ccy`/`target_ccy`.
-- [ ] **`pipeline/analytics/cdc_tables.py`**: Update column references from
+- [x] **`pipeline/analytics/cdc_tables.py`**: Update column references from
       `value_currency`/`base_currency`/`amount_base`/`amount_base_resolved`
       to `security_ccy`/`target_ccy`/`target_value`. Remove the
       `amount_base_resolved` fallback logic. Remove `net_amount` from the
       encrypted column list and all decryption/decrypted references.
-- [ ] **`pipeline/report/charts.py`**: Update column references. Currency
+- [x] **`pipeline/report/charts.py`**: Update column references. Currency
       exposure chart groups by `security_ccy` instead of `security_currency`.
-- [ ] **`pipeline/report/renderer.py`**: Update `_summary_table()` to use
+- [x] **`pipeline/report/renderer.py`**: Update `_summary_table()` to use
       `target_value` and `target_ccy` instead of `value_base` and
       `base_currency`.
-- [ ] **`pipeline/analytics/quality.py`**: Update column references.
+- [x] **`pipeline/analytics/quality.py`**: Update column references.
 
 #### 2g. Update tests
 
-- [ ] Update all connector tests for new column names and semantics.
-- [ ] Add tests for `normalize_currency()`: T212 events with wallet→security
+- [x] Update all connector tests for new column names and semantics.
+- [x] Add tests for `normalize_currency()`: T212 events with wallet→security
       conversion, IBKR events with broker-provided rate, same-currency events.
-- [ ] Verify `pipeline report` on demo data produces correct EUR totals.
+- [x] Verify `pipeline report` on demo data produces correct EUR totals.
 
 **Out of scope:**
 - Historical FX rate service for T212 dividends/transactions (acknowledged
@@ -326,22 +331,22 @@ Wire `target_value` computation into the normalization step.
 
 ---
 
-### Phase 3 — Fix remaining data quality bugs *[status: planned]*
+### Phase 3 — Fix remaining data quality bugs *[status: done]*
 
 Fix the remaining currency-related bugs that don't require schema changes:
 IBKR `settle_date` format, fee/tax currency, and cross-currency fee handling.
 
 **Scope:**
-- [ ] Normalize IBKR `settle_date` from `YYYYMMDD` to `YYYY-MM-DD` (Bug 4).
-- [ ] Convert fee/tax amounts to `security_ccy` in both connectors. For T212
+- [x] Normalize IBKR `settle_date` from `YYYYMMDD` to `YYYY-MM-DD` (Bug 4).
+- [x] Convert fee/tax amounts to `security_ccy` in both connectors. For T212
       orders: use `walletImpact.fxRate` to convert wallet-currency fees to
       security currency. For IBKR: use `trade.currency` as `security_ccy` and
       convert fees from `ibCommissionCurrency` using `fxRateToBase` when they
       differ. Log a warning for cross-currency fees that can't be converted.
-- [ ] Write an ADR documenting the `security_ccy`/`target_ccy` schema
+- [x] Write an ADR documenting the `security_ccy`/`target_ccy` schema
       contract, the `walletImpact.fxRate` semantics, and the normalization
       architecture.
-- [ ] Run full test suite and `pipeline report` on demo data.
+- [x] Run full test suite and `pipeline report` on demo data.
 
 **Out of scope:**
 - Cross-currency fee conversion when no rate is available (log warning only).
