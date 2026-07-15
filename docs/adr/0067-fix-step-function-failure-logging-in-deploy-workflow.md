@@ -1,5 +1,7 @@
 # 0067: Fix Step Function Failure Logging in Deploy Workflow
 
+> **Superseded by [ADR 0081](./0081-fix-deploy-log-readability.md)** — The execution history and container log output from ADR 0067 was unreadable: ECS task JSON blobs and tab-concatenated CloudWatch logs. ADR 0081 replaces the raw output with parsed, human-readable formats.
+
 ## Context
 
 The `Wait for demo pipeline` step in `deploy-staging.yml` prints Step Functions execution history on failure using this JMESPath query:

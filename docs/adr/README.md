@@ -77,7 +77,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0064 | Data Quality Framework | 2026-07-12 | superseded | 0070 |
 | 0065 | CDC Analytics Tables and Unified Analytics Command | 2026-07-12 | active | — |
 | 0066 | Portfolio Holdings Gold Table and Report Generation | 2026-07-13 | active | — |
-| 0067 | Fix Step Function Failure Logging in Deploy Workflow | 2026-07-13 | active | — |
+| 0067 | Fix Step Function Failure Logging in Deploy Workflow | 2026-07-13 | superseded | 0081 |
 | 0068 | Add Gitleaks Secret Scanning to CI | 2026-07-13 | active | — |
 | 0069 | Fix IBKR CDC Triplication and Date Parsing | 2026-07-13 | active | — |
 | 0070 | Embed Validation in Pipeline and Selective Report Sections | 2026-07-13 | active | — |
@@ -91,6 +91,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0078 | Currency Unification Phase 3: Data Quality Fixes | 2026-07-14 | active | — |
 | 0079 | Fix IBKR Demo Deposit Currency After Phase 2 Rename | 2026-07-15 | active | — |
 | 0080 | Store security_value and position_type in Consolidated Holdings; Add instrument_ccy to CDC Events | 2026-07-15 | active | — |
+| 0081 | Fix Deploy Log Readability in GitHub Actions | 2026-07-15 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
