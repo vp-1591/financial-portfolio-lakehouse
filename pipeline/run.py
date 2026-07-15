@@ -8,7 +8,7 @@ Usage::
     python -m pipeline.run analytics --target-currency EUR
     python -m pipeline.run full
     python -m pipeline.run keygen
-    python -m pipeline.run query "SELECT * FROM portfolio_allocation_analytics"
+    python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics"
     python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
     python -m pipeline.run run-connector ibkr
     python -m pipeline.run run-connector xtb --xtb-file s3://bucket/staging/xtb/report.xlsx
@@ -350,12 +350,11 @@ def cmd_analytics(args: argparse.Namespace) -> int:
 
     Runs allocation first, then CDC analytics tables (dividend income,
     interest income, cash flow summary).  If CDC events are not
-    available, logs a warning and continues — allocation still succeeds.
+    available, logs a warning and continues — holdings still succeeds.
     """
     import csv
     from pathlib import Path
 
-    from pipeline.analytics.allocation import allocate_percentages
     from pipeline.crypto import load_key
 
     fernet_key = load_key()
@@ -376,15 +375,6 @@ def cmd_analytics(args: argparse.Namespace) -> int:
                     isin = (row.get("isin") or row.get("ISIN") or "").strip().upper()
                     if ticker and isin:
                         isin_overrides[ticker] = isin
-
-    try:
-        allocate_percentages(fernet_key=fernet_key)
-    except FileNotFoundError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
 
     # Build portfolio_holdings gold table (reads security_value,
     # position_type, security_ccy, and target_ccy from consolidated_holdings).
@@ -570,7 +560,6 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     return run_validation(
         fernet_key=fernet_key,
         tables=[
-            "portfolio_allocation",
             "portfolio_holdings",
             "dividend_income",
             "interest_income",

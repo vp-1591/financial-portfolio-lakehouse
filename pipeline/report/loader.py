@@ -14,16 +14,6 @@ import polars as pl
 logger = logging.getLogger(__name__)
 
 # Expected column schemas for empty fallback DataFrames.
-_PORTFOLIO_ALLOCATION_COLUMNS = {
-    "calculated_at": pl.Datetime("us", "UTC"),
-    "ticker": pl.String,
-    "percentage": pl.Float64,
-    "broker": pl.String,
-    "identifier": pl.String,
-    "security_ccy": pl.String,
-    "description": pl.String,
-}
-
 _PORTFOLIO_HOLDINGS_COLUMNS = {
     "calculated_at": pl.Datetime("us", "UTC"),
     "broker": pl.String,
@@ -32,6 +22,7 @@ _PORTFOLIO_HOLDINGS_COLUMNS = {
     "security_value": pl.Float64,
     "target_value": pl.Float64,
     "target_ccy": pl.String,
+    "percentage": pl.Float64,
     "position_type": pl.String,
     "identifier": pl.String,
     "description": pl.String,
@@ -108,11 +99,6 @@ def _load_table(view_name: str, columns: dict[str, pl.DataType]) -> pl.DataFrame
         return _empty_df(columns)
 
 
-def load_portfolio_allocation() -> pl.DataFrame:
-    """Load the ``portfolio_allocation`` analytics table."""
-    return _load_table("portfolio_allocation_analytics", _PORTFOLIO_ALLOCATION_COLUMNS)
-
-
 def load_portfolio_holdings() -> pl.DataFrame:
     """Load the ``portfolio_holdings`` analytics table."""
     return _load_table("portfolio_holdings_analytics", _PORTFOLIO_HOLDINGS_COLUMNS)
@@ -144,7 +130,6 @@ def load_all() -> dict[str, pl.DataFrame]:
     Returns a dict keyed by table name; missing tables produce empty DataFrames.
     """
     return {
-        "portfolio_allocation": load_portfolio_allocation(),
         "portfolio_holdings": load_portfolio_holdings(),
         "dividend_income": load_dividend_income(),
         "interest_income": load_interest_income(),

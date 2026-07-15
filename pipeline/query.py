@@ -9,7 +9,7 @@ Tables are identified by **aliases** that follow the
 
 - ``ibkr_snapshot_raw`` — raw layer
 - ``ibkr_snapshot_normalized`` — normalized layer
-- ``portfolio_allocation_analytics`` — analytics layer
+- ``portfolio_holdings_analytics`` — analytics layer
 
 Usage::
 
@@ -145,7 +145,7 @@ def list_tables(*, refresh: bool = False) -> list[str]:
     """Discover Delta tables on disk/S3 and return layer-qualified aliases.
 
     Each returned alias follows the ``{name}_{layer}`` convention
-    (e.g. ``ibkr_snapshot_raw``, ``portfolio_allocation_analytics``).
+    (e.g. ``ibkr_snapshot_raw``, ``portfolio_holdings_analytics``).
 
     Results are cached in memory for the lifetime of the process.
     Pass ``refresh=True`` to force re-discovery.
@@ -159,7 +159,7 @@ def list_tables(*, refresh: bool = False) -> list[str]:
     -------
     >>> list_tables()
     ['consolidated_holdings_normalized', 'ibkr_snapshot_normalized',
-     'ibkr_snapshot_raw', 'portfolio_allocation_analytics']
+     'ibkr_snapshot_raw', 'portfolio_holdings_analytics']
     """
     global _TABLE_CACHE
     if _TABLE_CACHE is not None and not refresh:
@@ -212,8 +212,8 @@ def parse_alias(alias: str) -> tuple[str, str] | None:
     -------
     >>> parse_alias("ibkr_snapshot_raw")
     ('ibkr_snapshot', 'raw')
-    >>> parse_alias("portfolio_allocation_analytics")
-    ('portfolio_allocation', 'analytics')
+    >>> parse_alias("portfolio_holdings_analytics")
+    ('portfolio_holdings', 'analytics')
     >>> parse_alias("some_random_string")
     None
     """
