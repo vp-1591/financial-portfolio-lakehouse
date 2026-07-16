@@ -269,3 +269,61 @@ class TestBuildPortfolioHoldings:
         assert abs(total_pct - 100.0) < 0.1, (
             f"Percentages sum to {total_pct}, expected ~100"
         )
+
+    def test_percentage_zero_when_total_target_is_zero(self, tmp_path: Path):
+        """When total_target is 0, all percentages are 0.0 (not null)."""
+        fernet_key = generate_key()
+        config = get_storage()
+
+        # Build consolidated holdings with all-zero target values.
+        from pipeline.crypto import encrypt_float
+
+        import polars as pl
+
+        rows = [
+            {
+                "broker": "ibkr",
+                "ticker": "AAPL",
+                "security_ccy": "USD",
+                "security_value": encrypt_float(100.0, fernet_key),
+                "target_value": encrypt_float(0.0, fernet_key),
+                "target_ccy": "EUR",
+                "position_type": "EQUITY",
+                "identifier": "US0378331005",
+                "description": "Apple Inc",
+            },
+            {
+                "broker": "ibkr",
+                "ticker": "CASH",
+                "security_ccy": "EUR",
+                "security_value": encrypt_float(0.0, fernet_key),
+                "target_value": encrypt_float(0.0, fernet_key),
+                "target_ccy": "EUR",
+                "position_type": "CASH",
+                "identifier": "",
+                "description": "Cash EUR",
+            },
+        ]
+        df = pl.DataFrame(rows)
+        arrow = df.to_arrow()
+
+        from pipeline.normalized.models import consolidated_holdings_schema
+
+        casted = {}
+        for field in consolidated_holdings_schema:
+            if field.name in arrow.column_names:
+                casted[field.name] = arrow.column(field.name).cast(field.type)
+            else:
+                casted[field.name] = pa.nulls(arrow.num_rows, field.type)
+        table = pa.table(casted, schema=consolidated_holdings_schema)
+
+        path = config.normalized_path("consolidated_holdings")
+        write_deltalake(path, table, mode="overwrite")
+
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+        percentages = result.column("percentage").to_pylist()
+
+        # All percentages should be 0.0, not None/null
+        assert all(p == 0.0 for p in percentages), (
+            f"Expected all 0.0, got {percentages}"
+        )
