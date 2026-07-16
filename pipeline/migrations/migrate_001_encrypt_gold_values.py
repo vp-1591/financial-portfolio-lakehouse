@@ -204,7 +204,9 @@ def migrate_table(table_name: str, fernet_key: bytes) -> bool:
     final = pa.table(casted, schema=schema)
 
     storage.backend.ensure_parent(table_path)
-    write_deltalake(table_path, final, mode="overwrite", storage_options=storage_opts)
+    write_deltalake(
+        table_path, final, mode="overwrite", schema_mode="overwrite", storage_options=storage_opts
+    )
     logger.info(
         "%s: migration complete — %d rows written with schema v%d",
         table_name,
