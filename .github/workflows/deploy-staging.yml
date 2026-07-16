@@ -117,41 +117,22 @@ jobs:
                 aws stepfunctions get-execution-history \
                   --execution-arn "$EXECUTION_ARN" \
                   --query 'events[?type==`TaskFailed`].taskFailedEventDetails' \
-                  --output json 2>&1 | python3 -c '
-                  import json,sys
-                  for d in json.load(sys.stdin):
-                    e=d.get("error","unknown"); c=d.get("cause","")
-                    try:
-                      j=json.loads(c); ct=j.get("Containers",[{}])
-                      x=next((i.get("exitCode") for i in ct if i.get("exitCode") is not None),"N/A")
-                      td=j.get("taskDefinitionArn","N/A").split("/")[-1]
-                      sr=j.get("stoppedReason","N/A")
-                      print(f"  error={e}  task={td}  exitCode={x}  reason={sr}")
-                    except (json.JSONDecodeError,AttributeError):
-                      print(f"  error={e}  cause={c[:500]}")
-                  ' || echo "(failed to fetch TaskFailed events)"
+                  --output json > "$RUNNER_TEMP/task_failures.json" 2>&1 || echo "[]" > "$RUNNER_TEMP/task_failures.json"
+                python3 .github/scripts/parse_stepfunctions_event.py task_failed "$RUNNER_TEMP/task_failures.json" || echo "(failed to fetch TaskFailed events)"
 
                 echo "--- Task Timeouts ---"
                 aws stepfunctions get-execution-history \
                   --execution-arn "$EXECUTION_ARN" \
                   --query 'events[?type==`TaskTimedOut`].taskTimedOutEventDetails' \
-                  --output json 2>&1 | python3 -c '
-                  import json,sys
-                  for d in json.load(sys.stdin):
-                    e=d.get("error","unknown"); c=d.get("cause","")[:500]
-                    print(f"  error={e}  cause={c}")
-                  ' || echo "(failed to fetch TaskTimedOut events)"
+                  --output json > "$RUNNER_TEMP/task_timeouts.json" 2>&1 || echo "[]" > "$RUNNER_TEMP/task_timeouts.json"
+                python3 .github/scripts/parse_stepfunctions_event.py task_timed_out "$RUNNER_TEMP/task_timeouts.json" || echo "(failed to fetch TaskTimedOut events)"
 
                 echo "--- Execution Failure ---"
                 aws stepfunctions get-execution-history \
                   --execution-arn "$EXECUTION_ARN" \
                   --query 'events[?type==`ExecutionFailed`].executionFailedEventDetails' \
-                  --output json 2>&1 | python3 -c '
-                  import json,sys
-                  for d in json.load(sys.stdin):
-                    e=d.get("error","unknown"); c=d.get("cause","")[:500]
-                    print(f"  error={e}  cause={c}")
-                  ' || echo "(failed to fetch ExecutionFailed events)"
+                  --output json > "$RUNNER_TEMP/exec_failure.json" 2>&1 || echo "[]" > "$RUNNER_TEMP/exec_failure.json"
+                python3 .github/scripts/parse_stepfunctions_event.py execution_failed "$RUNNER_TEMP/exec_failure.json" || echo "(failed to fetch ExecutionFailed events)"
                 exit 1
                 ;;
               RUNNING)
@@ -179,8 +160,8 @@ jobs:
           fi
 
           # Get the execution start time to scope the log query.
-          # AWS CLI v2 returns startDate as epoch seconds (e.g., 1721234567.890).
-          # Split into whole seconds and fractional milliseconds, pad to 3 digits.
+          # AWS CLI v2 returns ISO 8601 timestamps (e.g. 2026-07-16T09:43:10.808000+00:00).
+          # Convert to epoch milliseconds for CloudWatch Logs --start-time.
           START_SECONDS=$(aws stepfunctions describe-execution \
             --execution-arn "$EXECUTION_ARN" \
             --query 'startDate' \
@@ -189,7 +170,12 @@ jobs:
           if [ -z "$START_SECONDS" ]; then
             echo "::warning::Could not determine execution start time; fetching all log events"
             START_MS="0"
+          elif echo "$START_SECONDS" | grep -qP '^\d{4}-'; then
+            # ISO 8601 format (AWS CLI v2 default) — convert via date
+            START_MS=$(date -d "$START_SECONDS" +%s%3N)
+            echo "Execution start: ${START_SECONDS} → START_MS=${START_MS}ms"
           else
+            # Epoch format (CLI v1 or wire-format) — existing parsing
             SECS="${START_SECONDS%%.*}"
             FRAC="${START_SECONDS#*.}"
             # Pad or truncate fractional part to exactly 3 digits
@@ -219,6 +205,7 @@ jobs:
               echo ""
               continue
             }
-            echo "$EVENTS" | python3 -c 'import json,sys;[print(m) for m in json.load(sys.stdin)]' 2>/dev/null || echo "$EVENTS"
+            echo "$EVENTS" > "$RUNNER_TEMP/logs_${NAME}.json"
+            python3 .github/scripts/format_log_events.py "$RUNNER_TEMP/logs_${NAME}.json" 2>/dev/null || echo "$EVENTS"
             echo ""
           done
