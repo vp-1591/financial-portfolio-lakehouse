@@ -380,12 +380,15 @@ def cmd_analytics(args: argparse.Namespace) -> int:
     # position_type, security_ccy, and target_ccy from consolidated_holdings).
     from pipeline.analytics.holdings import build_portfolio_holdings
 
+    holdings_ok = True
     try:
         build_portfolio_holdings(fernet_key=fernet_key)
     except FileNotFoundError as exc:
         logger.warning("portfolio_holdings skipped: %s", exc)
+        holdings_ok = False
     except Exception as exc:
         logger.warning("portfolio_holdings failed: %s", exc)
+        holdings_ok = False
 
     # Build CDC analytics tables.  These are optional — if cdc_events
     # doesn't exist yet, log a warning and continue.
@@ -395,16 +398,31 @@ def cmd_analytics(args: argparse.Namespace) -> int:
         build_interest_income,
     )
 
-    try:
-        build_dividend_income(fernet_key=fernet_key)
-        build_interest_income(fernet_key=fernet_key)
-        build_cash_flow_summary(fernet_key=fernet_key)
-    except FileNotFoundError as exc:
-        logger.warning("CDC analytics tables skipped: %s", exc)
-    except Exception as exc:
-        logger.warning("CDC analytics tables failed: %s", exc)
+    cdc_ok = True
+    for builder in (
+        build_dividend_income,
+        build_interest_income,
+        build_cash_flow_summary,
+    ):
+        try:
+            builder(fernet_key=fernet_key)
+        except FileNotFoundError as exc:
+            logger.warning("%s skipped: %s", builder.__name__, exc)
+            cdc_ok = False
+        except Exception as exc:
+            logger.warning("%s failed: %s", builder.__name__, exc)
+            cdc_ok = False
 
+    if not holdings_ok or not cdc_ok:
+        return 1
     return 0
+
+
+def cmd_run_migration(args: argparse.Namespace) -> int:
+    """Run schema migrations for existing Delta tables."""
+    from pipeline.migrations.migrate_001_encrypt_gold_values import run_migration
+
+    return run_migration()
 
 
 def get_raw_path(connector_name: str, layer: str) -> str:
@@ -858,6 +876,12 @@ def main() -> int:
         help="CSV file with ticker,isin columns",
     )
 
+    subparsers.add_parser(
+        "run-migration",
+        parents=[common_parser],
+        help="Run schema migrations for existing Delta tables",
+    )
+
     args = parser.parse_args()
 
     # Resolve storage configuration before any path access.
@@ -878,6 +902,7 @@ def main() -> int:
         "upload-xtb": cmd_upload_xtb,
         "run-connector": cmd_run_connector,
         "run-consolidate-analytics": cmd_run_consolidate_analytics,
+        "run-migration": cmd_run_migration,
     }
 
     return commands[args.command](args)

@@ -21,6 +21,10 @@ it clarifies ambiguities before drafting.
 
 The workflow order is: `analyze → roadmap → plan → implement → ADR → review`.
 
+## Schema migrations
+
+When a table schema changes (column types, added/removed columns), create a migration script under `pipeline/migrations/` that rewrites the existing Delta table to match the new schema. This ensures the deploy can succeed against pre-existing tables so that quality checks don't flag mismatches between the expected and actual schema.
+
 ## Deploy logs
 
 When a staging deploy fails, the application error (Python tracebacks) is in the "Print container logs on failure". Check the `=== Container logs: <connector> ===` sections.

@@ -95,6 +95,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0082 | Fold portfolio_allocation into portfolio_holdings | 2026-07-15 | active | — |
 | 0083 | Replace "Allocation by Position Type" donut with "Positions" bar chart and EQUITY/CASH summary card | 2026-07-15 | active | — |
 | 0084 | Encrypt Gold Value Columns | 2026-07-15 | active | — |
+| 0085 | Gold Schema Migration and Analytics Error Propagation | 2026-07-16 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
