@@ -15,7 +15,7 @@ from deltalake import write_deltalake
 
 from pipeline.analytics.holdings import build_portfolio_holdings
 from pipeline.analytics.models import portfolio_holdings_schema
-from pipeline.crypto import generate_key
+from pipeline.crypto import decrypt_float, generate_key
 from pipeline.normalized.consolidate import (
     CurrencyConverter,
     Holding,
@@ -46,7 +46,6 @@ def _setup_storage(tmp_path: Path) -> None:
         "normalized/xtb_snapshot",
         "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_allocation",
         "analytics/portfolio_holdings",
     ]:
         (data / subdir).mkdir(parents=True, exist_ok=True)
@@ -119,15 +118,57 @@ class TestBuildPortfolioHoldings:
 
         assert result.num_rows == consolidated.num_rows
 
-    def test_target_value_is_decrypted_float(self, tmp_path: Path):
-        """target_value column contains decrypted float values, not bytes."""
+    def test_target_value_is_encrypted_binary(self, tmp_path: Path):
+        """target_value column contains Fernet-encrypted binary values."""
         fernet_key = generate_key()
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
+        # target_value and security_value should be binary (encrypted)
+        assert result.schema.field("target_value").type == pa.binary()
+        assert result.schema.field("security_value").type == pa.binary()
+        # Decrypt and verify values are positive floats
         values = result.column("target_value").to_pylist()
-        assert all(isinstance(v, float) for v in values)
-        assert all(v > 0 for v in values)
+        assert all(isinstance(v, bytes) for v in values)
+        assert all(decrypt_float(v, fernet_key) > 0 for v in values)
+
+    def test_security_value_is_encrypted_binary(self, tmp_path: Path):
+        """security_value column contains Fernet-encrypted binary values."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        values = result.column("security_value").to_pylist()
+        assert all(isinstance(v, bytes) for v in values)
+        assert all(decrypt_float(v, fernet_key) > 0 for v in values)
+
+    def test_percentage_is_plaintext_float(self, tmp_path: Path):
+        """percentage column remains plaintext Float64."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        assert result.schema.field("percentage").type == pa.float64()
+        percentages = result.column("percentage").to_pylist()
+        assert all(isinstance(p, float) for p in percentages)
+
+    def test_decrypt_roundtrip(self, tmp_path: Path):
+        """Encrypting then decrypting value columns recovers original values."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        # Decrypt both columns and verify values are positive
+        import polars as pl
+
+        df = pl.from_arrow(result)
+        for col in ("security_value", "target_value"):
+            decrypted = df[col].map_elements(
+                lambda v: decrypt_float(v, fernet_key), return_dtype=pl.Float64
+            )
+            assert all(v > 0 for v in decrypted.to_list()), (
+                f"{col} has non-positive values"
+            )
 
     def test_position_type_populated(self, tmp_path: Path):
         """position_type has EQUITY and CASH values."""
@@ -172,6 +213,19 @@ class TestBuildPortfolioHoldings:
         import polars as pl
 
         df = pl.from_arrow(result)
+        # Decrypt value columns for comparison
+        df = df.with_columns(
+            pl.col("security_value")
+            .map_elements(
+                lambda v: decrypt_float(v, fernet_key), return_dtype=pl.Float64
+            )
+            .alias("security_value"),
+            pl.col("target_value")
+            .map_elements(
+                lambda v: decrypt_float(v, fernet_key), return_dtype=pl.Float64
+            )
+            .alias("target_value"),
+        )
         eur_native = df.filter(
             (pl.col("security_ccy") == "EUR") & (pl.col("target_ccy") == "EUR")
         )
@@ -187,3 +241,31 @@ class TestBuildPortfolioHoldings:
         fernet_key = generate_key()
         with pytest.raises(FileNotFoundError, match="Consolidated holdings"):
             build_portfolio_holdings(fernet_key=fernet_key)
+
+    def test_percentage_column_present(self, tmp_path: Path):
+        """Result table includes the percentage column."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        assert "percentage" in result.column_names
+
+    def test_percentage_values_positive(self, tmp_path: Path):
+        """All percentage values are positive."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        percentages = result.column("percentage").to_pylist()
+        assert all(p > 0 for p in percentages)
+
+    def test_percentage_sums_to_100(self, tmp_path: Path):
+        """Percentage values sum to approximately 100."""
+        fernet_key = generate_key()
+        _build_consolidated_holdings(fernet_key)
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        total_pct = sum(result.column("percentage").to_pylist())
+        assert abs(total_pct - 100.0) < 0.1, (
+            f"Percentages sum to {total_pct}, expected ~100"
+        )

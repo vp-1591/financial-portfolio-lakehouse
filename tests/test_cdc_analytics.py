@@ -20,7 +20,7 @@ from pipeline.analytics.models import (
     interest_income_schema,
 )
 from pipeline.connectors.transform_utils import build_normalized_table
-from pipeline.crypto import generate_key
+from pipeline.crypto import decrypt_float, generate_key
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.storage import LocalBackend, StorageConfig, use_storage
 
@@ -110,7 +110,7 @@ def _setup_storage(tmp_path: Path) -> None:
     for subdir in [
         "normalized/cdc_events",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_allocation",
+        "analytics/portfolio_holdings",
         "analytics/data_quality",
         "analytics/dividend_income",
         "analytics/interest_income",
@@ -133,6 +133,13 @@ def _setup_storage(tmp_path: Path) -> None:
 @pytest.fixture()
 def fernet_key() -> bytes:
     return generate_key()
+
+
+def _decrypt_value(raw_bytes, key: bytes) -> float | None:
+    """Decrypt a single gold value column cell; return None for nulls."""
+    if raw_bytes is None:
+        return None
+    return decrypt_float(raw_bytes, key)
 
 
 # ---------------------------------------------------------------------------
@@ -353,8 +360,20 @@ class TestBuildDividendIncome:
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.num_rows == 1
-        assert abs(result.column("cash_amount")[0].as_py() - 52.5) < 0.01
-        assert abs(result.column("target_value")[0].as_py() - 52.5) < 0.01
+        assert (
+            abs(
+                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
+                - 52.5
+            )
+            < 0.01
+        )
+        assert (
+            abs(
+                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
+                - 52.5
+            )
+            < 0.01
+        )
         assert result.column("event_count")[0].as_py() == 2
 
     def test_handles_null_target_value_with_fx_rate_fallback(
@@ -393,9 +412,21 @@ class TestBuildDividendIncome:
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.num_rows == 1
-        assert abs(result.column("cash_amount")[0].as_py() - 100.0) < 0.01
+        assert (
+            abs(
+                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
+                - 100.0
+            )
+            < 0.01
+        )
         # target_value should be 100 * 0.9 = 90.0
-        assert abs(result.column("target_value")[0].as_py() - 90.0) < 0.01
+        assert (
+            abs(
+                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
+                - 90.0
+            )
+            < 0.01
+        )
 
     def test_handles_completely_null_target_value(
         self, fernet_key: bytes, tmp_path: Path
@@ -433,7 +464,13 @@ class TestBuildDividendIncome:
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.num_rows == 1
-        assert abs(result.column("cash_amount")[0].as_py() - 50.0) < 0.01
+        assert (
+            abs(
+                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
+                - 50.0
+            )
+            < 0.01
+        )
         assert result.column("target_value")[0].as_py() is None
 
     def test_writes_delta_table(self, fernet_key: bytes, tmp_path: Path) -> None:
@@ -671,8 +708,20 @@ class TestBuildInterestIncome:
 
         result = build_interest_income(fernet_key=fernet_key)
         assert result.num_rows == 1
-        assert abs(result.column("cash_amount")[0].as_py() - 50.0) < 0.01
-        assert abs(result.column("target_value")[0].as_py() - 50.0) < 0.01
+        assert (
+            abs(
+                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
+                - 50.0
+            )
+            < 0.01
+        )
+        assert (
+            abs(
+                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
+                - 50.0
+            )
+            < 0.01
+        )
         assert result.column("event_count")[0].as_py() == 2
 
 
@@ -848,8 +897,20 @@ class TestBuildCashFlowSummary:
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.num_rows == 1
-        assert abs(result.column("cash_amount")[0].as_py() - 7000.0) < 0.01
-        assert abs(result.column("target_value")[0].as_py() - 7000.0) < 0.01
+        assert (
+            abs(
+                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
+                - 7000.0
+            )
+            < 0.01
+        )
+        assert (
+            abs(
+                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
+                - 7000.0
+            )
+            < 0.01
+        )
 
     def test_event_count_matches_source(
         self, fernet_key: bytes, tmp_path: Path

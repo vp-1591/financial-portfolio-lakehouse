@@ -16,7 +16,7 @@ import pytest
 from deltalake import write_deltalake
 
 from pipeline.analytics.holdings import build_portfolio_holdings
-from pipeline.crypto import generate_key
+from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.consolidate import (
     CurrencyConverter,
     Holding,
@@ -48,7 +48,6 @@ def _setup_storage(tmp_path: Path) -> None:
         "normalized/xtb_snapshot",
         "normalized/xtb_cdc",
         "normalized/consolidated_holdings",
-        "analytics/portfolio_allocation",
         "analytics/portfolio_holdings",
         "analytics/dividend_income",
         "analytics/interest_income",
@@ -70,8 +69,7 @@ def _setup_storage(tmp_path: Path) -> None:
 
 
 def _build_all_gold_tables(fernet_key: bytes) -> None:
-    """Write broker snapshots, build consolidated_holdings, allocation, holdings."""
-    from pipeline.analytics.allocation import allocate_percentages
+    """Write broker snapshots, build consolidated_holdings, holdings."""
 
     config = get_storage()
 
@@ -104,12 +102,14 @@ def _build_all_gold_tables(fernet_key: bytes) -> None:
     )
 
     # Build analytics tables
-    allocate_percentages(fernet_key=fernet_key)
     build_portfolio_holdings(fernet_key=fernet_key)
 
 
 def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
-    """Write minimal CDC analytics tables so the report has data for charts."""
+    """Write minimal CDC analytics tables so the report has data for charts.
+
+    Value columns (cash_amount, target_value) are Fernet-encrypted as pa.binary().
+    """
     config = get_storage()
     now = datetime.now(timezone.utc)
 
@@ -127,8 +127,8 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
             "description": ["Vanguard FTSE All-World"],
             "security_ccy": ["EUR"],
             "instrument_ccy": [None],
-            "cash_amount": [42.5],
-            "target_value": [42.5],
+            "cash_amount": [encrypt_float(42.5, fernet_key)],
+            "target_value": [encrypt_float(42.5, fernet_key)],
             "target_ccy": ["EUR"],
             "event_count": [1],
         },
@@ -150,8 +150,8 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
             "period_quarter": ["2026-Q2"],
             "broker": ["IBKR"],
             "security_ccy": ["USD"],
-            "cash_amount": [35.0],
-            "target_value": [31.5],
+            "cash_amount": [encrypt_float(35.0, fernet_key)],
+            "target_value": [encrypt_float(31.5, fernet_key)],
             "target_ccy": ["EUR"],
             "event_count": [1],
         },
@@ -174,8 +174,8 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
             "broker": ["IBKR"],
             "event_type": ["DEPOSIT"],
             "security_ccy": ["EUR"],
-            "cash_amount": [5000.0],
-            "target_value": [5000.0],
+            "cash_amount": [encrypt_float(5000.0, fernet_key)],
+            "target_value": [encrypt_float(5000.0, fernet_key)],
             "target_ccy": ["EUR"],
             "event_count": [1],
         },
@@ -209,6 +209,16 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
     )
 
 
+@pytest.fixture()
+def fernet_key(tmp_path: Path) -> bytes:
+    """Generate a Fernet key and write it to the test encryption key file."""
+    key = generate_key()
+    key_file = tmp_path / ".secrets" / "encryption.key"
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    key_file.write_bytes(key)
+    return key
+
+
 def _make_args(output_path: str, **kwargs) -> argparse.Namespace:
     """Create an argparse.Namespace for cmd_report."""
     return argparse.Namespace(
@@ -221,9 +231,8 @@ def _make_args(output_path: str, **kwargs) -> argparse.Namespace:
 class TestCmdReport:
     """Integration tests for the report subcommand."""
 
-    def test_returns_zero_and_writes_file(self, tmp_path: Path):
+    def test_returns_zero_and_writes_file(self, fernet_key: bytes, tmp_path: Path):
         """cmd_report returns 0 and creates an HTML file."""
-        fernet_key = generate_key()
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
@@ -235,9 +244,8 @@ class TestCmdReport:
         assert Path(output).exists()
         assert Path(output).stat().st_size > 0
 
-    def test_report_contains_section_markers(self, tmp_path: Path):
+    def test_report_contains_section_markers(self, fernet_key: bytes, tmp_path: Path):
         """HTML contains id markers for all four sections."""
-        fernet_key = generate_key()
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
@@ -251,9 +259,8 @@ class TestCmdReport:
         assert 'id="cash-flow"' in html
         assert 'id="data-quality"' in html
 
-    def test_report_embeds_plotly_js_once(self, tmp_path: Path):
+    def test_report_embeds_plotly_js_once(self, fernet_key: bytes, tmp_path: Path):
         """Plotly.js bundle is inlined exactly once with multiple charts."""
-        fernet_key = generate_key()
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
@@ -266,9 +273,8 @@ class TestCmdReport:
         plotly_chart_count = html.count("Plotly.newPlot")
         assert plotly_chart_count >= 1, "At least one Plotly chart should be present"
 
-    def test_partial_data_still_renders(self, tmp_path: Path):
+    def test_partial_data_still_renders(self, fernet_key: bytes, tmp_path: Path):
         """Report renders even if dividend_income is missing."""
-        fernet_key = generate_key()
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
@@ -298,9 +304,8 @@ class TestCmdReport:
 
         assert result == 1
 
-    def test_default_output_path(self, tmp_path: Path, monkeypatch):
+    def test_default_output_path(self, fernet_key: bytes, tmp_path: Path, monkeypatch):
         """Default output path is data/report.html relative to CWD."""
-        fernet_key = generate_key()
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
@@ -314,9 +319,8 @@ class TestCmdReport:
         assert result == 0
         assert (tmp_path / "data" / "report.html").exists()
 
-    def test_failed_table_hides_its_section(self, tmp_path: Path):
+    def test_failed_table_hides_its_section(self, fernet_key: bytes, tmp_path: Path):
         """Report hides sections whose dependency tables have FAIL in DQ."""
-        fernet_key = generate_key()
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
@@ -365,19 +369,18 @@ class TestCmdReport:
         # Write only a DQ table with FAILs for all gold tables
         dq_fail = pa.table(
             {
-                "checked_at": [now] * 5,
+                "checked_at": [now] * 4,
                 "table_name": [
                     "portfolio_holdings",
-                    "portfolio_allocation",
                     "dividend_income",
                     "interest_income",
                     "cash_flow_summary",
                 ],
-                "check_name": ["schema"] * 5,
-                "status": ["FAIL"] * 5,
-                "details": ["Schema mismatch"] * 5,
-                "threshold": [None] * 5,
-                "actual": [None] * 5,
+                "check_name": ["schema"] * 4,
+                "status": ["FAIL"] * 4,
+                "details": ["Schema mismatch"] * 4,
+                "threshold": [None] * 4,
+                "actual": [None] * 4,
             },
             schema=data_quality_schema,
         )

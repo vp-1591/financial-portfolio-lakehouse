@@ -57,8 +57,11 @@
         {% if charts.allocation_broker %}
         {{ charts.allocation_broker | safe }}
         {% endif %}
-        {% if charts.allocation_position_type %}
-        {{ charts.allocation_position_type | safe }}
+        {% if equity_cash_card_html %}
+        {{ equity_cash_card_html | safe }}
+        {% endif %}
+        {% if charts.positions %}
+        {{ charts.positions | safe }}
         {% endif %}
         {% if charts.allocation_currency %}
         {{ charts.allocation_currency | safe }}

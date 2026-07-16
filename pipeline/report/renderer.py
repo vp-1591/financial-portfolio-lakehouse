@@ -12,6 +12,7 @@ import html
 import logging
 import sys
 import webbrowser
+import polars as pl
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,10 +22,10 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pipeline.report.charts import (
     allocation_by_broker,
     allocation_by_currency,
-    allocation_by_position_type,
     cash_flow_breakdown,
     data_quality_chart,
     passive_income_timeline,
+    positions_chart,
 )
 from pipeline.report.loader import load_all
 
@@ -52,8 +53,6 @@ def _summary_table(holdings) -> str:
 
     Returns a string of HTML (safe to inject via |safe in the template).
     """
-    import polars as pl
-
     if holdings.is_empty():
         return ""
 
@@ -97,6 +96,32 @@ def _summary_table(holdings) -> str:
         + "</table>"
     )
     return html
+
+
+def _equity_cash_card(holdings: pl.DataFrame) -> str:
+    """Build an EQUITY/CASH summary card as compact HTML."""
+    if holdings.is_empty():
+        return ""
+
+    agg = holdings.group_by("position_type").agg(pl.col("percentage").sum())
+    equity_pct = 0.0
+    cash_pct = 0.0
+    for row in agg.iter_rows(named=True):
+        if row["position_type"] == "EQUITY":
+            equity_pct = round(row["percentage"], 1)
+        elif row["position_type"] == "CASH":
+            cash_pct = round(row["percentage"], 1)
+
+    return (
+        f'<span class="metric-card">'
+        f'<span class="label">Equity</span> '
+        f'<span class="value">{equity_pct}%</span>'
+        f"</span> "
+        f'<span class="metric-card">'
+        f'<span class="label">Cash</span> '
+        f'<span class="value">{cash_pct}%</span>'
+        f"</span>"
+    )
 
 
 def _passive_income_table(dividends, interest) -> str:
@@ -173,8 +198,6 @@ def _dq_failed_tables(dq) -> set[str]:
 
     Returns an empty set if *dq* is empty.
     """
-    import polars as pl
-
     if dq.is_empty():
         return set()
     failed = dq.filter(pl.col("status") == "FAIL")
@@ -191,7 +214,6 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     """
     tables = load_all()
     holdings = tables["portfolio_holdings"]
-    allocation = tables["portfolio_allocation"]
     dividends = tables["dividend_income"]
     interest = tables["interest_income"]
     cash_flow = tables["cash_flow_summary"]
@@ -201,9 +223,7 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     # A section is hidden when ALL its dependency tables are empty OR when any
     # dependency table has a FAIL in the DQ results.
     failed = _dq_failed_tables(dq)
-    show_portfolio = (not holdings.is_empty() or not allocation.is_empty()) and not (
-        failed & {"portfolio_holdings", "portfolio_allocation"}
-    )
+    show_portfolio = not holdings.is_empty() and "portfolio_holdings" not in failed
     show_passive = (not dividends.is_empty() or not interest.is_empty()) and not (
         failed & {"dividend_income", "interest_income"}
     )
@@ -219,36 +239,20 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     # --- Portfolio summary ---
     summary_cards: list[dict[str, str]] = []
     summary_table_html = ""
+    equity_cash_card_html = ""
     base_cur = base_currency
 
     if show_portfolio:
-        use_holdings = not holdings.is_empty()
-        if use_holdings and not base_cur:
+        if not base_cur:
             base_cur = holdings["target_ccy"][0]
 
-        if use_holdings:
-            total = holdings["target_value"].sum()
-            summary_cards.append(
-                {"label": "Total Value", "value": f"{total:,.2f} {base_cur}"}
-            )
+        total = holdings["target_value"].sum()
+        summary_cards.append(
+            {"label": "Total Value", "value": f"{total:,.2f} {base_cur}"}
+        )
 
-        if use_holdings:
-            summary_table_html = _summary_table(holdings)
-        elif not allocation.is_empty():
-            summary_table_html = "<p><em>Portfolio holdings not available; showing allocation percentages only.</em></p>"
-            rows_html = []
-            for row in allocation.sort("percentage", descending=True).iter_rows(
-                named=True
-            ):
-                rows_html.append(
-                    f"<tr><td>{row['ticker']}</td><td>{row['broker']}</td>"
-                    f"<td>{row['percentage']:.2f}%</td></tr>"
-                )
-            summary_table_html += (
-                "<table><tr><th>Ticker</th><th>Broker</th><th>%</th></tr>"
-                + "".join(rows_html)
-                + "</table>"
-            )
+        summary_table_html = _summary_table(holdings)
+        equity_cash_card_html = _equity_cash_card(holdings)
 
     # --- Charts ---
     fig_allocation_broker = (
@@ -256,8 +260,8 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
         if show_portfolio and not holdings.is_empty()
         else None
     )
-    fig_allocation_type = (
-        allocation_by_position_type(holdings)
+    fig_positions = (
+        positions_chart(holdings)
         if show_portfolio and not holdings.is_empty()
         else None
     )
@@ -275,7 +279,7 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
         f
         for f in [
             fig_allocation_broker,
-            fig_allocation_type,
+            fig_positions,
             fig_allocation_currency,
             fig_passive,
             fig_cash_flow,
@@ -288,7 +292,7 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     # Map chart names to HTML, distributing the inline plotly.js correctly
     chart_names = [
         "allocation_broker",
-        "allocation_position_type",
+        "positions",
         "allocation_currency",
         "passive_income",
         "cash_flow",
@@ -296,7 +300,7 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     ]
     figs_by_name = {
         "allocation_broker": fig_allocation_broker,
-        "allocation_position_type": fig_allocation_type,
+        "positions": fig_positions,
         "allocation_currency": fig_allocation_currency,
         "passive_income": fig_passive,
         "cash_flow": fig_cash_flow,
@@ -333,6 +337,7 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         summary_cards=summary_cards,
         summary_table_html=summary_table_html,
+        equity_cash_card_html=equity_cash_card_html,
         charts=charts,
         passive_income_table_html=passive_income_table_html,
         dq_summary_html=dq_summary_html,

@@ -5,5 +5,5 @@ from pipeline.analytics.models import (  # noqa: F401
     data_quality_schema,
     dividend_income_schema,
     interest_income_schema,
-    portfolio_allocation_schema,
+    portfolio_holdings_schema,
 )

@@ -1,28 +1,22 @@
 """PyArrow schemas for analytics tables.
 
-Phase 2 (Currency Unification) replaces overloaded column names:
+Phase 2 (Currency Unification) replaced overloaded column names:
 - ``value_currency`` → ``security_ccy`` (instrument's trading currency)
 - ``value`` / ``value_base`` → ``security_value`` / ``target_value``
 - ``base_currency`` → ``target_ccy`` (always EUR)
 - ``amount_base`` → ``target_value``
 - ``security_currency`` → ``security_ccy``
+
+Phase 3 (Gold Encryption): Value columns (``security_value``, ``target_value``,
+``cash_amount``) are stored as ``pa.binary()`` — Fernet-encrypted using
+``encrypt_float()``.  Metadata columns (``ticker``, ``broker``, ``security_ccy``,
+``percentage``, ``position_type``, etc.) remain plaintext so that allocation
+charts and the positions chart render without the decryption key.
 """
 
 from __future__ import annotations
 
 import pyarrow as pa
-
-portfolio_allocation_schema = pa.schema(
-    [
-        pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
-        pa.field("ticker", pa.string()),
-        pa.field("percentage", pa.float64()),
-        pa.field("broker", pa.string()),
-        pa.field("identifier", pa.string()),
-        pa.field("security_ccy", pa.string()),
-        pa.field("description", pa.string()),
-    ]
-)
 
 portfolio_holdings_schema = pa.schema(
     [
@@ -32,11 +26,14 @@ portfolio_holdings_schema = pa.schema(
         pa.field(
             "security_ccy", pa.string()
         ),  # native holding currency (from snapshot)
-        pa.field("security_value", pa.float64()),  # decrypted native-currency value
         pa.field(
-            "target_value", pa.float64()
-        ),  # value in target_ccy (from consolidated_holdings)
+            "security_value", pa.binary()
+        ),  # Fernet-encrypted native-currency value
+        pa.field("target_value", pa.binary()),  # Fernet-encrypted value in target_ccy
         pa.field("target_ccy", pa.string()),  # == consolidated_holdings.target_ccy
+        pa.field(
+            "percentage", pa.float64()
+        ),  # (target_value / total_target_value) * 100 — plaintext
         pa.field("position_type", pa.string()),  # EQUITY | CASH
         pa.field("identifier", pa.string()),
         pa.field("description", pa.string()),
@@ -70,8 +67,8 @@ dividend_income_schema = pa.schema(
         pa.field(
             "instrument_ccy", pa.string(), nullable=True
         ),  # Instrument's trading currency
-        pa.field("cash_amount", pa.float64()),
-        pa.field("target_value", pa.float64(), nullable=True),
+        pa.field("cash_amount", pa.binary()),  # Fernet-encrypted
+        pa.field("target_value", pa.binary(), nullable=True),  # Fernet-encrypted
         pa.field("target_ccy", pa.string(), nullable=True),
         pa.field("event_count", pa.int64()),
     ]
@@ -84,8 +81,8 @@ interest_income_schema = pa.schema(
         pa.field("period_quarter", pa.string()),  # YYYY-QN
         pa.field("broker", pa.string()),
         pa.field("security_ccy", pa.string()),
-        pa.field("cash_amount", pa.float64()),
-        pa.field("target_value", pa.float64(), nullable=True),
+        pa.field("cash_amount", pa.binary()),  # Fernet-encrypted
+        pa.field("target_value", pa.binary(), nullable=True),  # Fernet-encrypted
         pa.field("target_ccy", pa.string(), nullable=True),
         pa.field("event_count", pa.int64()),
     ]
@@ -99,8 +96,8 @@ cash_flow_summary_schema = pa.schema(
         pa.field("broker", pa.string()),
         pa.field("event_type", pa.string()),
         pa.field("security_ccy", pa.string()),
-        pa.field("cash_amount", pa.float64()),
-        pa.field("target_value", pa.float64(), nullable=True),
+        pa.field("cash_amount", pa.binary()),  # Fernet-encrypted
+        pa.field("target_value", pa.binary(), nullable=True),  # Fernet-encrypted
         pa.field("target_ccy", pa.string(), nullable=True),
         pa.field("event_count", pa.int64()),
     ]

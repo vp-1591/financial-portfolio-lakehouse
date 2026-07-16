@@ -19,7 +19,7 @@ import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
 from pipeline.analytics.models import portfolio_holdings_schema
-from pipeline.crypto import decrypt_float
+from pipeline.crypto import decrypt_float, encrypt_float
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,32 @@ def build_portfolio_holdings(
             "security_value_decrypted": "security_value",
             "target_value_decrypted": "target_value",
         }
+    )
+
+    # Compute percentage: (target_value / total_target_value) * 100, rounded to 4 dp
+    total_target = result["target_value"].sum()
+    if total_target == 0:
+        result = result.with_columns(pl.lit(None).alias("percentage"))
+    else:
+        result = result.with_columns(
+            ((pl.col("target_value") / total_target) * 100).round(4).alias("percentage")
+        )
+
+    # Encrypt value columns for gold-layer storage (percentage stays plaintext).
+    # Decision: docs/adr/0084-encrypt-gold-value-columns.md
+    result = result.with_columns(
+        pl.col("security_value")
+        .map_elements(
+            lambda v: encrypt_float(v, fernet_key) if v is not None else None,
+            return_dtype=pl.Binary,
+        )
+        .alias("security_value"),
+        pl.col("target_value")
+        .map_elements(
+            lambda v: encrypt_float(v, fernet_key) if v is not None else None,
+            return_dtype=pl.Binary,
+        )
+        .alias("target_value"),
     )
 
     # Convert to PyArrow and cast to match the schema
