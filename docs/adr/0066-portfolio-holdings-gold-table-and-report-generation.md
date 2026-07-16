@@ -1,5 +1,7 @@
 # 0066 — Portfolio Holdings Gold Table and Report Generation
 
+> **Superseded by [ADR 0082](./0082-fold-portfolio-allocation-into-holdings.md)** — The `portfolio_allocation` fallback was removed; `portfolio_holdings` now includes percentages directly.
+
 ## Context
 
 The reporting baseline roadmap (Phase 3) requires a self-contained HTML report showing

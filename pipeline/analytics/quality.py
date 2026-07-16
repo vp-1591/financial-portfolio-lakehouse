@@ -162,6 +162,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "calculated_at",
         "broker",
         "ticker",
+        "percentage",
         "security_ccy",
         "security_value",
         "target_value",

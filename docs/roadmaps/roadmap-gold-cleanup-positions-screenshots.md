@@ -26,7 +26,7 @@ Consolidate `portfolio_allocation` into `portfolio_holdings` (removing a vestigi
 - [ ] The degraded fallback path (plain HTML table from `portfolio_allocation` when holdings are empty) is removed from the renderer
 - [ ] Data quality validation no longer references `portfolio_allocation`
 - [ ] All existing tests pass after the merge; tests covering `portfolio_allocation` are updated or removed
-- [ ] Gold-layer value columns (`security_value`, `target_value`, `cash_amount`, `gross_amount`, `fee_amount`, `tax_amount`, `price`, `quantity`, `target_fx_rate`) are Fernet-encrypted at rest, matching the normalized layer pattern; non-value columns (`percentage`, `ticker`, `broker`, `security_ccy`, etc.) remain plaintext
+- [ ] Gold-layer value columns (`security_value`, `target_value`, `cash_amount`) are Fernet-encrypted at rest, matching the normalized layer pattern; non-value columns (`percentage`, `ticker`, `broker`, `security_ccy`, etc.) remain plaintext
 - [ ] Allocation donut charts (by broker, by currency) and positions chart render from the plaintext `percentage` column without needing the decryption key; absolute-value charts (Passive Income, Cash Flow, Total Value card) decrypt at render time
 - [ ] An ADR documents the gold-layer encryption decision (superseding ADR 0003's "Analytics layer: no encryption")
 - [ ] `pipeline/query.py` decrypts gold value columns on read so DuckDB ad-hoc queries still work
@@ -46,7 +46,7 @@ Consolidate `portfolio_allocation` into `portfolio_holdings` (removing a vestigi
 
 ## Phases
 
-### Phase 1 — Fold `portfolio_allocation` into `portfolio_holdings` *[status: planned]*
+### Phase 1 — Fold `portfolio_allocation` into `portfolio_holdings` *[status: done]*
 
 Merge the vestigial `portfolio_allocation` gold table into `portfolio_holdings` by adding a `percentage` column, then remove the allocation table entirely.
 
@@ -78,7 +78,7 @@ Merge the vestigial `portfolio_allocation` gold table into `portfolio_holdings` 
 
 ---
 
-### Phase 2 — Replace "Allocation by Position Type" with "Positions" chart *[status: planned]*
+### Phase 2 — Replace "Allocation by Position Type" with "Positions" chart *[status: done]*
 
 Replace the EQUITY/CASH donut with a horizontal bar chart showing all holdings ranked by portfolio weight. The CASH bar at the bottom makes the EQUITY/CASH split visible at a glance, subsuming the old donut. Add an EQUITY/CASH summary card (e.g. "Equity 87.3% · Cash 12.7%") to preserve the single number the donut was showing.
 

@@ -76,7 +76,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0063 | Simplify ECR Tagging Strategy | 2026-07-12 | active | — |
 | 0064 | Data Quality Framework | 2026-07-12 | superseded | 0070 |
 | 0065 | CDC Analytics Tables and Unified Analytics Command | 2026-07-12 | active | — |
-| 0066 | Portfolio Holdings Gold Table and Report Generation | 2026-07-13 | active | — |
+| 0066 | Portfolio Holdings Gold Table and Report Generation | 2026-07-13 | superseded | 0082 |
 | 0067 | Fix Step Function Failure Logging in Deploy Workflow | 2026-07-13 | superseded | 0081 |
 | 0068 | Add Gitleaks Secret Scanning to CI | 2026-07-13 | active | — |
 | 0069 | Fix IBKR CDC Triplication and Date Parsing | 2026-07-13 | active | — |

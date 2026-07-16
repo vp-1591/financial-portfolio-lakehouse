@@ -346,10 +346,10 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
 
 def cmd_analytics(args: argparse.Namespace) -> int:
-    """Build all analytics tables: portfolio allocation and CDC analytics.
+    """Build all analytics tables: portfolio holdings (with percentages) and CDC analytics.
 
-    Runs allocation first, then CDC analytics tables (dividend income,
-    interest income, cash flow summary).  If CDC events are not
+    Builds portfolio holdings first, then CDC analytics tables (dividend
+    income, interest income, cash flow summary).  If CDC events are not
     available, logs a warning and continues — holdings still succeeds.
     """
     import csv
@@ -612,7 +612,7 @@ def main() -> int:
     common_parser.add_argument(
         "--target-currency",
         default="EUR",
-        help="Target currency for consolidation/allocation (default: EUR)",
+        help="Target currency for consolidation (default: EUR)",
     )
 
     parser = argparse.ArgumentParser(
@@ -691,7 +691,7 @@ def main() -> int:
     analytics_parser = subparsers.add_parser(
         "analytics",
         parents=[common_parser],
-        help="Build all analytics tables (allocation, dividend income, interest income, cash flow summary)",
+        help="Build all analytics tables (portfolio holdings, dividend income, interest income, cash flow summary)",
     )
     analytics_parser.add_argument(
         "--fx-rate",
