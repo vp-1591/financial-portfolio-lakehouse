@@ -18,13 +18,14 @@ Enable **Flex Web Service Configuration** and generate a token.
 |----------|---------|
 | `IBKR_FLEX_TOKEN` | Flex Web Service token |
 | `IBKR_FLEX_QUERY_ID` | Flex Query ID |
+| `IBKR_FLEX_CDC_QUERY_ID` | *Optional.* Separate Flex Query ID for CDC data. Falls back to `IBKR_FLEX_QUERY_ID` if not set |
 | `IBKR_FLEX_BASE_URL` | Base URL (default: `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService`) |
 | `IBKR_ENABLED` | Enable/disable connector (default: enabled) |
 
 ### Demo mode
 
-When `DEMO=true`, the connector uses `IBKR_FLEX_TOKEN_DEMO` and
-`IBKR_FLEX_QUERY_ID_DEMO` instead.
+When `DEMO=true`, the connector uses `IBKR_FLEX_TOKEN_DEMO`,
+`IBKR_FLEX_QUERY_ID_DEMO`, and `IBKR_FLEX_CDC_QUERY_ID_DEMO` instead.
 
 ## Detailed field configuration
 

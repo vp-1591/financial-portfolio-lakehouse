@@ -7,47 +7,37 @@ analytics) with Delta tables and Fernet encryption for sensitive financial data.
 
 ### Data flow
 
-```mermaid
-flowchart TD
-    classDef source fill:#4472c4,stroke:#2f5496,color:#fff
-    classDef raw fill:#ed7d31,stroke:#c55a11,color:#fff
-    classDef norm fill:#70ad47,stroke:#4f7d28,color:#fff
-    classDef fx fill:#7030a0,stroke:#5b2280,color:#fff
-    classDef analytics fill:#5b9bd5,stroke:#2e75b6,color:#fff
+Broker data flows through three layers:
 
-    IBKR["IBKR Flex Web Service<br/>positions · cash"]:::source
-    T212["Trading 212 API<br/>account · positions · instruments"]:::source
-    XTB["XTB Excel Report<br/>open positions · cash ops"]:::source
+1. **Raw** — Encrypted broker payloads stored as-is, with fetch metadata.
+   Each connector writes snapshot and CDC (change data capture) payloads.
+2. **Normalized** — Structured positions, cash, and CDC events parsed from
+   raw payloads. Financial values remain Fernet-encrypted. Cross-broker
+   holdings are consolidated into `consolidated_holdings`; CDC events are
+   merged into `cdc_events` with currency conversion applied.
+3. **Analytics** — Portfolio-level aggregations. Encrypted values are summed,
+   percentages are calculated and stored in plaintext. CDC-derived tables
+   provide dividend, interest, and cash flow breakdowns.
 
-    IBKR -->|"encrypt payloads"| RS["ibkr<br/>snapshot · cdc"]:::raw
-    T212 -->|"encrypt payloads"| RT["trading212<br/>snapshot · cdc"]:::raw
-    XTB -->|"parse & encrypt"| RX["xtb<br/>snapshot · cdc"]:::raw
+For the full Mermaid diagram showing every table, edge label, and report
+chart connection, see [Table Lineage](table-lineage.md).
 
-    RS -->|"parse · normalize · re-encrypt values"| NS["ibkr_snapshot"]:::norm
-    RT -->|"parse · normalize · re-encrypt values"| NT["trading212_snapshot"]:::norm
-    RX -->|"parse · normalize · re-encrypt values"| NX["xtb_snapshot"]:::norm
+### Layers and tables
 
-    NS -->|"convert currency · normalize tickers · ISIN overrides"| CH["consolidated_holdings"]:::norm
-    NT --> CH
-    NX --> CH
-
-    FX1["Frankfurter API"]:::fx -->|"FX rates"| CH
-    FX2["Yahoo Finance"]:::fx -->|"fallback"| CH
-
-    CH -->|"sum values · calculate %"| PH["portfolio_holdings<br/>(values encrypted, percentage plaintext)"]:::analytics
-```
-
-Each layer stores data in Delta tables under `data/`:
-
-| Layer | Node color | Table | Contents |
-|-------|-----------|-------|----------|
-| 🔵 Sources | Blue | — | Broker APIs and files |
-| 🟠 Raw | Orange | `raw/{broker}_snapshot` | Encrypted API payloads with fetch metadata |
-| 🟠 Raw | Orange | `raw/{broker}_cdc` | Encrypted change-data-capture payloads |
-| 🟢 Normalized | Green | `normalized/{broker}_snapshot` | Structured positions & cash rows; financial values remain Fernet-encrypted |
-| 🟢 Normalized | Green | `normalized/consolidated_holdings` | Cross-broker holdings converted to target currency; financial values remain Fernet-encrypted |
-| 🟣 FX Rates | Purple | — | Frankfurter API (primary) / Yahoo Finance (fallback) |
-| 🔵 Analytics | Light blue | `analytics/portfolio_holdings` | Portfolio holdings with encrypted values and plaintext percentages |
+| Layer | Table | Contents |
+|-------|-------|----------|
+| 🔵 Sources | — | Broker APIs and files |
+| 🟠 Raw | `raw/{broker}_snapshot` | Encrypted API payloads with fetch metadata |
+| 🟠 Raw | `raw/{broker}_cdc` | Encrypted change-data-capture payloads |
+| 🟢 Normalized | `normalized/{broker}_snapshot` | Structured positions & cash rows; financial values remain Fernet-encrypted |
+| 🟢 Normalized | `normalized/{broker}_cdc` | Structured CDC events per broker |
+| 🟢 Normalized | `normalized/consolidated_holdings` | Cross-broker holdings converted to target currency; financial values remain Fernet-encrypted |
+| 🟢 Normalized | `normalized/cdc_events` | Merged CDC events with currency conversion applied |
+| 🔵 Analytics | `analytics/portfolio_holdings` | Portfolio holdings with encrypted values and plaintext percentages |
+| 🔵 Analytics | `analytics/dividend_income` | Dividends by period, broker, and security |
+| 🔵 Analytics | `analytics/interest_income` | Interest by period and broker |
+| 🔵 Analytics | `analytics/cash_flow_summary` | All CDC events aggregated by period and type |
+| 🔵 Analytics | `analytics/data_quality` | Freshness and row-count validation badges |
 
 ### Table naming convention
 
@@ -57,12 +47,23 @@ Table names follow the `{name}_{layer}` convention:
 |-------|-------|
 | `ibkr_snapshot_raw` | Raw |
 | `ibkr_snapshot_normalized` | Normalized |
+| `ibkr_cdc_raw` | Raw |
+| `ibkr_cdc_normalized` | Normalized |
 | `trading212_snapshot_raw` | Raw |
 | `trading212_snapshot_normalized` | Normalized |
+| `trading212_cdc_raw` | Raw |
+| `trading212_cdc_normalized` | Normalized |
 | `xtb_snapshot_raw` | Raw |
 | `xtb_snapshot_normalized` | Normalized |
+| `xtb_cdc_raw` | Raw |
+| `xtb_cdc_normalized` | Normalized |
 | `consolidated_holdings_normalized` | Normalized |
+| `cdc_events_normalized` | Normalized |
 | `portfolio_holdings_analytics` | Analytics |
+| `dividend_income_analytics` | Analytics |
+| `interest_income_analytics` | Analytics |
+| `cash_flow_summary_analytics` | Analytics |
+| `data_quality_analytics` | Analytics |
 
 ### Encryption
 

@@ -20,7 +20,7 @@ pip install -e ".[pipeline]"
 docker compose build
 docker compose up minio -d
 docker compose run --rm pipeline full
-docker compose run --rm pipeline query "SELECT * FROM portfolio_allocation_analytics"
+docker compose run --rm pipeline query "SELECT * FROM portfolio_holdings_analytics"
 ```
 
 Data persists in the `minio-data` Docker volume. Secrets come from `.env`

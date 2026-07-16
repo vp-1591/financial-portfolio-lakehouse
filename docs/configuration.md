@@ -17,8 +17,9 @@ inline documentation.
 
 ### Variable categories
 
-- **Broker secrets** — `IBKR_FLEX_TOKEN`, `T212_API_KEY`, `T212_API_SECRET`, and
-  their `_ENABLED` toggles
+- **Broker secrets** — `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`,
+  `IBKR_FLEX_CDC_QUERY_ID` (optional, falls back to `IBKR_FLEX_QUERY_ID`),
+  `T212_API_KEY`, `T212_API_SECRET`, and their `_ENABLED` toggles
 - **Encryption** — `ENCRYPTION_KEY` (Fernet key, generated via `keygen` command)
 - **Storage** — `STORAGE_TYPE`, `S3_BUCKET`, AWS credentials, S3 endpoint
 - **Demo mode** — `DEMO` toggle and `_DEMO`-suffixed variables for each secret
@@ -66,9 +67,11 @@ For API key permissions, see [API Key Permissions](trading212/api-key-permission
 ### XTB
 
 XTB does not provide a live API. Data is ingested from Excel report exports
-uploaded to the `xtb-report-sample/` directory. No API key is required.
+provided via the `--xtb-file` CLI argument. No API key is required.
 
 Required environment variable: `XTB_ENABLED` (optional, enabled by default).
+
+For detailed usage, see [XTB Excel Reports](brokers/xtb.md).
 
 ## Storage Configuration
 
@@ -99,9 +102,10 @@ For S3-compatible stores like MinIO, set `S3_ENDPOINT_URL` to the server
 URL (e.g. `http://minio:9000`) and `S3_ALLOW_HTTP=true` to allow non-HTTPS
 connections.
 
-The `keygen` command only works in local mode. For S3, set
-`ENCRYPTION_KEY` as an environment variable — **the encryption
-key is never stored in S3.**
+In local mode, the `keygen` command generates a Fernet key and writes it to
+`.secrets/encryption.key`. In S3 mode, it prints instructions for setting
+`ENCRYPTION_KEY` as an environment variable — **the encryption key is never
+stored in S3.**
 
 ## Demo Mode
 

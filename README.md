@@ -165,7 +165,7 @@ Run `ruff check --fix .` and `ruff format .` before committing.
 - [Table Lineage](docs/table-lineage.md) — comprehensive Mermaid lineage diagram
 - [Configuration](docs/configuration.md) — env vars, secrets, broker setup
 - [Broker Setup](docs/brokers/ibkr.md) — IBKR, Trading 212, XTB
-- [ADR Index](docs/adr/README.md) — 85 architecture decision records
+- [ADR Index](docs/adr/README.md) — 86 architecture decision records
 - [Roadmap Index](docs/roadmaps/README.md) — active and completed roadmaps
 
 ## License
