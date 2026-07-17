@@ -18,6 +18,8 @@ The following `pyrightconfig.json` suppressions are all for library type stubs i
 - `reportAttributeAccessIssue` — Polars `Series`/`DataFrame` union, Plotly `Figure` attributes
 - `reportCallIssue` — Polars `.sort()` parameter, other library API mismatches
 
+The `pipeline/migrations/` directory is excluded from pyright because migration scripts import `boto3`, which is not a project dependency.
+
 Type errors that are library-stubs issues (Polars `filter(Expr)`, Plotly `include_plotlyjs`) are suppressed with `# type: ignore[arg-type]` comments at the call site rather than globally.
 
 ### Type errors fixed

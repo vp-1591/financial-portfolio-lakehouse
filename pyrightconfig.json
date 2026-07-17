@@ -2,6 +2,7 @@
   "venvPath": ".",
   "venv": ".venv",
   "include": ["pipeline", "tests"],
+  "exclude": ["pipeline/migrations"],
   "pythonVersion": "3.11",
   "reportPrivateImportUsage": false,
   "reportOptionalOperand": false,
