@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Pre-tool-use hook that blocks git commit/push on main/master branches.
 
-Reads JSON from stdin: {"tool": "...", "tool_input": {...}}.
+Reads JSON from stdin: {"tool_name": "...", "tool_input": {...}}.
 Exits with code 0 (allow) or 2 (block).
 """
 

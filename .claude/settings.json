@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.venv/Scripts/python.exe \"${CLAUDE_PROJECT_DIR}/.claude/hooks/block-main-writes.py\""
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.venv/Scripts/python.exe \"${CLAUDE_PROJECT_DIR}/.claude/hooks/block-dotenv-reads.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.venv/Scripts/python.exe \"${CLAUDE_PROJECT_DIR}/.claude/hooks/block-dotenv-reads.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
