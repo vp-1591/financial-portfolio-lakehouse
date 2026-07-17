@@ -44,7 +44,7 @@ def _figures_to_html(figures: list) -> list[str]:
     parts: list[str] = []
     for i, fig in enumerate(figures):
         include = "inline" if i == 0 else False
-        parts.append(pio.to_html(fig, include_plotlyjs=include, full_html=False))
+        parts.append(pio.to_html(fig, include_plotlyjs=include, full_html=False))  # type: ignore[arg-type]
     return parts
 
 

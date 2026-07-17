@@ -12,6 +12,19 @@ class TestRegistry:
         class FakeConnector:
             name = "fake"
             display_name = "Fake"
+            enabled_env_var = "FAKE_ENABLED"
+
+            def fetch_kwargs(self, args):
+                return {}
+
+            def fetch_cdc_kwargs(self):
+                return {}
+
+            def required_secrets(self):
+                return []
+
+            def extract_holdings(self, df, fernet_key):
+                return []
 
             def fetch_snapshot(self, **kwargs):
                 raise NotImplementedError

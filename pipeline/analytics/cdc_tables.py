@@ -29,6 +29,15 @@ from pipeline.crypto import decrypt_float, encrypt_float
 logger = logging.getLogger(__name__)
 
 
+def _resolve_fernet_key(fernet_key: bytes | None) -> bytes:
+    """Return *fernet_key* as-is, or load from the default key file."""
+    if fernet_key is None:
+        from pipeline.crypto import load_key
+
+        return load_key()
+    return fernet_key
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -177,10 +186,7 @@ def _read_cdc_events(
 
         table_path = get_storage().normalized_path("cdc_events")
 
-    if fernet_key is None:
-        from pipeline.crypto import load_key
-
-        fernet_key = load_key()
+    fernet_key = _resolve_fernet_key(fernet_key)
 
     from pipeline.storage import get_storage
 
@@ -196,6 +202,8 @@ def _read_cdc_events(
 
     arrow_table = dt.to_pyarrow_table()
     df = pl.from_arrow(arrow_table)
+    # pl.from_arrow returns DataFrame | Series; a PyArrow Table always yields a DataFrame.
+    assert isinstance(df, pl.DataFrame)
 
     # Decrypt all binary columns.
     for col, alias in _ENCRYPTED_COLUMNS:
@@ -267,6 +275,7 @@ def build_dividend_income(
 
     Groups DIVIDEND events by period, broker, security, and currency.
     """
+    fernet_key = _resolve_fernet_key(fernet_key)
     if analytics_path is None:
         from pipeline.storage import get_storage
 
@@ -391,6 +400,7 @@ def build_interest_income(
 
     Groups INTEREST events by period, broker, and currency.
     """
+    fernet_key = _resolve_fernet_key(fernet_key)
     if analytics_path is None:
         from pipeline.storage import get_storage
 
@@ -490,6 +500,7 @@ def build_cash_flow_summary(
 
     Groups all events by period, broker, event type, and currency.
     """
+    fernet_key = _resolve_fernet_key(fernet_key)
     if analytics_path is None:
         from pipeline.storage import get_storage
 

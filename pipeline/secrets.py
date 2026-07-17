@@ -56,6 +56,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import overload
 
 from dotenv import load_dotenv
 
@@ -192,6 +193,14 @@ def get_secret(name: str) -> str | None:
     the ``.env`` file has been loaded.
     """
     return os.environ.get(name)
+
+
+@overload
+def get_env(name: str, default: str) -> str: ...
+
+
+@overload
+def get_env(name: str, default: None = None) -> str | None: ...
 
 
 def get_env(name: str, default: str | None = None) -> str | None:
