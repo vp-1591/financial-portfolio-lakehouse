@@ -1,0 +1,12 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "include": ["pipeline", "tests"],
+  "pythonVersion": "3.11",
+  "reportPrivateImportUsage": false,
+  "reportOptionalOperand": false,
+  "reportOptionalSubscript": false,
+  "reportIndexIssue": false,
+  "reportAttributeAccessIssue": false,
+  "reportCallIssue": false
+}

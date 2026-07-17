@@ -178,7 +178,7 @@ class TestPositionsChart:
         )
         fig = positions_chart(df)
         assert fig.layout.title.text == "Positions"
-        assert len(fig.data) == 0  # no traces
+        assert len(fig.data) == 0  # no traces  # type: ignore[arg-type]
 
     def test_all_equity(self) -> None:
         """When all positions are EQUITY, all bars are green."""
@@ -268,7 +268,7 @@ class TestAllocationByCurrency:
 
         trace = fig.data[0]
         assert isinstance(trace, go.Pie)
-        labels = list(trace.labels)
+        labels = list(trace.labels)  # type: ignore[arg-type]
         assert "GBX" in labels
         assert "PLN" not in labels
 
@@ -337,7 +337,7 @@ class TestCashFlowBreakdown:
         fig = cash_flow_breakdown(df)
 
         assert fig.layout.title.text == "Cash Flow Breakdown"
-        assert len(fig.data) == 0  # empty figure, no traces
+        assert len(fig.data) == 0  # empty figure, no traces  # type: ignore[arg-type]
 
     def test_prefers_target_value_over_cash_amount(self) -> None:
         """Uses target_value column when it has non-null values."""
@@ -571,7 +571,7 @@ class TestPassiveIncomeTimeline:
         interest = _interest([{"period_month": "2026-01", "target_value": 25.0}])
         fig = passive_income_timeline(div, interest)
 
-        assert len(fig.data) == 2
+        assert len(fig.data) == 2  # type: ignore[arg-type]
         for bar in fig.data:
             assert bar.hovertemplate is not None
             assert "%{y:,.2f}" in bar.hovertemplate

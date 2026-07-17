@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from typing import Any
 
 import pyarrow as pa
 
@@ -100,6 +101,6 @@ def fetch_cdc_via_flex(
     )
 
 
-def fetch_cdc(**kwargs: object) -> pa.Table:
+def fetch_cdc(**kwargs: Any) -> pa.Table:
     """IBKR CDC fetch via Flex Web Service."""
     return fetch_cdc_via_flex(**kwargs)

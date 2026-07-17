@@ -34,7 +34,6 @@ from pipeline.analytics.models import (
     cash_flow_summary_schema,
     dividend_income_schema,
     interest_income_schema,
-    portfolio_allocation_schema,
     portfolio_holdings_schema,
 )
 from pipeline.normalized.models import (
@@ -45,6 +44,20 @@ from pipeline.normalized.models import (
     xtb_snapshot_normalized_schema,
 )
 from pipeline.storage import get_storage
+
+# portfolio_allocation_schema was removed from models.py (ADR 0082).
+# Defined locally here so the migration script remains self-contained.
+portfolio_allocation_schema = pa.schema(
+    [
+        pa.field("calculated_at", pa.timestamp("us", tz="UTC")),
+        pa.field("ticker", pa.string()),
+        pa.field("percentage", pa.float64()),
+        pa.field("broker", pa.string()),
+        pa.field("identifier", pa.string()),
+        pa.field("security_ccy", pa.string()),
+        pa.field("description", pa.string()),
+    ]
+)
 
 
 def _get_storage_options_with_credentials() -> dict[str, str]:

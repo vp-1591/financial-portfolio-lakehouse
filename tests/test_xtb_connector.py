@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 import zipfile
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,7 +35,7 @@ def cell(ref: str, value: object) -> str:
     return f'<c r="{ref}" t="inlineStr"><is><t>{value}</t></is></c>'
 
 
-def row(index: int, values: dict[str, object]) -> str:
+def row(index: int, values: Mapping[str, object]) -> str:
     cells = "".join(cell(f"{column}{index}", value) for column, value in values.items())
     return f'<row r="{index}">{cells}</row>'
 

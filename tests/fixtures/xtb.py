@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import zipfile
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 import pyarrow as pa
@@ -30,7 +31,7 @@ def _build_minimal_xlsx_bytes() -> bytes:
             return f'<c r="{ref}"><v>{value}</v></c>'
         return f'<c r="{ref}" t="inlineStr"><is><t>{value}</t></is></c>'
 
-    def _row(index: int, values: dict[str, object]) -> str:
+    def _row(index: int, values: Mapping[str, object]) -> str:
         cells = "".join(_cell(f"{col}{index}", val) for col, val in values.items())
         return f'<row r="{index}">{cells}</row>'
 

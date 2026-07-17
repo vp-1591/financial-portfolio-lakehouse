@@ -436,7 +436,7 @@ def _get_previous_row_count(
     stability_rows = dq_df.filter(
         (pl.col("table_name") == table_name)
         & (pl.col("check_name") == "row_count_stability")
-        & (pl.col("status") != FAIL)
+        & (pl.col("status") != FAIL)  # type: ignore[arg-type]
     ).sort("checked_at", descending=True)
 
     if stability_rows.is_empty():

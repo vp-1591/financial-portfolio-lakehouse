@@ -7,7 +7,7 @@ from pipeline.connectors.base import BrokerConnector
 _CONNECTORS: dict[str, BrokerConnector] = {}
 
 
-def register(connector: BrokerConnector) -> BrokerConnector:
+def register(connector: BrokerConnector | type[BrokerConnector]) -> BrokerConnector:
     """Register a connector.  Accepts an instance or a class (auto-instantiated).
 
     Returns the connector instance for convenience.

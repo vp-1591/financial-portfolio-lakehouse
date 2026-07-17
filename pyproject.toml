@@ -19,6 +19,7 @@ dev = [
     "ipykernel>=6.0.0",
     "pytest==9.1.1",
     "ruff>=0.11.0",
+    "pyright>=1.1.0",
     "financial-portfolio-lakehouse[pipeline]",
 ]
 
