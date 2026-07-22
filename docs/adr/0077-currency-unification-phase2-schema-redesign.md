@@ -9,7 +9,7 @@ Phase 1 (ADR 0076) fixed T212's `walletImpact.fxRate` semantics so that `cash_am
 - **Bug 7**: IBKR snapshots pre-converted `value` to account base currency, losing the native-currency amount.
 - **Bug 6 remainder**: T212 dividends and transactions lacked FX conversion because no pipeline step computed `target_value`.
 
-The roadmap (`docs/roadmaps/roadmap-currency-unification.md`) defined Phase 2 to replace all overloaded names and add a `normalize_currency()` step.
+The roadmap (`docs/roadmaps/0010-currency-unification.md`) defined Phase 2 to replace all overloaded names and add a `normalize_currency()` step.
 
 ## Decision
 

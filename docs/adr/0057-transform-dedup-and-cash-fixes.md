@@ -10,7 +10,7 @@ The bronze→silver transform had three bugs:
 
 3. **T212 demo missing cash**: The Trading 212 demo API returns `cash` as a nested dict `{"availableToTrade": 10500.0, ...}` rather than a scalar. `cash_value()` found `"cash"` via its key-probing loop but `as_float(dict)` returned `0.0`, so no cash row was created.
 
-These bugs were identified in `docs/roadmaps/roadmap-transform-cash-and-dedup.md`.
+These bugs were identified in `docs/roadmaps/0003-transform-cash-and-dedup.md`.
 
 ## Decision
 

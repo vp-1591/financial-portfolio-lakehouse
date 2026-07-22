@@ -4,7 +4,7 @@
 
 ## Context
 
-The roadmap (`docs/roadmap-productionization.md`) defines a branch/tag-based
+The roadmap (`docs/roadmaps/0001-productionization.md`) defines a branch/tag-based
 deployment model where `main` is the staging branch and version tags trigger
 production deployments. Deploy and run are separate concerns: a deployment
 makes a new container image available; a run executes the pipeline steps.
