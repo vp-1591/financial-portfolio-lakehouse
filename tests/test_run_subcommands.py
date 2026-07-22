@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from pipeline.connectors.registry import get
 from pipeline.crypto import generate_key
 from pipeline.run import (
+    FetchResult,
     cmd_fetch,
     cmd_full,
     cmd_run_consolidate_analytics,
@@ -106,7 +107,7 @@ class TestFetchConnectorIsolation:
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
-            assert rc == 0
+            assert rc == FetchResult.SUCCESS
             mock_kwargs.assert_called_once_with(args)
             mock_snapshot.assert_called_once()
 
@@ -114,7 +115,7 @@ class TestFetchConnectorIsolation:
     def test_skips_connector_when_kwargs_empty(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
-        """fetch_connector returns 0 and skips when fetch_kwargs returns {}."""
+        """fetch_connector returns SKIPPED and skips when fetch_kwargs returns {}."""
         connector = get("ibkr")
         args = argparse.Namespace()
 
@@ -124,14 +125,14 @@ class TestFetchConnectorIsolation:
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
-            assert rc == 0
+            assert rc == FetchResult.SKIPPED
             mock_snapshot.assert_not_called()
 
     @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
     def test_returns_nonzero_on_snapshot_error(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
-        """fetch_connector returns 1 when snapshot fetch raises an exception."""
+        """fetch_connector returns ERROR when snapshot fetch raises an exception."""
         connector = get("ibkr")
         args = argparse.Namespace()
 
@@ -154,7 +155,7 @@ class TestFetchConnectorIsolation:
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
-            assert rc == 1
+            assert rc == FetchResult.ERROR
 
 
 class TestTransformConnectorIsolation:
@@ -186,7 +187,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=0)
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     @patch("pipeline.run.is_enabled", return_value=True)
     def test_enabled_connector_calls_fetch_then_transform(
@@ -209,7 +210,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=1)
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.ERROR)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     @patch("pipeline.run.is_enabled", return_value=True)
     def test_fetch_failure_skips_transform(
@@ -220,10 +221,31 @@ class TestCmdRunConnector:
         mock_transform: MagicMock,
         mock_validate: MagicMock,
     ) -> None:
-        """If fetch_connector returns non-zero, transform and validate are skipped."""
+        """If fetch_connector returns ERROR, transform and validate are skipped."""
         args = argparse.Namespace(connector="ibkr")
         rc = cmd_run_connector(args)
         assert rc == 1
+        mock_transform.assert_not_called()
+        mock_validate.assert_not_called()
+
+    @patch("pipeline.run.run_validation")
+    @patch("pipeline.run.transform_connector")
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SKIPPED)
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    @patch("pipeline.run.is_enabled", return_value=True)
+    def test_skipped_connector_returns_zero(
+        self,
+        mock_enabled: MagicMock,
+        mock_key: MagicMock,
+        mock_fetch: MagicMock,
+        mock_transform: MagicMock,
+        mock_validate: MagicMock,
+    ) -> None:
+        """If fetch_connector returns SKIPPED, cmd_run_connector returns 0 without
+        calling transform or validation — there's no data to process."""
+        args = argparse.Namespace(connector="ibkr")
+        rc = cmd_run_connector(args)
+        assert rc == 0
         mock_transform.assert_not_called()
         mock_validate.assert_not_called()
 
@@ -274,6 +296,118 @@ class TestCmdRunConnector:
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# cmd_fetch — no-credentials error path
+# ---------------------------------------------------------------------------
+
+
+class TestCmdFetchNoCredentials:
+    """cmd_fetch fails loudly when all connectors lack credentials."""
+
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_all_skipped_returns_nonzero(self, mock_key: MagicMock) -> None:
+        """All enabled connectors skipped → exit 1 with error message."""
+        real_connectors = [get("ibkr"), get("trading212")]
+        args = argparse.Namespace(xtb_file=None)
+        with (
+            patch("pipeline.run.is_enabled", return_value=True),
+            patch("pipeline.run.all_connectors", return_value=real_connectors),
+            patch("pipeline.run.inject_secrets"),
+            patch("pipeline.run.fetch_connector", return_value=FetchResult.SKIPPED),
+        ):
+            rc = cmd_fetch(args)
+        assert rc == 1
+
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_all_skipped_error_message(self, mock_key: MagicMock, capsys) -> None:
+        """All skipped connectors print a helpful error message to stderr."""
+        real_connectors = [get("ibkr")]
+        args = argparse.Namespace(xtb_file=None)
+        with (
+            patch("pipeline.run.is_enabled", return_value=True),
+            patch("pipeline.run.all_connectors", return_value=real_connectors),
+            patch("pipeline.run.inject_secrets"),
+            patch("pipeline.run.fetch_connector", return_value=FetchResult.SKIPPED),
+        ):
+            rc = cmd_fetch(args)
+        assert rc == 1
+        stderr = capsys.readouterr().err
+        assert "No broker credentials found" in stderr
+        assert "IBKR_FLEX_TOKEN" in stderr
+        assert "T212_API_KEY" in stderr
+        assert "--mode staging" in stderr
+
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_one_success_overrides_all_skipped(self, mock_key: MagicMock) -> None:
+        """If at least one connector succeeds, cmd_fetch returns 0."""
+        real_connectors = [get("ibkr"), get("trading212")]
+        args = argparse.Namespace(xtb_file=None)
+        with (
+            patch("pipeline.run.is_enabled", return_value=True),
+            patch("pipeline.run.all_connectors", return_value=real_connectors),
+            patch("pipeline.run.inject_secrets"),
+            patch(
+                "pipeline.run.fetch_connector",
+                side_effect=[FetchResult.SUCCESS, FetchResult.SKIPPED],
+            ),
+        ):
+            rc = cmd_fetch(args)
+        assert rc == 0
+
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_one_error_returns_nonzero(self, mock_key: MagicMock, capsys) -> None:
+        """If any connector errors, cmd_fetch returns 1."""
+        real_connectors = [get("ibkr"), get("trading212")]
+        args = argparse.Namespace(xtb_file=None)
+        with (
+            patch("pipeline.run.is_enabled", return_value=True),
+            patch("pipeline.run.all_connectors", return_value=real_connectors),
+            patch("pipeline.run.inject_secrets"),
+            patch(
+                "pipeline.run.fetch_connector",
+                side_effect=[FetchResult.SUCCESS, FetchResult.ERROR],
+            ),
+        ):
+            rc = cmd_fetch(args)
+        assert rc == 1
+        stderr = capsys.readouterr().err
+        assert "connector(s) succeeded" in stderr
+        assert "failed" in stderr
+
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_all_disabled_returns_zero(self, mock_key: MagicMock) -> None:
+        """All connectors disabled → cmd_fetch returns 0, no error message."""
+        real_connectors = [get("ibkr"), get("trading212")]
+        args = argparse.Namespace(xtb_file=None)
+        with (
+            patch("pipeline.run.is_enabled", return_value=False),
+            patch("pipeline.run.all_connectors", return_value=real_connectors),
+            patch("pipeline.run.inject_secrets"),
+            patch("pipeline.run.fetch_connector") as mock_fetch,
+        ):
+            rc = cmd_fetch(args)
+        assert rc == 0
+        mock_fetch.assert_not_called()
+
+    def test_fetch_result_enum_values(self) -> None:
+        """FetchResult enum values match expected int values."""
+        assert FetchResult.SUCCESS == 0
+        assert FetchResult.ERROR == 1
+        assert FetchResult.SKIPPED == 2
+
+
+class TestFetchConnectorXtbSkip:
+    """fetch_connector returns SKIPPED for XTB without --xtb-file."""
+
+    def test_xtb_returns_skipped_when_no_file(self, tmp_data_dir: Path) -> None:
+        """XTB connector returns FetchResult.SKIPPED when no --xtb-file is provided."""
+        connector = get("xtb")
+        args = argparse.Namespace(xtb_file=None)
+        fernet_key = generate_key()
+        rc = fetch_connector(connector, args, fernet_key)
+        assert rc == FetchResult.SKIPPED
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +545,7 @@ class TestCmdRunConsolidateAnalytics:
 class TestCmdFetchRegression:
     """cmd_fetch still iterates all() and uses enabled_env_var."""
 
-    @patch("pipeline.run.fetch_connector", return_value=0)
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_cmd_fetch_iterates_all_connectors(
         self, mock_key: MagicMock, mock_fetch: MagicMock
@@ -423,13 +557,14 @@ class TestCmdFetchRegression:
         args = argparse.Namespace(xtb_file=None)
         with (
             patch("pipeline.run.is_enabled", return_value=True),
-            patch("pipeline.run.all", return_value=real_connectors),
+            patch("pipeline.run.all_connectors", return_value=real_connectors),
+            patch("pipeline.run.inject_secrets"),
         ):
             rc = cmd_fetch(args)
         assert rc == 0
         assert mock_fetch.call_count == 3
 
-    @patch("pipeline.run.fetch_connector", return_value=0)
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_cmd_fetch_skips_disabled_connectors(
         self, mock_key: MagicMock, mock_fetch: MagicMock
@@ -443,7 +578,8 @@ class TestCmdFetchRegression:
 
         with (
             patch("pipeline.run.is_enabled", side_effect=is_enabled_side_effect),
-            patch("pipeline.run.all", return_value=real_connectors),
+            patch("pipeline.run.all_connectors", return_value=real_connectors),
+            patch("pipeline.run.inject_secrets"),
         ):
             rc = cmd_fetch(args)
         assert rc == 0
@@ -461,7 +597,7 @@ class TestCmdTransformRegression:
     ) -> None:
         real_connectors = [get("ibkr"), get("trading212"), get("xtb")]
         args = argparse.Namespace()
-        with patch("pipeline.run.all", return_value=real_connectors):
+        with patch("pipeline.run.all_connectors", return_value=real_connectors):
             rc = cmd_transform(args)
         assert rc == 0
         assert mock_transform.call_count == 3

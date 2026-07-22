@@ -29,10 +29,11 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from enum import IntEnum
 from pathlib import Path
 
 from pipeline.analytics.quality import run_validation
-from pipeline.connectors.registry import all, get
+from pipeline.connectors.registry import all as all_connectors, get
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import (
@@ -43,6 +44,14 @@ from pipeline.secrets import (
 from pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)
+
+
+class FetchResult(IntEnum):
+    """Exit status for :func:`fetch_connector`."""
+
+    SUCCESS = 0  # Data was fetched successfully
+    ERROR = 1  # Fetch attempted but failed
+    SKIPPED = 2  # No credentials configured — connector was skipped
 
 
 def parse_fx_rate(value: str) -> tuple[str, float]:
@@ -106,12 +115,16 @@ def cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
-def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> int:
+def fetch_connector(
+    connector, args: argparse.Namespace, fernet_key: bytes
+) -> FetchResult:
     """Fetch data from a single connector and write to raw Delta tables.
 
-    Returns 0 on success or when the connector is skipped (missing secrets,
-    not implemented).  Returns 1 if any fetch operation failed, so that
-    callers like :func:`cmd_run_connector` can skip the transform step.
+    Returns :class:`FetchResult`:
+    - ``SUCCESS`` — data was fetched and written
+    - ``SKIPPED`` — connector had no credentials or required input (e.g. XTB
+      without ``--xtb-file``)
+    - ``ERROR`` — fetch was attempted but failed
     """
     from pipeline.raw.ingest import ingest_raw
 
@@ -121,7 +134,7 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
     if connector.name == "xtb":
         xtb_files = getattr(args, "xtb_file", None)
         if not xtb_files:
-            return 0
+            return FetchResult.SKIPPED
         for xtb_file in xtb_files if isinstance(xtb_files, list) else [xtb_files]:
             try:
                 raw = connector.fetch_snapshot(file_path=xtb_file)
@@ -137,7 +150,7 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
                     f"  Error fetching {connector.display_name} snapshot: {exc}",
                     file=sys.stderr,
                 )
-        return 1 if error_occurred else 0
+        return FetchResult.ERROR if error_occurred else FetchResult.SUCCESS
 
     # All other connectors use the fetch_kwargs protocol.
     snapshot_kwargs = connector.fetch_kwargs(args)
@@ -145,7 +158,7 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
         logger.debug(
             "Skipping %s: required secrets not configured", connector.display_name
         )
-        return 0
+        return FetchResult.SKIPPED
 
     cdc_kwargs = connector.fetch_cdc_kwargs()
 
@@ -185,7 +198,7 @@ def fetch_connector(connector, args: argparse.Namespace, fernet_key: bytes) -> i
                 file=sys.stderr,
             )
 
-    return 1 if error_occurred else 0
+    return FetchResult.ERROR if error_occurred else FetchResult.SUCCESS
 
 
 def transform_connector(connector, fernet_key: bytes) -> int:
@@ -255,7 +268,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     inject_secrets()
     fernet_key = load_key()
 
-    for connector in all():
+    results: list[FetchResult] = []
+    for connector in all_connectors():
         if not is_enabled(connector.enabled_env_var):
             logger.debug(
                 "Skipping %s: %s is false",
@@ -263,7 +277,31 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 connector.enabled_env_var,
             )
             continue
-        fetch_connector(connector, args, fernet_key)
+        results.append(fetch_connector(connector, args, fernet_key))
+
+    if not results:
+        # All connectors are disabled — not an error, but nothing to do.
+        return 0
+
+    if all(r == FetchResult.SKIPPED for r in results):
+        print(
+            "No broker credentials found. In Docker mode, set IBKR_FLEX_TOKEN "
+            "or T212_API_KEY in .env. In staging/prod mode, use --mode staging "
+            "or --mode prod to trigger the pipeline in AWS "
+            "(no local broker credentials needed).",
+            file=sys.stderr,
+        )
+        return 1
+
+    if any(r == FetchResult.ERROR for r in results):
+        succeeded = sum(1 for r in results if r == FetchResult.SUCCESS)
+        failed = sum(1 for r in results if r == FetchResult.ERROR)
+        print(
+            f"{succeeded} of {len(results)} connector(s) succeeded, "
+            f"{failed} failed. Check errors above.",
+            file=sys.stderr,
+        )
+        return 1
 
     return 0
 
@@ -272,7 +310,7 @@ def cmd_transform(args: argparse.Namespace) -> int:
     """Transform raw data into normalized Delta tables."""
     fernet_key = load_key()
 
-    for connector in all():
+    for connector in all_connectors():
         transform_connector(connector, fernet_key)
 
     return 0
@@ -324,7 +362,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     )
 
     all_holdings: list[Holding] = []
-    connectors_list = all()
+    connectors_list = all_connectors()
     storage_opts = get_storage().storage_options
 
     for connector in connectors_list:
@@ -567,8 +605,11 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
 
     fernet_key = load_key()
     rc = fetch_connector(connector, args, fernet_key)
-    if rc:
-        return rc
+    if rc == FetchResult.SKIPPED:
+        # Connector has no credentials — skip transform and validation gracefully.
+        return 0
+    if rc == FetchResult.ERROR:
+        return 1
     rc = transform_connector(connector, fernet_key)
     if rc:
         return rc
