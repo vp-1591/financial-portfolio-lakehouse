@@ -31,21 +31,22 @@ Key pain points:
 - [ ] `pipeline run full --mode prod` triggers the prod Step Functions execution — same credential model: AWS creds locally, broker creds handled by infrastructure
 - [ ] `pipeline run full --mode docker` runs the full pipeline locally against MinIO, mirroring the SFN workflow: connectors run via `run-connector` (each: fetch → transform → validate), then `run-consolidate-analytics` (consolidate + CDC + analytics + validate)
 - [ ] In docker mode, `full` runs connectors in parallel (threading) and fails fast if any connector fails — same semantics as the SFN Map state
-- [ ] Running `pipeline run full` without `--mode` or `PIPELINE_MODE` prints a clear error listing the three modes
+- [ ] Running `pipeline run full` without `--mode` prints a clear error listing the three modes
 - [ ] When all broker credentials are missing, `fetch` exits with a non-zero code and a clear message (e.g., "No broker credentials found. In Docker mode, set IBKR_FLEX_TOKEN or T212_API_KEY in .env. In staging/prod mode, use --mode staging or --mode prod.")
 - [ ] `scripts/run_prod_pipeline.py` is deleted — its functionality is absorbed into `cmd_full`
-- [ ] `DEMO`, `STORAGE_TYPE`, and all `_DEMO`-suffixed env vars are removed — `PIPELINE_MODE` replaces them; GitHub Secrets and env vars use `_STAGING` suffix where environment scoping is needed (e.g., `AWS_ACCESS_KEY_ID_STAGING`); ECS tasks inject secrets under base names (no suffix) since each environment is an isolated container
+- [ ] `DEMO`, `STORAGE_TYPE`, and all `_DEMO`-suffixed env vars are removed — `--mode` flag replaces them; GitHub Secrets use `_STAGING` suffix where environment scoping is needed (e.g., `AWS_ACCESS_KEY_ID_STAGING`); ECS tasks pass `--mode` in the command and inject secrets under base names (no suffix) since each environment is an isolated container
 - [ ] `query` and `report` commands work in all three modes (read-only S3 access for staging/prod, MinIO for docker)
 - [ ] Remove `fetch`, `transform`, `consolidate`, `analytics` subcommands entirely — `run-connector <name>` and `run-consolidate-analytics` are the only building blocks needed (used by both SFN and local `full`)
 - [ ] Remove `cmd_fetch`, `cmd_transform`, `cmd_consolidate`, `cmd_analytics` functions and their CLI parser registrations
 - [ ] All existing tests pass after the refactor
-- [ ] ECS task definitions still work (they set `PIPELINE_MODE` env var instead of `DEMO`)
+- [ ] ECS task definitions still work (they pass `--mode staging` or `--mode prod` in the command instead of setting `DEMO` env var)
 
 ## Alternatives considered
 
 | Approach | Why rejected |
 |----------|-------------|
 | ~~Keep `DEMO` env var as deprecated alias~~ | Rejected: two ways to set the same thing creates ambiguity. Clean cut is simpler than a deprecation period — the only consumers are `.env` files and ECS task definitions, both easily updated. |
+| `PIPELINE_MODE` env var alongside `--mode` flag | Two sources creates "which wins?" ambiguity (env var says staging, flag says prod). Single source of truth (`--mode` flag only) is simpler — ECS tasks pass `--mode` in their command, which is already the pattern for `--target-currency`. |
 | Auto-detect mode from `S3_BUCKET` presence | Implicit behavior is surprising. `S3_BUCKET` being set doesn't mean you want to trigger SFN. Explicit is better. |
 | Separate `cloud` subcommand instead of `--mode` | Adds a subcommand that duplicates `full`. A flag on `full` is cleaner because the subcommand structure stays flat. |
 | Keep `STORAGE_TYPE` as an escape hatch | If mode always determines storage, `STORAGE_TYPE` is redundant. Escape hatches accumulate into the complexity we're removing. |
@@ -75,18 +76,16 @@ Make `fetch` fail loudly when all broker credentials are missing, instead of sil
 
 ---
 
-### Phase 2 — Add `--mode` flag and `PIPELINE_MODE` env var *[status: planned]*
+### Phase 2 — Add `--mode` flag *[status: planned]*
 
-Add a `--mode docker|staging|prod` CLI flag and a `PIPELINE_MODE` env var that together replace `DEMO` and `STORAGE_TYPE`. Mode determines storage backend, credential resolution strategy, and whether `full` runs locally or triggers SFN.
+Add a `--mode docker|staging|prod` CLI flag that replaces `DEMO` and `STORAGE_TYPE`. Mode determines storage backend, credential resolution strategy, and whether `full` runs locally or triggers SFN. There is no env var — `--mode` is the single source of truth. ECS task definitions pass `--mode` as a command argument (e.g., `["run-connector", "ibkr", "--mode", "staging"]`).
 
 **Scope:**
 - [ ] Add `--mode` flag to `pipeline run` top-level parser (applies to all subcommands)
-- [ ] Add `PIPELINE_MODE` env var as fallback (for ECS task definitions)
-- [ ] Add `resolve_mode()` function that reads `--mode` flag → `PIPELINE_MODE` env var → error if unset
+- [ ] Add `resolve_mode()` function that reads `--mode` flag from parsed args — error if unset
 - [ ] Derive storage config from mode: docker → MinIO, staging → demo S3, prod → prod S3
 - [ ] Derive `is_demo()` from mode: staging → True, docker/prod → False
-- [ ] Remove `DEMO` env var entirely — replaced by `PIPELINE_MODE`
-- [ ] Remove `STORAGE_TYPE` env var — mode determines storage
+- [ ] Remove `DEMO` and `STORAGE_TYPE` env vars entirely
 - [ ] Add `--mode` to `query` and `report` commands (determines which S3 bucket to read)
 - [ ] Rewrite `cmd_full` in docker mode to mirror the SFN workflow: run each connector via `cmd_run_connector` (fetch + transform + validate), then `cmd_run_consolidate_analytics` (consolidate + CDC + analytics + validate) — same building blocks the SFN uses
 - [ ] In docker mode, run connectors in parallel using `concurrent.futures.ThreadPoolExecutor` with fail-fast on any connector error
@@ -97,7 +96,7 @@ Add a `--mode docker|staging|prod` CLI flag and a `PIPELINE_MODE` env var that t
 - [ ] Delete `TestCmdFetchRegression` and `TestCmdTransformRegression` from `tests/test_run_subcommands.py` — they test deleted commands
 - [ ] Delete `TestCmdFullRegression` from `tests/test_run_subcommands.py` — it tests the old sequential chain; new tests for the orchestrator-based `cmd_full` will be written alongside the implementation
 - [ ] `run-connector` and `run-consolidate-analytics` are the canonical building blocks — used by both SFN and local `full`
-- [ ] Update `.env.example` to show `PIPELINE_MODE=docker` instead of `STORAGE_TYPE` and `DEMO`
+- [ ] Update `.env.example` to remove `STORAGE_TYPE` and `DEMO`; document `--mode docker` as the local dev default
 - [ ] Update README and configuration docs
 
 **Out of scope:**
@@ -147,11 +146,11 @@ boto3 → start_execution() ───────► Step Functions
 - [ ] Validate that AWS credentials are configured before calling SFN; print actionable error if missing (e.g., "Run `aws configure` or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY")
 - [ ] Add `--wait` flag to `full` that polls the execution until completion; on failure, fetch and print failure details from SFN execution history (replaces ~100 lines of shell in deploy-staging.yml and the `parse_stepfunctions_event.py` scripts)
 - [ ] Support `--with-xtb` and `--xtb-file` flags for SFN input (absorbed from `run_prod_pipeline.py`)
-- [ ] Add state machine ARNs to configuration (env vars or hardcoded from Terraform outputs)
+- [ ] Add state machine ARNs as configuration — `STAGING_STATE_MACHINE_ARN` and `PROD_STATE_MACHINE_ARN` env vars, set by Terraform outputs in `.env` or CI secrets (not hardcoded)
 - [ ] Delete `scripts/run_prod_pipeline.py`
 - [ ] Simplify `.github/workflows/deploy-staging.yml`: replace the SFN trigger + wait loop + log parsing (steps 3–7) with `python -m pipeline.run full --mode staging --wait`; keep Docker build/push steps
 - [ ] Delete `.github/scripts/parse_stepfunctions_event.py` and `.github/scripts/format_log_events.py` — failure detail printing moves into `--wait`
-- [ ] Update Terraform ECS task definitions to use `PIPELINE_MODE` env var instead of `DEMO`
+- [ ] Update Terraform ECS task definitions to pass `--mode staging` or `--mode prod` in the command instead of setting `DEMO` env var
 
 **Out of scope:**
 - Changing the SFN state machine definition itself
@@ -190,16 +189,15 @@ Prod ECS task:  SSM /pipeline/prod/IBKR_FLEX_TOKEN → env var IBKR_FLEX_TOKEN
 - [ ] Rename SSM parameters from `/pipeline/demo/<NAME>_DEMO` to `/pipeline/demo/<NAME>` (Terraform migration: create new params, update task definitions, delete old params)
 - [ ] Update demo ECS task definitions: inject secrets as base env var names (`IBKR_FLEX_TOKEN` instead of `IBKR_FLEX_TOKEN_DEMO`)
 - [ ] Remove `S3_BUCKET_DEMO` and `S3_PREFIX_DEMO` env vars from demo task definitions — `S3_BUCKET` and `S3_PREFIX` already have the correct values in each environment
-- [ ] Set `PIPELINE_MODE=staging` in demo task `environment` block instead of `DEMO=true`
-- [ ] Set `PIPELINE_MODE=prod` in prod task `environment` block instead of `DEMO=false`
+- [ ] Remove `DEMO=true/false` from ECS task `environment` blocks — mode is now a CLI flag in the command, not an env var
 - [ ] Delete `DEMO_SECRET_MAP`, `REQUIRED_SECRETS_DEMO`, `REQUIRED_SECRETS_S3_DEMO`, `REQUIRED_SECRETS_DEMO_NON_AWS` from `secrets.py`
 - [ ] Simplify `resolve_secret()` to always read the base env var name — no suffix swapping
-- [ ] Simplify `is_demo()` to check `PIPELINE_MODE=staging` instead of `DEMO=true`
+- [ ] Simplify `is_demo()` to check `--mode staging` instead of `DEMO=true`
 - [ ] Remove `_DEMO` env vars from `.env.example`
 - [ ] Delete `.github/workflows/pipeline.yml` — it runs the pipeline locally in CI with `_DEMO` secrets, which is the entire pattern we're removing. Staging deploys already trigger SFN via `deploy-staging.yml`; there's no reason to run the pipeline locally in CI
-- [ ] Update `.github/workflows/deploy-staging.yml`: rename GitHub Secrets references from `_DEMO` suffix to `_STAGING` (e.g., `secrets.AWS_ACCESS_KEY_ID_DEMO` → `secrets.AWS_ACCESS_KEY_ID_STAGING`, `secrets.DEMO_STATE_MACHINE_ARN` → `secrets.STAGING_STATE_MACHINE_ARN`). Remove `demo: true` from SFN input — replace with `PIPELINE_MODE: staging`
-- [ ] Update `.github/workflows/deploy-prod.yml`: add `PIPELINE_MODE: prod` to any relevant env vars
-- [ ] Update ADRs 0037–0044 or create a new ADR documenting the `PIPELINE_MODE` approach
+- [ ] Update `.github/workflows/deploy-staging.yml`: rename GitHub Secrets references from `_DEMO` suffix to `_STAGING` (e.g., `secrets.AWS_ACCESS_KEY_ID_DEMO` → `secrets.AWS_ACCESS_KEY_ID_STAGING`, `secrets.DEMO_STATE_MACHINE_ARN` → `secrets.STAGING_STATE_MACHINE_ARN`). Remove `demo: true` from SFN input
+- [ ] Update `.github/workflows/deploy-prod.yml`: no env var changes needed (mode is a CLI flag, not an env var)
+- [ ] Update ADRs 0037–0044 or create a new ADR documenting the `--mode` approach
 
 **Out of scope:**
 - Changing the T212 demo API URL behavior (staging mode still uses demo endpoint)
