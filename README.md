@@ -100,6 +100,14 @@ python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --decr
 python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_holdings_analytics" --format csv
 ```
 
+### Generate report
+
+```bash
+python -m pipeline.run report                          # write to data/report.html
+python -m pipeline.run report --open                  # write and open in browser
+python -m pipeline.run report --output my-report.html # custom output path
+```
+
 For detailed instructions, see [Local Deployment](docs/deployment/local.md).
 
 ## Configuration
