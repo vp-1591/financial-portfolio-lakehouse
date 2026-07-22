@@ -307,10 +307,15 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     When credentials are available (even if empty strings for missing
     demo credentials), they are registered as a DuckDB SECRET.  Empty
     credentials prevent DuckDB from falling back to environment
-    variables that may contain production credentials.  When both
-    key_id and secret_key are ``None``, no SECRET is created so that
-    DuckDB can fall back to IAM instance metadata or other credential
-    providers.
+    variables that may contain production credentials.
+
+    When both key_id and secret_key are ``None`` in demo mode, a
+    SECRET with empty credentials is created to prevent DuckDB from
+    falling back to production credentials.  In production mode, a
+    ``RuntimeError`` is raised because DuckDB's ``delta_scan()``
+    cannot resolve credentials from ``~/.aws/credentials`` or AWS
+    SSO — explicit credentials must be provided via environment
+    variables or ``.env`` file.
 
     For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` to the
     server URL and ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
@@ -320,12 +325,13 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     creds = resolve_aws_credentials()
     parts = creds.to_duckdb_secret_parts()
 
+    # Decision: docs/adr/0088-raise-on-missing-aws-credentials.md
     # When both key_id and secret_key are None, the caller has no explicit
-    # credentials.  In production mode this is expected on EC2 (IAM role
-    # fallback) — skip SECRET creation.  In demo mode this means _DEMO
-    # credentials are missing — create a SECRET with empty KEY_ID/SECRET
-    # so that DuckDB does not fall back to production credentials that may
-    # be present in environment variables.
+    # credentials.  In demo mode this means _DEMO credentials are missing —
+    # create a SECRET with empty KEY_ID/SECRET so that DuckDB does not fall
+    # back to production credentials.  In production mode, DuckDB's
+    # delta_scan() cannot reach ~/.aws/credentials or AWS SSO, so raise an
+    # error with an actionable message.
     if creds.key_id is None and creds.secret_key is None:
         if is_demo():
             # Empty credentials prevent fallback to production env vars.
@@ -333,9 +339,11 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
             # must not silently use production credentials.
             conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
         else:
-            logger.debug(
-                "No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY set; "
-                "skipping DuckDB S3 SECRET (expecting IAM role fallback)"
+            raise RuntimeError(
+                "AWS credentials not found. Set AWS_ACCESS_KEY_ID and "
+                "AWS_SECRET_ACCESS_KEY in your .env file or environment "
+                "variables. For local development without S3, use "
+                "STORAGE_TYPE=local."
             )
     elif parts:
         conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")

@@ -65,7 +65,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0052 | Per-Environment State Machines and CI/CD Pipeline Trigger | 2026-07-08 | drifted | — |
 | 0053 | Per-Environment CI/CD Credentials and IAM Permissions | 2026-07-09 | drifted | — |
 | 0054 | Public-Subnet ECS — Eliminate Perma-VPC Charges | 2026-07-09 | active | — |
-| 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | active | — |
+| 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | superseded | 0088 |
 | 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |
 | 0057 | Fix Bronze→Silver Dedup and Cash Extraction Bugs | 2026-07-10 | active | — |
 | 0058 | Broker-Neutral CDC Events Schema | 2026-07-10 | superseded | 0077 |
@@ -98,6 +98,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0085 | Gold Schema Migration and Analytics Error Propagation | 2026-07-16 | active | — |
 | 0086 | Add Pyright Static Type Checking | 2026-07-17 | active | — |
 | 0087 | Make CDC Mandatory and Fail on Empty Silver CDC Tables | 2026-07-21 | active | — |
+| 0088 | Raise on Missing AWS Credentials for DuckDB S3 | 2026-07-22 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

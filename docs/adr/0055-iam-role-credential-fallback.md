@@ -1,5 +1,7 @@
 # 0055: IAM Role Credential Fallback for ECS Tasks
 
+> **Superseded by [ADR 0088](./0088-raise-on-missing-aws-credentials.md)** — The production-mode branch of `_configure_s3()` now raises `RuntimeError` instead of silently skipping DuckDB SECRET creation. ADR 0055's demo-mode branch (empty credentials blocking fallback) and its `to_storage_options()`/`to_pyarrow_kwargs()` changes (omit keys for IAM role fallback) remain in force.
+
 > **Supersedes [ADR 0041](./0041-step-level-ci-secrets-and-explicit-empty-credentials.md)** — Decision #2 (explicit empty credentials) is superseded. When both AWS credentials are `None`, credential keys are now omitted (allowing SDK fallback) instead of set to empty strings (blocking fallback). ADR 0041 Decision #1 (step-level CI secrets) and Decision #3 (demo-aware DuckDB SECRET creation) remain in force.
 
 ## Context
