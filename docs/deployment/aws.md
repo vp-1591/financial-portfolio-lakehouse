@@ -96,6 +96,8 @@ Replace `<kms-key-id>` with the output of `terraform output kms_key_arn` from
 | `/portfolio/demo/T212_API_SECRET_DEMO` | `T212_API_SECRET_DEMO` | Trading 212 API Secret |
 | `/portfolio/demo/ENCRYPTION_KEY_DEMO` | `ENCRYPTION_KEY_DEMO` | Fernet encryption key for Delta table values |
 
+**Bash / Git Bash:**
+
 ```bash
 KMS_KEY_ID=$(terraform -chdir=terraform/demo output -raw kms_key_arn)
 
@@ -104,6 +106,18 @@ aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO --value "QU
 aws ssm put-parameter --name /portfolio/demo/T212_API_KEY_DEMO      --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET_DEMO   --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+```
+
+**PowerShell:**
+
+```powershell
+$KMS_KEY_ID = (terraform -chdir=terraform/demo output -raw kms_key_arn)
+
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN_DEMO   --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_KEY_DEMO      --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET_DEMO   --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
 ```
 
 #### Production environment
@@ -119,6 +133,8 @@ Replace `<kms-key-id>` with the output of `terraform output kms_key_arn` from
 | `/portfolio/prod/T212_API_SECRET` | `T212_API_SECRET` | Trading 212 API Secret |
 | `/portfolio/prod/ENCRYPTION_KEY` | `ENCRYPTION_KEY` | Fernet encryption key for Delta table values |
 
+**Bash / Git Bash:**
+
 ```bash
 KMS_KEY_ID=$(terraform -chdir=terraform/prod output -raw kms_key_arn)
 
@@ -127,6 +143,18 @@ aws ssm put-parameter --name /portfolio/prod/IBKR_FLEX_QUERY_ID --value "QUERY_I
 aws ssm put-parameter --name /portfolio/prod/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 aws ssm put-parameter --name /portfolio/prod/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+```
+
+**PowerShell:**
+
+```powershell
+$KMS_KEY_ID = (terraform -chdir=terraform/prod output -raw kms_key_arn)
+
+aws ssm put-parameter --name /portfolio/prod/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/prod/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/prod/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/prod/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
 ```
 
 > **Important:** The `ENCRYPTION_KEY` must match the Fernet key used to write
@@ -145,3 +173,24 @@ aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"
 | Push to `main` | Build & push Docker image → start demo Step Functions execution |
 | Tag push `v*` | Build & push Docker image with version tag + `production-latest` |
 | Manual dispatch | Run pipeline directly via GitHub Actions (supports demo toggle) |
+
+## Manual pipeline trigger
+
+Once the pipeline is deployed (image pushed, secrets seeded), use
+`scripts/run_prod_pipeline.py` to trigger the production Step Functions
+orchestrator from the CLI. It requires AWS credentials that permit
+`states:StartExecution` on the orchestrator state machine.
+
+```bash
+# Run daily connectors (IBKR + Trading 212)
+python scripts/run_prod_pipeline.py
+
+# Include XTB
+python scripts/run_prod_pipeline.py --with-xtb
+
+# Include XTB with a specific file
+python scripts/run_prod_pipeline.py --with-xtb --xtb-file s3://investment-portfolio-pipeline/staging/xtb/file.csv
+
+# Dry-run: print the input JSON without starting an execution
+python scripts/run_prod_pipeline.py --dry-run
+```
