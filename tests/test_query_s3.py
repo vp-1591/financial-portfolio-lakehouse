@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch
 
 import duckdb
+import pytest
 
 from pipeline.query import _configure_s3
 
@@ -110,37 +111,30 @@ class TestConfigureS3:
         )
         conn.close()
 
-    def test_skips_secret_when_credentials_absent(self):
-        """When AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are empty,
-        _configure_s3 should NOT create a SECRET, allowing IAM role fallback.
+    def test_raises_when_credentials_absent(self):
+        """When AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not set,
+        _configure_s3 should raise RuntimeError with an actionable message.
 
-        This mirrors the empty-credential logic in S3Backend.storage_options,
-        which omits empty strings so that object_store can fall back to its
-        credential chain (IAM instance metadata, etc.).
+        DuckDB's delta_scan() cannot resolve credentials from
+        ~/.aws/credentials or AWS SSO, so silently skipping SECRET
+        creation leads to confusing IMDS timeout errors.  Raising an
+        error with a clear message tells the user exactly what to do.
         """
         conn = duckdb.connect()
-        # Ensure credentials are empty/absent
         with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
             os.environ.pop("AWS_ACCESS_KEY_ID", None)
             os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
-            _configure_s3(conn)
-
-        # No S3 secret should have been created
-        secrets = conn.execute(
-            "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
-        ).fetchall()
-        assert len(secrets) == 0, (
-            f"Expected no S3 secret when credentials are absent, got: {secrets}"
-        )
+            with pytest.raises(RuntimeError, match="AWS credentials not found"):
+                _configure_s3(conn)
         conn.close()
 
-    def test_skips_secret_when_credentials_empty(self):
-        """When AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are set to empty strings,
-        _configure_s3 should NOT create a SECRET.
+    def test_raises_when_credentials_empty(self):
+        """When AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are set to empty
+        strings, _configure_s3 should raise RuntimeError.
 
-        Empty-string credentials would override IAM role fallback with
-        invalid values, which is exactly the bug that the storage_options
-        fix addresses by omitting empty credentials.
+        Empty-string credentials are normalized to None by
+        resolve_aws_credentials(), so the same missing-credential
+        error applies.
         """
         conn = duckdb.connect()
         with patch.dict(
@@ -151,15 +145,8 @@ class TestConfigureS3:
                 "AWS_REGION": "eu-west-1",
             },
         ):
-            _configure_s3(conn)
-
-        # No S3 secret should have been created
-        secrets = conn.execute(
-            "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
-        ).fetchall()
-        assert len(secrets) == 0, (
-            f"Expected no S3 secret with empty credentials, got: {secrets}"
-        )
+            with pytest.raises(RuntimeError, match="AWS credentials not found"):
+                _configure_s3(conn)
         conn.close()
 
     def test_demo_mode_uses_demo_credentials(self):
