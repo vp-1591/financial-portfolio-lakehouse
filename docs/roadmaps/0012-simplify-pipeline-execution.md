@@ -94,7 +94,8 @@ Add a `--mode docker|staging|prod` CLI flag and a `PIPELINE_MODE` env var that t
 - [ ] Remove dead command options from `.github/workflows/pipeline.yml`: `fetch`, `transform`, `consolidate`, and `allocate` (already removed per ADR 0026)
 - [ ] Update comment in `pipeline/connectors/xtb/connector.py:32` that references `cmd_fetch`
 - [ ] Update `README.md`, `docs/deployment/local.md`, `docs/brokers/xtb.md` to remove references to deleted commands
-- [ ] Update or remove `TestCmdFetchRegression`, `TestCmdTransformRegression` in `tests/test_run_subcommands.py`; rewrite `TestCmdFullRegression` for new `cmd_full`
+- [ ] Delete `TestCmdFetchRegression` and `TestCmdTransformRegression` from `tests/test_run_subcommands.py` — they test deleted commands
+- [ ] Delete `TestCmdFullRegression` from `tests/test_run_subcommands.py` — it tests the old sequential chain; new tests for the orchestrator-based `cmd_full` will be written alongside the implementation
 - [ ] `run-connector` and `run-consolidate-analytics` are the canonical building blocks — used by both SFN and local `full`
 - [ ] Update `.env.example` to show `PIPELINE_MODE=docker` instead of `STORAGE_TYPE` and `DEMO`
 - [ ] Update README and configuration docs
