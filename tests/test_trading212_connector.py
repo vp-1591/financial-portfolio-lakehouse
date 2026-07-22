@@ -485,12 +485,11 @@ class TestCdcFetch:
 
         assert logger.name == "pipeline.connectors.trading212.fetch"
 
-    def test_fetch_cdc_empty_result_produces_table(self) -> None:
-        """When all CDC endpoints return empty lists, fetch_cdc still produces a valid table."""
+    def test_fetch_cdc_raises_when_all_endpoints_empty(self) -> None:
+        """When all CDC endpoints return empty lists, fetch_cdc raises RuntimeError."""
         import unittest.mock as mock
 
         from pipeline.connectors.trading212.fetch import fetch_cdc
-        from pipeline.raw.models import RAW_SCHEMA
 
         with mock.patch(
             "pipeline.connectors.trading212.fetch.Trading212Client"
@@ -501,14 +500,14 @@ class TestCdcFetch:
             instance.transactions.return_value = []
             instance.captured_responses = []
 
-            result = fetch_cdc(
-                api_key="test",
-                api_secret="test",
-                base_url="https://demo.trading212.com/api/v0",
-            )
-            assert isinstance(result, pa.Table)
-            assert result.schema == RAW_SCHEMA
-            assert result.num_rows == 0
+            with pytest.raises(
+                RuntimeError, match="all endpoints.*failed or returned no data"
+            ):
+                fetch_cdc(
+                    api_key="test",
+                    api_secret="test",
+                    base_url="https://demo.trading212.com/api/v0",
+                )
 
 
 class TestUnwrapEvents:

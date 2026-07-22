@@ -9,6 +9,7 @@ typed PyArrow tables with encryption.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Iterator
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 from pipeline.crypto import decrypt, encrypt_float
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -130,6 +133,9 @@ def iter_raw_payloads(
     payloads = raw.column("payload").to_pylist()
     source_files = raw.column("source_file").to_pylist()
 
+    decode_failures = 0
+    parse_failures = 0
+
     for i in range(len(fetched_ats)):
         fetched_at = coerce_fetched_at(fetched_ats[i])
         source = str(sources[i] or "")
@@ -138,10 +144,12 @@ def iter_raw_payloads(
 
         decrypted = decode_payload(payload_bytes, fernet_key)
         if decrypted is None:
+            decode_failures += 1
             continue
 
         parsed = parse_json(decrypted)
         if require_json and parsed is None:
+            parse_failures += 1
             continue
 
         yield DecodedRow(
@@ -150,6 +158,15 @@ def iter_raw_payloads(
             source_file=source_file,
             payload_parsed=parsed,
             payload_raw=decrypted,
+        )
+
+    if decode_failures or parse_failures:
+        logger.warning(
+            "iter_raw_payloads: %d decode failures, %d parse failures "
+            "(rows dropped out of %d total)",
+            decode_failures,
+            parse_failures,
+            len(fetched_ats),
         )
 
 
@@ -241,6 +258,9 @@ def decrypt_cdc_payloads(
     payloads = raw.column("payload").to_pylist()
 
     results: list[tuple[datetime, str, list[dict]]] = []
+    decode_failures = 0
+    parse_failures = 0
+    empty_events = 0
 
     for i in range(len(fetched_ats)):
         fetched_at = coerce_fetched_at(fetched_ats[i])
@@ -249,15 +269,29 @@ def decrypt_cdc_payloads(
 
         decrypted = decode_payload(payload_bytes, fernet_key)
         if decrypted is None:
+            decode_failures += 1
             continue
 
         parsed = parse_json(decrypted)
         if parsed is None:
+            parse_failures += 1
             continue
 
         events = _unwrap_events(parsed)
         if events:
             results.append((fetched_at, source, events))
+        else:
+            empty_events += 1
+
+    if decode_failures or parse_failures or empty_events:
+        logger.warning(
+            "decrypt_cdc_payloads: %d decode failures, %d parse failures, "
+            "%d empty-event payloads (out of %d total rows)",
+            decode_failures,
+            parse_failures,
+            empty_events,
+            len(fetched_ats),
+        )
 
     return results
 

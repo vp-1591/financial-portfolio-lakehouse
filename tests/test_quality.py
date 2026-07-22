@@ -15,9 +15,11 @@ from pipeline.analytics.models import (
 )
 from pipeline.analytics.quality import (
     FAIL,
+    NON_EMPTY_REQUIRED,
     PASS,
     WARN,
     check_freshness,
+    check_non_empty,
     check_reconciliation,
     check_required_nulls,
     check_row_count_stability,
@@ -416,6 +418,37 @@ class TestCheckFreshness:
 
 
 # ---------------------------------------------------------------------------
+# Non-empty check tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckNonEmpty:
+    """Tests for check_non_empty — CDC tables must not be empty."""
+
+    def test_pass_on_rows(self) -> None:
+        """A table with rows passes the non-empty check."""
+        table = pa.table({"x": [1, 2, 3]})
+        result = check_non_empty("ibkr_cdc", table)
+        assert result.status == PASS
+        assert "3" in result.details
+
+    def test_fail_on_zero_rows(self) -> None:
+        """An empty table fails the non-empty check."""
+        # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+        table = pa.table({"x": pa.array([], type=pa.int64())})
+        result = check_non_empty("ibkr_cdc", table)
+        assert result.status == FAIL
+        assert "0 rows" in result.details
+
+    def test_non_empty_required_registry(self) -> None:
+        """NON_EMPTY_REQUIRED includes cdc_events, ibkr_cdc, trading212_cdc but not xtb_cdc."""
+        assert "cdc_events" in NON_EMPTY_REQUIRED
+        assert "ibkr_cdc" in NON_EMPTY_REQUIRED
+        assert "trading212_cdc" in NON_EMPTY_REQUIRED
+        assert "xtb_cdc" not in NON_EMPTY_REQUIRED
+
+
+# ---------------------------------------------------------------------------
 # Reconciliation check tests
 # ---------------------------------------------------------------------------
 
@@ -485,7 +518,7 @@ class TestRunValidation:
         fernet_key = generate_key()
         storage = get_storage()
 
-        # Write test tables
+        # Write test tables — including NON_EMPTY_REQUIRED CDC tables
         holdings = _make_holdings_table(fernet_key)
         cdc = _make_cdc_table(fernet_key)
         portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
@@ -496,6 +529,11 @@ class TestRunValidation:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
+        # Write required broker CDC tables (NON_EMPTY_REQUIRED)
+        write_deltalake(storage.normalized_path("ibkr_cdc"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
+        )
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -614,6 +652,11 @@ class TestDataQualityRoundTrip:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
+        # Write required broker CDC tables (NON_EMPTY_REQUIRED)
+        write_deltalake(storage.normalized_path("ibkr_cdc"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
+        )
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,

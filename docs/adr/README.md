@@ -97,6 +97,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0084 | Encrypt Gold Value Columns | 2026-07-15 | active | — |
 | 0085 | Gold Schema Migration and Analytics Error Propagation | 2026-07-16 | active | — |
 | 0086 | Add Pyright Static Type Checking | 2026-07-17 | active | — |
+| 0087 | Make CDC Mandatory and Fail on Empty Silver CDC Tables | 2026-07-21 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

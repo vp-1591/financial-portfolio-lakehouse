@@ -18,6 +18,7 @@ class BrokerConnector(Protocol):
     name: str  # e.g. "ibkr", "trading212", "xtb"
     display_name: str  # e.g. "IBKR", "Trading 212", "XTB"
     enabled_env_var: str  # e.g. "IBKR_ENABLED", "T212_ENABLED", "XTB_ENABLED"
+    cdc_supported: bool  # True for brokers with a real CDC feed; False otherwise
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         """Build connector-specific keyword arguments for ``fetch_snapshot``.

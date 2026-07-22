@@ -126,6 +126,12 @@ def fetch_cdc(
             payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
             source_files.append("")
 
+    if not payloads:
+        raise RuntimeError(
+            "Trading 212 CDC: all endpoints (orders, dividends, transactions) "
+            "failed or returned no data"
+        )
+
     return pa.table(
         {
             "fetched_at": fetched_ats,

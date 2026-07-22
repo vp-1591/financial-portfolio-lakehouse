@@ -25,6 +25,7 @@ class Trading212Connector:
     name = "trading212"
     display_name = "Trading 212"
     enabled_env_var = "T212_ENABLED"
+    cdc_supported = True
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         api_key = resolve_secret("T212_API_KEY")

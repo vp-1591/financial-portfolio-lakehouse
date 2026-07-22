@@ -13,6 +13,7 @@ class TestRegistry:
             name = "fake"
             display_name = "Fake"
             enabled_env_var = "FAKE_ENABLED"
+            cdc_supported = False
 
             def fetch_kwargs(self, args):
                 return {}

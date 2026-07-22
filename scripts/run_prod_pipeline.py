@@ -26,12 +26,14 @@ STATE_MACHINE_ARN = (
     "arn:aws:states:eu-west-1:364947026340:stateMachine:portfolio-pipeline-orchestrator"
 )
 
-# Task definition ARNs (prod)
+# Task definition families (prod). Omit revision to let ECS use the latest
+# active revision, so the script doesn't break when Terraform creates a new
+# revision (e.g. after a command rename).
 TASK_DEF_ARNS = {
-    "ibkr": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-ibkr:1",
-    "trading212": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-trading212:1",
-    "xtb": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-xtb:1",
-    "consolidate_allocate": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-consolidate-allocate:1",
+    "ibkr": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-ibkr",
+    "trading212": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-trading212",
+    "xtb": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-xtb",
+    "consolidate_allocate": "arn:aws:ecs:eu-west-1:364947026340:task-definition/portfolio-pipeline-prod-consolidate-allocate",
 }
 
 
