@@ -19,7 +19,7 @@ the downstream pipeline automatically.
 ## Architecture
 
 XTB is one of three per-connector Step Functions described in
-`docs/roadmap-productionization.md`.  The XTB-specific trigger is file arrival
+`docs/roadmaps/0001-productionization.md`.  The XTB-specific trigger is file arrival
 (S3 ObjectCreated → EventBridge → Step Function), while IBKR and T212 use
 schedule/manual triggers.
 
@@ -114,7 +114,7 @@ This uploads the file and the pipeline picks it up automatically.
 
 ### 4. Step Function + IBKR/T212 pipelines
 
-See `docs/roadmap-productionization.md` Phase 2 for the full orchestration
+See `docs/roadmaps/0001-productionization.md` Phase 2 for the full orchestration
 plan.  The XTB Step Function follows the same two-task pattern
 (`xtb_fetch+transform → consolidate+allocate`) with a file-arrival trigger
 instead of a schedule.

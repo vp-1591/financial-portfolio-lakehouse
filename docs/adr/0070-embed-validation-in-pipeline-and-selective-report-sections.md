@@ -4,7 +4,7 @@
 
 The data quality framework (ADR 0064) provides `pipeline validate` as a standalone CLI command, but validation is not wired into the Step Functions pipeline. Demo CI (`deploy-staging.yml`) goes green even when silver data is corrupted, and `pipeline report` shows empty or misleading charts after a failed pipeline run.
 
-The roadmap (`docs/roadmaps/pipeline-validation.md`) plans to embed scoped validation into the existing ECS commands (`cmd_run_connector`, `cmd_run_consolidate_analytics`) so that FAIL-level checks fail the Step Function task via non-zero exit — without adding new ASL states or extra container cold starts.
+The roadmap (`docs/roadmaps/0008-pipeline-validation.md`) plans to embed scoped validation into the existing ECS commands (`cmd_run_connector`, `cmd_run_consolidate_analytics`) so that FAIL-level checks fail the Step Function task via non-zero exit — without adding new ASL states or extra container cold starts.
 
 Additionally, `pipeline report` needs to degrade gracefully: hiding only the sections whose underlying data is broken or missing, while always showing the Data Quality section.
 

@@ -8,7 +8,7 @@ The XTB connector requires a local `.xlsx` file passed via `--xtb-file`. To make
 2. XTB fetch to accept S3 URIs in addition to local file paths
 3. AWS infrastructure (EventBridge + Step Functions) to trigger the pipeline on file arrival
 
-The roadmap at `docs/roadmap-xtb-cloud-upload.md` describes two options:
+The roadmap at `docs/roadmaps/0002-xtb-cloud-upload.md` describes two options:
 - **Option A** — Direct trigger: `upload-xtb` reads the file locally, calls `fetch_snapshot()`, and starts a Step Function execution via AWS SDK
 - **Option B** — S3 staging + EventBridge: `upload-xtb` uploads to S3 staging, EventBridge detects file arrival and triggers the Step Function
 

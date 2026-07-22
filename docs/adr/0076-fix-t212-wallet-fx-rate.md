@@ -8,7 +8,7 @@ The T212 connector transform treated `walletImpact.fxRate` as a "wallet-to-base"
 
 Additionally, `value_currency` and `base_currency` were both set to `walletImpact.currency` (the wallet currency, e.g., PLN), when they should reflect the security's trading currency (e.g., USD). This meant `amount_base` (= `cash_amount × fx_rate`) was actually in security currency but labeled as base currency.
 
-The roadmap for currency unification (`docs/roadmaps/roadmap-currency-unification.md`) defines four phases. Phase 1 fixes the T212 transform internals without changing the schema — columns keep their old names (`value_currency`, `base_currency`, `fx_rate_to_base`, `amount_base`) but their values are corrected to reflect security currency semantics.
+The roadmap for currency unification (`docs/roadmaps/0010-currency-unification.md`) defines four phases. Phase 1 fixes the T212 transform internals without changing the schema — columns keep their old names (`value_currency`, `base_currency`, `fx_rate_to_base`, `amount_base`) but their values are corrected to reflect security currency semantics.
 
 ## Decision
 

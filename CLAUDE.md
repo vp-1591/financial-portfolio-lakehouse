@@ -15,8 +15,8 @@ To create a single dashboard that consolidates assests from different brokers.
 
 ## Roadmap workflow
 
-Roadmaps live in `docs/roadmap-<topic>.md` and follow the template in
-`docs/roadmap-template.md`. Use `/create-roadmap` to create or update one —
+Roadmaps live in `docs/roadmaps/<number>-<topic>.md` and follow the template in
+`docs/roadmaps/roadmap-template.md`. Use `/create-roadmap` to create or update one —
 it clarifies ambiguities before drafting.
 
 The workflow order is: `analyze → roadmap → plan → implement → ADR → review`.

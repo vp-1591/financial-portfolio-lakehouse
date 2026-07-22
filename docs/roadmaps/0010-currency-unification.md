@@ -49,7 +49,7 @@ Relevant ADRs: [ADR 0046](../adr/0046-fix-consolidated-currency-column.md),
 [ADR 0065](../adr/0065-cdc-analytics-tables.md),
 [ADR 0074](../adr/0074-remove-overloaded-currency-column.md).
 
-Relevant roadmap: [currency-column-clarity](roadmap-currency-column-clarity.md)
+Relevant roadmap: [currency-column-clarity](0009-currency-column-clarity.md)
 (Phases 1–2 done; removed overloaded `currency` column).
 
 ## Success criteria
