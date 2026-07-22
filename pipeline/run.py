@@ -203,10 +203,21 @@ def transform_connector(connector, fernet_key: bytes) -> int:
         try:
             dt = DeltaTable(raw_path, storage_options=storage_opts)
         except Exception:
+            logger.debug(
+                "%s %s: raw table not present at %s, skipping",
+                connector.display_name,
+                layer,
+                raw_path,
+            )
             continue
 
         raw_table = dt.to_pyarrow_table()
         if raw_table.num_rows == 0:
+            logger.warning(
+                "%s %s: raw table is empty (0 rows); skipping transform",
+                connector.display_name,
+                layer,
+            )
             continue
 
         try:
@@ -390,8 +401,10 @@ def cmd_analytics(args: argparse.Namespace) -> int:
         logger.warning("portfolio_holdings failed: %s", exc)
         holdings_ok = False
 
-    # Build CDC analytics tables.  These are optional — if cdc_events
-    # doesn't exist yet, log a warning and continue.
+    # Build CDC analytics tables.  CDC is mandatory — consolidation
+    # guarantees cdc_events exists (or fails).  The guard below is
+    # defense-in-depth and should rarely trigger.
+    # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
     from pipeline.analytics.cdc_tables import (
         build_cash_flow_summary,
         build_dividend_income,
@@ -475,27 +488,41 @@ def cmd_full(args: argparse.Namespace) -> int:
     if result != 0:
         return result
     # Consolidate CDC events after snapshot consolidation
-    _consolidate_cdc()
+    cdc_rc = _consolidate_cdc()
+    if cdc_rc:
+        return cdc_rc
     # Normalize target currency columns in CDC events
-    _normalize_cdc(args)
+    norm_rc = _normalize_cdc(args)
+    if norm_rc:
+        return norm_rc
     return cmd_analytics(args)
 
 
-def _consolidate_cdc() -> None:
-    """Consolidate broker CDC events into a unified table."""
+def _consolidate_cdc() -> int:
+    """Consolidate broker CDC events into a unified table.
+
+    Returns 0 on success, 1 if consolidation raised (e.g. a required
+    broker CDC table is missing or empty).
+    """
     from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
-    consolidate_cdc_events()
+    try:
+        consolidate_cdc_events()
+    except RuntimeError as exc:
+        print(f"Error consolidating CDC events: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
-def _normalize_cdc(args: argparse.Namespace) -> None:
+def _normalize_cdc(args: argparse.Namespace) -> int:
     """Normalize target currency columns in CDC events.
 
     Fills in ``target_fx_rate``, ``target_value``, and ``target_ccy``
     using the CurrencyConverter.  Runs after CDC events are consolidated
     and before CDC analytics tables are built.
 
-    Silently skips if no CDC data exists.
+    Returns 0 on success, 1 if the CDC events table is missing (which
+    indicates a prior consolidation failure).
     """
     from pipeline.normalized.normalize import normalize_currency
 
@@ -509,8 +536,10 @@ def _normalize_cdc(args: argparse.Namespace) -> None:
             target_currency=target_currency,
             manual_rates=manual_rates,
         )
-    except FileNotFoundError:
-        logger.debug("CDC events table not found; skipping currency normalization")
+    except FileNotFoundError as exc:
+        logger.error("CDC events table not found for currency normalization: %s", exc)
+        return 1
+    return 0
 
 
 def cmd_run_connector(args: argparse.Namespace) -> int:
@@ -544,9 +573,14 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     if rc:
         return rc
     # Validate connector's normalized tables after transform
+    # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+    # Only validate CDC table for connectors that support CDC (XTB does not).
+    tables = [f"{connector.name}_snapshot"]
+    if connector.cdc_supported:
+        tables.append(f"{connector.name}_cdc")
     return run_validation(
         fernet_key=fernet_key,
-        tables=[f"{connector.name}_snapshot", f"{connector.name}_cdc"],
+        tables=tables,
     )
 
 
@@ -561,9 +595,13 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     rc = cmd_consolidate(args)
     if rc:
         return rc
-    _consolidate_cdc()
+    cdc_rc = _consolidate_cdc()
+    if cdc_rc:
+        return cdc_rc
     # Normalize target currency columns in CDC events
-    _normalize_cdc(args)
+    norm_rc = _normalize_cdc(args)
+    if norm_rc:
+        return norm_rc
     # Validate silver tables after consolidate + CDC
     silver_rc = run_validation(
         fernet_key=fernet_key,

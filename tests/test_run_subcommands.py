@@ -60,6 +60,18 @@ class TestArgparseDispatch:
         connector = get("xtb")
         assert connector.name == "xtb"
 
+    def test_cdc_supported_ibkr(self) -> None:
+        """IBKR supports CDC."""
+        assert get("ibkr").cdc_supported is True
+
+    def test_cdc_supported_trading212(self) -> None:
+        """Trading 212 supports CDC."""
+        assert get("trading212").cdc_supported is True
+
+    def test_cdc_supported_xtb(self) -> None:
+        """XTB does not support CDC."""
+        assert get("xtb").cdc_supported is False
+
 
 # ---------------------------------------------------------------------------
 # fetch_connector / transform_connector isolation
@@ -258,7 +270,7 @@ class TestCmdRunConnector:
         assert rc == 0
         mock_validate.assert_called_once_with(
             fernet_key=b"test-key",
-            tables=["xtb_snapshot", "xtb_cdc"],
+            tables=["xtb_snapshot"],
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
@@ -272,6 +284,8 @@ class TestCmdRunConnector:
 class TestCmdRunConsolidateAnalytics:
     """cmd_run_consolidate_analytics runs consolidate, validates silver, then analytics."""
 
+    @patch("pipeline.run._normalize_cdc", return_value=0)
+    @patch("pipeline.run._consolidate_cdc", return_value=0)
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
@@ -282,6 +296,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_analytics: MagicMock,
         mock_validate: MagicMock,
+        mock_consolidate_cdc: MagicMock,
+        mock_normalize_cdc: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -309,6 +325,8 @@ class TestCmdRunConsolidateAnalytics:
             ],
         )
 
+    @patch("pipeline.run._normalize_cdc", return_value=0)
+    @patch("pipeline.run._consolidate_cdc", return_value=0)
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=1)
@@ -319,6 +337,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_analytics: MagicMock,
         mock_validate: MagicMock,
+        mock_consolidate_cdc: MagicMock,
+        mock_normalize_cdc: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -331,6 +351,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_analytics.assert_not_called()
         mock_validate.assert_not_called()
 
+    @patch("pipeline.run._normalize_cdc", return_value=0)
+    @patch("pipeline.run._consolidate_cdc", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.run_validation", return_value=1)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
@@ -341,6 +363,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_validate: MagicMock,
         mock_analytics: MagicMock,
+        mock_consolidate_cdc: MagicMock,
+        mock_normalize_cdc: MagicMock,
     ) -> None:
         """Silver validation failure prevents analytics from running."""
         args = argparse.Namespace(
@@ -353,6 +377,8 @@ class TestCmdRunConsolidateAnalytics:
         assert rc == 1
         mock_analytics.assert_not_called()
 
+    @patch("pipeline.run._normalize_cdc", return_value=0)
+    @patch("pipeline.run._consolidate_cdc", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.run_validation", side_effect=[0, 1])
     @patch("pipeline.run.cmd_consolidate", return_value=0)
@@ -363,6 +389,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_validate: MagicMock,
         mock_analytics: MagicMock,
+        mock_consolidate_cdc: MagicMock,
+        mock_normalize_cdc: MagicMock,
     ) -> None:
         """Gold validation failure after analytics returns non-zero."""
         args = argparse.Namespace(
@@ -442,6 +470,8 @@ class TestCmdTransformRegression:
 class TestCmdFullRegression:
     """cmd_full chains fetch → transform → consolidate → analytics."""
 
+    @patch("pipeline.run._normalize_cdc", return_value=0)
+    @patch("pipeline.run._consolidate_cdc", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
     @patch("pipeline.run.cmd_transform", return_value=0)
@@ -452,6 +482,8 @@ class TestCmdFullRegression:
         mock_transform: MagicMock,
         mock_consolidate: MagicMock,
         mock_analytics: MagicMock,
+        mock_consolidate_cdc: MagicMock,
+        mock_normalize_cdc: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             xtb_file=None,
@@ -467,6 +499,8 @@ class TestCmdFullRegression:
         mock_consolidate.assert_called_once()
         mock_analytics.assert_called_once()
 
+    @patch("pipeline.run._normalize_cdc", return_value=0)
+    @patch("pipeline.run._consolidate_cdc", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
     @patch("pipeline.run.cmd_transform", return_value=0)
@@ -477,6 +511,8 @@ class TestCmdFullRegression:
         mock_transform: MagicMock,
         mock_consolidate: MagicMock,
         mock_analytics: MagicMock,
+        mock_consolidate_cdc: MagicMock,
+        mock_normalize_cdc: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             xtb_file=None,

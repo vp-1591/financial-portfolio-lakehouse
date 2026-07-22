@@ -196,6 +196,16 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
     ],
 }
 
+# Tables that must contain at least one row.  CDC is mandatory: an empty
+# CDC table indicates misconfiguration or a fully-blank account, both of
+# which must fail the pipeline rather than silently produce no analytics.
+# XTB is exempt (file-based, no CDC feed) — xtb_cdc is intentionally absent.
+NON_EMPTY_REQUIRED: set[str] = {
+    "cdc_events",
+    "ibkr_cdc",
+    "trading212_cdc",
+}
+
 
 # ---------------------------------------------------------------------------
 # Individual check functions
@@ -263,6 +273,24 @@ def check_required_nulls(
     return CheckResult(
         status=FAIL,
         details="Nulls in required fields: " + "; ".join(null_issues),
+    )
+
+
+def check_non_empty(table_name: str, arrow_table: pa.Table) -> CheckResult:
+    """Return FAIL when a required-non-empty table has zero rows.
+
+    Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+    """
+    if arrow_table.num_rows > 0:
+        return CheckResult(
+            status=PASS,
+            details=f"{table_name}: {arrow_table.num_rows} rows",
+            actual=str(arrow_table.num_rows),
+        )
+    return CheckResult(
+        status=FAIL,
+        details=f"{table_name}: required to be non-empty but has 0 rows",
+        actual="0",
     )
 
 
@@ -554,10 +582,16 @@ def run_validation(
             dt = DeltaTable(table_path, storage_options=storage_options)
             arrow_table = dt.to_pyarrow_table()
         except Exception:
-            logger.warning("Table %s not found, skipping", table_name)
-            # Record a WARN for missing table
+            # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+            missing_status = FAIL if table_name in NON_EMPTY_REQUIRED else WARN
+            logger.log(
+                logging.ERROR if missing_status == FAIL else logging.WARNING,
+                "Table %s not found%s",
+                table_name,
+                " (required)" if missing_status == FAIL else "",
+            )
             result = CheckResult(
-                status=WARN,
+                status=missing_status,
                 details=f"Table {table_name} not found",
             )
             all_results.append(result)
@@ -594,7 +628,14 @@ def run_validation(
             all_results.append(result)
             result_metadata.append((table_name, "freshness"))
 
-        # 5. Reconciliation (consolidated_holdings only)
+        # 5. Non-empty check (CDC tables and any NON_EMPTY_REQUIRED entry)
+        # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+        if table_name in NON_EMPTY_REQUIRED:
+            result = check_non_empty(table_name, arrow_table)
+            all_results.append(result)
+            result_metadata.append((table_name, "non_empty"))
+
+        # 6. Reconciliation (consolidated_holdings only)
         if table_name == "consolidated_holdings":
             result = check_reconciliation(table_name, arrow_table, cdc_table)
             all_results.append(result)
