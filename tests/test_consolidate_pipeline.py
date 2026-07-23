@@ -18,7 +18,8 @@ from pipeline.normalized.consolidate import (
     consolidate_holdings,
 )
 from pipeline.normalized.extract import extract_holdings
-from pipeline.storage import LocalBackend, StorageConfig, get_storage, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
 from tests.fixtures.xtb import xtb_normalized_snapshot

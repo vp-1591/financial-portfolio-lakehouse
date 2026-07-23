@@ -19,6 +19,8 @@ from pipeline.connectors.registry import get
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.consolidate import Holding
 from pipeline.secrets import reset_mode, set_mode
+from pipeline.storage import StorageConfig, use_storage
+from tests.local_backend import LocalBackend
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +414,6 @@ class TestExtractHoldingsShim:
         from deltalake import write_deltalake
 
         from pipeline.normalized.extract import extract_holdings
-        from pipeline.storage import LocalBackend, StorageConfig, use_storage
         from tests.fixtures.ibkr import ibkr_normalized_snapshot
 
         fernet_key = generate_key()
@@ -442,7 +443,6 @@ class TestExtractHoldingsShim:
         from deltalake import write_deltalake
 
         from pipeline.normalized.extract import extract_holdings
-        from pipeline.storage import LocalBackend, StorageConfig, use_storage
         from tests.fixtures.trading212 import t212_normalized_snapshot
 
         fernet_key = generate_key()
@@ -471,7 +471,6 @@ class TestExtractHoldingsShim:
         from deltalake import write_deltalake
 
         from pipeline.normalized.extract import extract_holdings
-        from pipeline.storage import LocalBackend, StorageConfig, use_storage
         from tests.fixtures.xtb import xtb_normalized_snapshot
 
         fernet_key = generate_key()

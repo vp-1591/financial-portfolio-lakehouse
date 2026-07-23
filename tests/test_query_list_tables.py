@@ -18,7 +18,8 @@ from pipeline.query import (
     parse_alias,
     refresh,
 )
-from pipeline.storage import LocalBackend, S3Backend, StorageConfig, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import S3Backend, StorageConfig, use_storage
 
 
 # ---------------------------------------------------------------------------

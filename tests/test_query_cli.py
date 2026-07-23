@@ -14,7 +14,8 @@ from deltalake import write_deltalake
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 from pipeline.run import cmd_query
-from pipeline.storage import LocalBackend, StorageConfig, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, use_storage
 
 
 # ---------------------------------------------------------------------------

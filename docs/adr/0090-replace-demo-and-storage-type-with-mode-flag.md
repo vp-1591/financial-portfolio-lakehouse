@@ -39,6 +39,7 @@ Phase 1 (ADR 0089) made `fetch` fail loudly when all broker credentials were mis
 - **Breaking change for ECS tasks.** Task definitions must add `--mode staging`/`--mode prod` to the command and remove `DEMO=true` from the environment. This is a Terraform migration.
 - **Breaking change for local users.** `DEMO` and `STORAGE_TYPE` env vars no longer work. Users must pass `--mode docker` (or `staging`/`prod`). The `.env.example` documents the new setup.
 - **`fetch`/`transform`/`consolidate`/`analytics` subcommands are gone.** Users who relied on them must use `run-connector <name>` or `run-consolidate-analytics` instead.
+- **`LocalBackend` moved to `tests/local_backend.py`.** Because `resolve_storage()` only ever returns `S3Backend` now (there is no `--mode local`), the local-filesystem backend is test-only. The `StorageConfig.backend` field is now required (the `__post_init__` default that silently substituted `LocalBackend` is removed), so every `StorageConfig` must be constructed with an explicit backend. `keygen` no longer resolves storage — it prints `ENCRYPTION_KEY` instructions, which is the only supported path now that all modes are S3-backed.
 
 ## Validation
 

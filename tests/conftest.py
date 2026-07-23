@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from pipeline.crypto import generate_key
-from pipeline.storage import LocalBackend, StorageConfig, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, use_storage
 
 # All pipeline-related environment variables that tests must isolate from.
 # Cleared before each test so local .env files and shell env vars don't leak.

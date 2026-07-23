@@ -13,7 +13,8 @@ from deltalake import write_deltalake
 
 from pipeline.connectors.registry import get
 from pipeline.crypto import generate_key
-from pipeline.storage import LocalBackend, StorageConfig, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, use_storage
 from tests.fixtures.ibkr import ibkr_raw_positions, ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_raw_snapshot, t212_normalized_snapshot
 from tests.fixtures.xtb import xtb_raw_snapshot, xtb_normalized_snapshot

@@ -21,7 +21,6 @@ import pytest
 
 from pipeline.secrets import reset_mode, set_mode
 from pipeline.storage import (
-    LocalBackend,
     S3Backend,
     S3_DEFAULT_PREFIX,
     StorageConfig,
@@ -29,6 +28,7 @@ from pipeline.storage import (
     resolve_storage,
     use_storage,
 )
+from tests.local_backend import LocalBackend
 
 
 class TestResolveStorage:
@@ -258,14 +258,12 @@ class TestLocalBackend:
     """Test LocalBackend path generation."""
 
     def test_table_path(self, tmp_path: Path):
-        from pipeline.storage import LocalBackend
 
         backend = LocalBackend(tmp_path)
         result = backend.table_path("raw", "ibkr_snapshot")
         assert result == str(tmp_path.resolve() / "raw" / "ibkr_snapshot")
 
     def test_ensure_parent(self, tmp_path: Path):
-        from pipeline.storage import LocalBackend
 
         backend = LocalBackend(tmp_path)
         path = str(tmp_path / "raw" / "ibkr_snapshot")
@@ -273,7 +271,6 @@ class TestLocalBackend:
         assert (tmp_path / "raw").exists()
 
     def test_ensure_parent_creates_parent_dirs(self, tmp_path: Path):
-        from pipeline.storage import LocalBackend
 
         backend = LocalBackend(tmp_path)
         path = str(tmp_path / "raw" / "ibkr_snapshot")
@@ -282,7 +279,6 @@ class TestLocalBackend:
 
     def test_ensure_parent_rescues_orphaned_parquets(self, tmp_path: Path):
         """Corrupted table dir (parquet files, no _delta_log) is moved to .rescue/."""
-        from pipeline.storage import LocalBackend
 
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "trading212_snapshot"
@@ -306,7 +302,6 @@ class TestLocalBackend:
 
     def test_ensure_parent_preserves_valid_table(self, tmp_path: Path):
         """A valid Delta table (with _delta_log) is left intact."""
-        from pipeline.storage import LocalBackend
 
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "ibkr_snapshot"
@@ -324,7 +319,6 @@ class TestLocalBackend:
 
     def test_ensure_parent_rescues_empty_dir(self, tmp_path: Path):
         """An empty table directory is moved to .rescue/ so write_deltalake starts fresh."""
-        from pipeline.storage import LocalBackend
 
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "ibkr_snapshot"
@@ -345,7 +339,6 @@ class TestLocalBackend:
 
     def test_ensure_parent_noop_for_nonexistent_path(self, tmp_path: Path):
         """A path that doesn't exist yet is simply prepared (parent created)."""
-        from pipeline.storage import LocalBackend
 
         backend = LocalBackend(tmp_path)
         path = str(tmp_path / "raw" / "new_table")
@@ -613,7 +606,6 @@ class TestStorageConfigHelpers:
     """Test StorageConfig convenience methods."""
 
     def test_raw_path(self, tmp_path: Path):
-        from pipeline.storage import LocalBackend
 
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
@@ -630,7 +622,6 @@ class TestStorageConfigHelpers:
         assert config.raw_path("ibkr_snapshot") == str(data / "raw" / "ibkr_snapshot")
 
     def test_normalized_path(self, tmp_path: Path):
-        from pipeline.storage import LocalBackend
 
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
@@ -649,7 +640,6 @@ class TestStorageConfigHelpers:
         )
 
     def test_analytics_path(self, tmp_path: Path):
-        from pipeline.storage import LocalBackend
 
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
@@ -668,7 +658,6 @@ class TestStorageConfigHelpers:
         )
 
     def test_staging_path_local_backend(self, tmp_path: Path) -> None:
-        from pipeline.storage import LocalBackend
 
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
@@ -688,7 +677,6 @@ class TestStorageConfigHelpers:
         assert result == str(data / "staging" / "xtb" / "report.xlsx")
 
     def test_staging_path_local_backend_staging(self, tmp_path: Path) -> None:
-        from pipeline.storage import LocalBackend
 
         data = tmp_path / "data_demo"
         secrets = tmp_path / ".secrets"
