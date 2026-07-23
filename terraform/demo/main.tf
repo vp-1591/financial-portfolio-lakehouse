@@ -115,21 +115,21 @@ locals {
   # in the environment, so the ECS task must set the _DEMO-suffixed env var name.
   connectors = {
     ibkr = {
-      command = ["run-connector", "ibkr", "--target-currency", "EUR"]
+      command = ["run-connector", "ibkr", "--mode", "staging", "--target-currency", "EUR"]
       secrets = [
         { env_var = "IBKR_FLEX_TOKEN_DEMO",   param_name = "/portfolio/demo/IBKR_FLEX_TOKEN_DEMO" },
         { env_var = "IBKR_FLEX_QUERY_ID_DEMO", param_name = "/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO" },
       ]
     }
     trading212 = {
-      command = ["run-connector", "trading212", "--target-currency", "EUR"]
+      command = ["run-connector", "trading212", "--mode", "staging", "--target-currency", "EUR"]
       secrets = [
         { env_var = "T212_API_KEY_DEMO",    param_name = "/portfolio/demo/T212_API_KEY_DEMO" },
         { env_var = "T212_API_SECRET_DEMO",  param_name = "/portfolio/demo/T212_API_SECRET_DEMO" },
       ]
     }
     xtb = {
-      command = ["run-connector", "xtb", "--target-currency", "EUR"]
+      command = ["run-connector", "xtb", "--mode", "staging", "--target-currency", "EUR"]
       secrets = []
     }
   }
@@ -464,8 +464,6 @@ locals {
   }
 
   common_environment = {
-    DEMO           = "true"
-    STORAGE_TYPE    = "cloud"
     S3_BUCKET       = var.bucket_name
     S3_BUCKET_DEMO  = var.bucket_name
     S3_PREFIX_DEMO  = var.s3_prefix
@@ -491,11 +489,7 @@ module "connector_task" {
   cpu        = 256
   memory     = 512
   command    = each.value.command
-  environment = merge(local.common_environment, {
-    IBKR_ENABLED = each.key == "ibkr" ? "true" : "false"
-    T212_ENABLED = each.key == "trading212" ? "true" : "false"
-    XTB_ENABLED  = each.key == "xtb" ? "true" : "false"
-  })
+  environment = local.common_environment
   secrets = concat(each.value.secrets, [
     { env_var = "ENCRYPTION_KEY_DEMO", arn = aws_ssm_parameter.encryption_key_demo.arn }
   ])
@@ -514,12 +508,8 @@ module "consolidate_allocate" {
   demo   = true
   cpu    = 256
   memory = 512
-  command = ["run-consolidate-analytics", "--target-currency", "EUR"]
-  environment = merge(local.common_environment, {
-    IBKR_ENABLED = "true"
-    T212_ENABLED = "true"
-    XTB_ENABLED  = "true"
-  })
+  command = ["run-consolidate-analytics", "--mode", "staging", "--target-currency", "EUR"]
+  environment = local.common_environment
   secrets = [
     { env_var = "ENCRYPTION_KEY_DEMO", arn = aws_ssm_parameter.encryption_key_demo.arn }
   ]

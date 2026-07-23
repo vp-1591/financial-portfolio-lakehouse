@@ -467,30 +467,123 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_full(args: argparse.Namespace) -> int:
-    """Run the full pipeline: connectors in parallel, then consolidate+analytics.
+    """Run the full pipeline.
 
-    In docker mode, mirrors the Step Functions workflow: each connector runs
-    fetch+transform+validate via :func:`cmd_run_connector`, then
-    :func:`cmd_run_consolidate_analytics` runs consolidate+CDC+analytics+validate.
+    In **docker** mode, mirrors the Step Functions workflow locally: each
+    connector runs fetch+transform+validate via :func:`cmd_run_connector`,
+    then :func:`cmd_run_consolidate_analytics` runs
+    consolidate+CDC+analytics+validate.
 
-    Staging and prod modes are not yet implemented (Step Functions trigger
-    lands in Phase 3).
+    In **staging** and **prod** modes, triggers a Step Functions execution
+    instead of running locally.  The caller needs only AWS credentials with
+    ``states:StartExecution`` permission; broker secrets are injected into
+    ECS containers by SSM at runtime.  With ``--wait``, polls the execution
+    and prints failure details (TaskFailed history + CloudWatch container
+    logs) on a non-successful terminal status.
+
+    Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md.
     """
     mode = get_mode()
-    if mode != "docker":
+    if mode == "docker":
+        inject_secrets()
+        rc = _run_connectors_parallel(args)
+        if rc:
+            return rc
+        return cmd_run_consolidate_analytics(args)
+
+    return _trigger_sfn_execution(args, mode)
+
+
+def _trigger_sfn_execution(args: argparse.Namespace, mode: str) -> int:
+    """Start (and optionally wait on) a Step Functions execution for staging/prod.
+
+    Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md.
+    """
+    # XTB is not supported in the SFN-triggered full run — it requires an
+    # uploaded file and is driven by the EventBridge S3 file-arrival rule.
+    if getattr(args, "with_xtb", False) or getattr(args, "xtb_file", None):
         print(
-            f"full --mode {mode} is not yet implemented (Step Functions trigger "
-            "lands in Phase 3). Use --mode docker, or run run-connector / "
-            "run-consolidate-analytics directly.",
+            "XTB is not supported in staging/prod 'full'. Use 'upload-xtb' to "
+            "push the file to S3; the EventBridge file-arrival trigger runs "
+            "the XTB connector automatically.",
             file=sys.stderr,
         )
         return 1
 
-    inject_secrets()
-    rc = _run_connectors_parallel(args)
-    if rc:
-        return rc
-    return cmd_run_consolidate_analytics(args)
+    import boto3
+
+    session = boto3.Session()
+    if session.get_credentials() is None:
+        print(
+            "AWS credentials not found. Run `aws configure` or set "
+            "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY.",
+            file=sys.stderr,
+        )
+        return 1
+
+    from pipeline.sfn import (
+        DEFAULT_CONNECTORS,
+        DEFAULT_POLL_INTERVAL_SECONDS,
+        DEFAULT_TIMEOUT_SECONDS,
+        build_clients,
+        build_execution_input,
+        console_url,
+        execution_name,
+        fetch_failure_details,
+        resolve_all_arns,
+        start_execution,
+        state_machine_arn,
+        wait_for_execution,
+    )
+
+    arn = state_machine_arn(mode)
+    if not arn:
+        return 1
+
+    region = session.region_name or "eu-west-1"
+    sfn_client, ecs_client, logs_client = build_clients(region)
+    target_currency = getattr(args, "target_currency", "EUR")
+    connector_arns, consolidate_arn = resolve_all_arns(
+        ecs_client, mode, DEFAULT_CONNECTORS
+    )
+    exec_input = build_execution_input(
+        DEFAULT_CONNECTORS, connector_arns, consolidate_arn, mode, target_currency
+    )
+
+    prefix = "staging" if mode == "staging" else "manual"
+    name = execution_name(prefix)
+    execution_arn = start_execution(sfn_client, arn, exec_input, name)
+    print(f"Started execution: {name}")
+    print(f"ARN: {execution_arn}")
+    print(f"Monitor: {console_url(execution_arn, region)}")
+
+    if not getattr(args, "wait", False):
+        return 0
+
+    try:
+        status = wait_for_execution(
+            sfn_client,
+            execution_arn,
+            DEFAULT_TIMEOUT_SECONDS,
+            DEFAULT_POLL_INTERVAL_SECONDS,
+        )
+    except TimeoutError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 1
+
+    if status == "SUCCEEDED":
+        print("Step Function execution succeeded")
+        return 0
+
+    print(
+        f"::error::Step Function execution failed with status: {status}",
+        file=sys.stderr,
+    )
+    print(
+        fetch_failure_details(sfn_client, logs_client, execution_arn, mode),
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _run_connectors_parallel(args: argparse.Namespace) -> int:
@@ -823,7 +916,7 @@ def main() -> int:
     full_parser = subparsers.add_parser(
         "full",
         parents=[common_parser, mode_parser],
-        help="Run full pipeline (docker mode only in Phase 2)",
+        help="Run full pipeline (docker runs locally; staging/prod trigger Step Functions)",
     )
     full_parser.add_argument(
         "--xtb-file",
@@ -831,6 +924,24 @@ def main() -> int:
         type=str,
         default=None,
         help="Path to XTB Excel report, or an s3:// URI (can be specified multiple times)",
+    )
+    full_parser.add_argument(
+        "--with-xtb",
+        action="store_true",
+        default=False,
+        help=(
+            "Include the XTB connector (staging/prod only; not yet implemented — "
+            "use upload-xtb + EventBridge file-arrival trigger instead)"
+        ),
+    )
+    full_parser.add_argument(
+        "--wait",
+        action="store_true",
+        default=False,
+        help=(
+            "Poll the Step Functions execution and print failure details "
+            "(staging/prod only; default timeout 900s, poll interval 30s)"
+        ),
     )
     full_parser.add_argument(
         "--fx-rate",
@@ -928,10 +1039,15 @@ def main() -> int:
         # Set execution mode from --mode flag before storage resolution.
         set_mode(args.mode)
 
-        # Resolve storage configuration before any path access.
-        from pipeline.storage import resolve_storage
+        # Resolve storage configuration before any path access — except for
+        # the SFN-trigger path (full --mode staging|prod), which needs no S3
+        # data-plane config on the caller's machine (broker secrets are
+        # injected into ECS containers at runtime).
+        # Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md
+        if not (args.command == "full" and args.mode in ("staging", "prod")):
+            from pipeline.storage import resolve_storage
 
-        resolve_storage()
+            resolve_storage()
 
     commands = {
         "keygen": cmd_keygen,

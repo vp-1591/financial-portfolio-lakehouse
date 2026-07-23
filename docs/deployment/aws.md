@@ -170,27 +170,33 @@ aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"
 
 | Trigger | Action |
 |---------|--------|
-| Push to `main` | Build & push Docker image → start demo Step Functions execution |
+| Push to `main` | Build & push Docker image → `pipeline run full --mode staging --wait` (triggers the demo Step Functions execution and waits for it) |
 | Tag push `v*` | Build & push Docker image with version tag + `production-latest` |
-| Manual dispatch | Run pipeline directly via GitHub Actions (supports demo toggle) |
+| Daily schedule | EventBridge triggers the prod Step Functions execution automatically |
+| S3 file arrival | EventBridge triggers the orchestrator when an XTB file lands in staging |
 
 ## Manual pipeline trigger
 
-Once the pipeline is deployed (image pushed, secrets seeded), use
-`scripts/run_prod_pipeline.py` to trigger the production Step Functions
-orchestrator from the CLI. It requires AWS credentials that permit
-`states:StartExecution` on the orchestrator state machine.
+Once the pipeline is deployed (image pushed, secrets seeded), trigger a
+Step Functions execution from the CLI with `pipeline run full --mode staging|prod`.
+It requires only AWS credentials that permit `states:StartExecution` on the
+orchestrator state machine — broker secrets are injected into ECS containers
+by SSM at runtime, so no `IBKR_FLEX_TOKEN` / `T212_API_KEY` are needed locally.
+Set `STAGING_STATE_MACHINE_ARN` or `PROD_STATE_MACHINE_ARN` (from the
+`state_machine_arn` Terraform output) in your environment first.
 
 ```bash
-# Run daily connectors (IBKR + Trading 212)
-python scripts/run_prod_pipeline.py
+# Trigger the demo (staging) execution and return immediately
+python -m pipeline.run full --mode staging
 
-# Include XTB
-python scripts/run_prod_pipeline.py --with-xtb
+# Trigger and wait for completion (prints failure details on a non-successful run)
+python -m pipeline.run full --mode staging --wait
 
-# Include XTB with a specific file
-python scripts/run_prod_pipeline.py --with-xtb --xtb-file s3://investment-portfolio-pipeline/staging/xtb/file.csv
-
-# Dry-run: print the input JSON without starting an execution
-python scripts/run_prod_pipeline.py --dry-run
+# Trigger the production execution
+python -m pipeline.run full --mode prod --wait
 ```
+
+`--with-xtb` / `--xtb-file` are not supported in staging/prod `full` — XTB is
+driven by the EventBridge S3 file-arrival trigger. Upload a file with
+`pipeline run upload-xtb <file> --mode staging` and the orchestrator runs the
+XTB connector automatically.

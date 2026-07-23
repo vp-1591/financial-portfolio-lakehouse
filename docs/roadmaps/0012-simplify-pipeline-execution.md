@@ -111,7 +111,7 @@ Add a `--mode docker|staging|prod` CLI flag that replaces `DEMO` and `STORAGE_TY
 
 ---
 
-### Phase 3 — Make `full` trigger Step Functions in staging/prod modes *[status: planned]*
+### Phase 3 — Make `full` trigger Step Functions in staging/prod modes *[status: done]*
 
 When `--mode staging` or `--mode prod`, `cmd_full` starts a Step Functions execution instead of running the pipeline locally. Absorb `scripts/run_prod_pipeline.py` (a manual trigger script, not used by any CI/CD workflow) into `cmd_full`. This replaces the Phase 2 "not yet implemented" stub for staging/prod `full` with the real SFN trigger.
 
@@ -155,22 +155,22 @@ boto3 → start_execution() ───────► Step Functions
 The `demo` field is dropped from the input — it was vestigial (the ASL never references `$.demo`). The `consolidate_command` field is new (see ASL change below). Task definition ARNs are resolved at runtime via `boto3 ecs.describe_task_definition` using family names (`portfolio-pipeline-{env}-{connector}`), not hardcoded.
 
 **Scope:**
-- [ ] Use `boto3` (already a dependency — `pipeline/s3.py` imports it) for Step Functions and ECS APIs
-- [ ] `cmd_full` in staging mode: call `sfn.start_execution()` with the staging state machine ARN and execution input
-- [ ] `cmd_full` in prod mode: call `sfn.start_execution()` with the prod state machine ARN and execution input
-- [ ] Default connector list for SFN input: `ibkr` and `trading212` (XTB is not supported in staging/prod `full` — see below)
-- [ ] `--with-xtb` and `--xtb-file` flags in staging/prod mode raise a "not yet implemented" error with guidance to use `upload-xtb` + EventBridge trigger instead
-- [ ] Resolve ECS task definition ARNs at runtime via `boto3 ecs.describe_task_definition` (family names follow `portfolio-pipeline-{env}-{connector}` for connectors and `portfolio-pipeline-{env}-consolidate-allocate` for the consolidate step)
-- [ ] Print the execution ARN and a clickable Step Functions console URL after starting the execution
-- [ ] Validate that AWS credentials are configured before calling SFN; print actionable error if missing (e.g., "Run `aws configure` or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY")
-- [ ] Add `--wait` flag to `full` that polls the SFN execution until completion (default timeout: 900 seconds / 15 minutes, polling interval: 30 seconds). On `SUCCEEDED`, exit 0. On `FAILED`, `TIMED_OUT`, or `ABORTED`, exit 1 and print failure details: (1) fetch and parse SFN execution history events (TaskFailed, TaskTimedOut, ExecutionFailed) and (2) fetch and print CloudWatch container logs for each connector task — absorbing the functionality of `.github/scripts/parse_stepfunctions_event.py` and `.github/scripts/format_log_events.py`
-- [ ] Add `STAGING_STATE_MACHINE_ARN` and `PROD_STATE_MACHINE_ARN` environment variables for state machine ARN configuration (set by Terraform outputs in `.env` or CI secrets, not hardcoded)
-- [ ] Update the SFN state machine ASL definition to read the consolidate command from execution input (`"Command.$": "$.consolidate_command"`) instead of hardcoding `["run-consolidate-analytics", "--target-currency", "EUR"]`. This is a one-line ASL change that allows `--mode` to be passed through to the consolidate step. The Map→ConsolidateAllocate flow stays the same
-- [ ] Delete `scripts/run_prod_pipeline.py` (manual prod trigger script, now absorbed into `cmd_full`)
-- [ ] Simplify `.github/workflows/deploy-staging.yml`: replace the "Trigger demo pipeline", "Wait for demo pipeline", and "Print container logs on failure" steps with `python -m pipeline.run full --mode staging --wait`; keep Docker build/push steps
-- [ ] Delete `.github/scripts/parse_stepfunctions_event.py` and `.github/scripts/format_log_events.py` — failure detail printing moves into `--wait`
-- [ ] Update Terraform ECS task definitions: add `--mode staging` or `--mode prod` to connector commands and the consolidate-allocate command (e.g., `["run-connector", "ibkr", "--mode", "staging", "--target-currency", "EUR"]`). Remove `DEMO`, `STORAGE_TYPE`, `IBKR_ENABLED`, `T212_ENABLED`, and `XTB_ENABLED` from the `common_environment` blocks — each ECS task runs exactly one connector via `run-connector <name>`, so the enabled flags are redundant (they default to enabled when unset), and `DEMO`/`STORAGE_TYPE` are dead env vars since Phase 2 removed the Python code that reads them. `S3_BUCKET`, `S3_BUCKET_DEMO`, `S3_PREFIX_DEMO`, and `AWS_REGION` stay (still read by `resolve_storage()` and `resolve_aws_credentials()`). `_DEMO`-suffixed secret env var names remain until Phase 4
-- [ ] Update EventBridge input templates in the orchestrator module: add `--mode staging` or `--mode prod` to connector commands, add `consolidate_command` with `--mode`, and drop the vestigial `demo` field from the input
+- [x] Use `boto3` for Step Functions and ECS APIs. *(Correction: the original note that boto3 was "already a dependency — `pipeline/s3.py` imports it" was wrong; `pipeline/s3.py` uses `pyarrow.fs`. boto3 was added to `[project.optional-dependencies] pipeline` as `boto3==1.37.0`. See ADR 0091.)*
+- [x] `cmd_full` in staging mode: call `sfn.start_execution()` with the staging state machine ARN and execution input
+- [x] `cmd_full` in prod mode: call `sfn.start_execution()` with the prod state machine ARN and execution input
+- [x] Default connector list for SFN input: `ibkr` and `trading212` (XTB is not supported in staging/prod `full` — see below)
+- [x] `--with-xtb` and `--xtb-file` flags in staging/prod mode raise an error with guidance to use `upload-xtb` + EventBridge trigger instead
+- [x] Resolve ECS task definition ARNs at runtime via `boto3 ecs.describe_task_definition` (family names follow `portfolio-pipeline-{env}-{connector}` for connectors and `portfolio-pipeline-{env}-consolidate-allocate` for the consolidate step)
+- [x] Print the execution ARN and a clickable Step Functions console URL after starting the execution
+- [x] Validate that AWS credentials are configured before calling SFN; print actionable error if missing (e.g., "Run `aws configure` or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY")
+- [x] Add `--wait` flag to `full` that polls the SFN execution until completion (default timeout: 900 seconds / 15 minutes, polling interval: 30 seconds). On `SUCCEEDED`, exit 0. On `FAILED`, `TIMED_OUT`, or `ABORTED`, exit 1 and print failure details: (1) fetch and parse SFN execution history events (TaskFailed, TaskTimedOut, ExecutionFailed) and (2) fetch and print CloudWatch container logs for each connector task — absorbing the functionality of `.github/scripts/parse_stepfunctions_event.py` and `.github/scripts/format_log_events.py`
+- [x] Add `STAGING_STATE_MACHINE_ARN` and `PROD_STATE_MACHINE_ARN` environment variables for state machine ARN configuration (set by Terraform outputs in `.env` or CI secrets, not hardcoded)
+- [x] Update the SFN state machine ASL definition to read the consolidate command from execution input (`"Command.$": "$.consolidate_command"`) instead of hardcoding `["run-consolidate-analytics", "--target-currency", "EUR"]`. This is a one-line ASL change that allows `--mode` to be passed through to the consolidate step. The Map→ConsolidateAllocate flow stays the same
+- [x] Delete `scripts/run_prod_pipeline.py` (manual prod trigger script, now absorbed into `cmd_full`)
+- [x] Simplify `.github/workflows/deploy-staging.yml`: replace the "Trigger demo pipeline", "Wait for demo pipeline", and "Print container logs on failure" steps with `python -m pipeline.run full --mode staging --wait`; keep Docker build/push steps
+- [x] Delete `.github/scripts/parse_stepfunctions_event.py` and `.github/scripts/format_log_events.py` — failure detail printing moves into `--wait`
+- [x] Update Terraform ECS task definitions: add `--mode staging` or `--mode prod` to connector commands and the consolidate-allocate command (e.g., `["run-connector", "ibkr", "--mode", "staging", "--target-currency", "EUR"]`). Remove `DEMO`, `STORAGE_TYPE`, `IBKR_ENABLED`, `T212_ENABLED`, and `XTB_ENABLED` from the `common_environment` blocks — each ECS task runs exactly one connector via `run-connector <name>`, so the enabled flags are redundant (they default to enabled when unset), and `DEMO`/`STORAGE_TYPE` are dead env vars since Phase 2 removed the Python code that reads them. `S3_BUCKET`, `S3_BUCKET_DEMO`, `S3_PREFIX_DEMO`, and `AWS_REGION` stay (still read by `resolve_storage()` and `resolve_aws_credentials()`). `_DEMO`-suffixed secret env var names remain until Phase 4
+- [x] Update EventBridge input templates in the orchestrator module: add `--mode staging` or `--mode prod` to connector commands, add `consolidate_command` with `--mode`, and drop the vestigial `demo` field from the input
 
 **Out of scope:**
 - Changing the SFN state machine structure (Map → ConsolidateAllocate flow stays the same — only the consolidate command is parameterized)

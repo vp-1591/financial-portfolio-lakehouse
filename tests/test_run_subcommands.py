@@ -504,62 +504,213 @@ class TestCmdFullDockerMode:
         mock_consolidate.assert_not_called()
         reset_mode()
 
-    @patch("pipeline.run.cmd_run_consolidate_analytics", return_value=0)
-    @patch("pipeline.run._run_connectors_parallel", return_value=0)
-    @patch("pipeline.run.inject_secrets")
-    def test_staging_mode_errors_not_yet_implemented(
+
+# ---------------------------------------------------------------------------
+# cmd_full staging/prod — Step Functions trigger
+# ---------------------------------------------------------------------------
+
+
+class TestCmdFullSfnTrigger:
+    """cmd_full --mode staging|prod starts a Step Functions execution."""
+
+    def _base_args(self, **overrides) -> argparse.Namespace:
+        defaults = dict(
+            xtb_file=None,
+            with_xtb=False,
+            wait=False,
+            target_currency="EUR",
+            fx_rate=[],
+            isin=[],
+            isin_map_file=[],
+        )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def _stub_session(self, monkeypatch, has_creds: bool = True) -> MagicMock:
+        import boto3
+
+        sess = MagicMock()
+        sess.get_credentials.return_value = MagicMock() if has_creds else None
+        sess.region_name = "eu-west-1"
+        monkeypatch.setattr(boto3, "Session", lambda: sess)
+        return sess
+
+    def _stub_sfn(
         self,
-        mock_inject: MagicMock,
-        mock_parallel: MagicMock,
-        mock_consolidate: MagicMock,
-        capsys,
         monkeypatch,
+        *,
+        wait_status: str | None = None,
+        wait_raises: Exception | None = None,
+        details: str = "DETAILS",
+    ) -> MagicMock:
+        import pipeline.sfn as sfn_mod
+
+        start = MagicMock(return_value="arn:exec")
+        monkeypatch.setattr(
+            sfn_mod,
+            "build_clients",
+            lambda region: (MagicMock(), MagicMock(), MagicMock()),
+        )
+        monkeypatch.setattr(
+            sfn_mod,
+            "resolve_all_arns",
+            lambda *a, **k: (
+                {"ibkr": "arn:ibkr", "trading212": "arn:t212"},
+                "arn:cons",
+            ),
+        )
+        monkeypatch.setattr(sfn_mod, "start_execution", start)
+        monkeypatch.setattr(sfn_mod, "fetch_failure_details", lambda *a, **k: details)
+        if wait_raises is not None:
+            monkeypatch.setattr(
+                sfn_mod,
+                "wait_for_execution",
+                lambda *a, **k: (_ for _ in ()).throw(wait_raises),
+            )
+        else:
+            monkeypatch.setattr(
+                sfn_mod, "wait_for_execution", lambda *a, **k: wait_status
+            )
+        return start
+
+    def test_staging_starts_execution(
+        self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        """cmd_full --mode staging errors with Phase 3 message."""
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        args = argparse.Namespace(
-            xtb_file=None,
-            target_currency="EUR",
-            fx_rate=[],
-            isin=[],
-            isin_map_file=[],
-        )
-        rc = cmd_full(args)
-        assert rc == 1
-        stderr = capsys.readouterr().err
-        assert "not yet implemented" in stderr
-        assert "Phase 3" in stderr
-        mock_parallel.assert_not_called()
+        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args())
+        assert rc == 0
+        start.assert_called_once()
+        assert start.call_args.args[1] == "arn:staging-sfn"
+        out = capsys.readouterr().out
+        assert "arn:exec" in out
+        assert "Monitor:" in out
         reset_mode()
 
-    @patch("pipeline.run.cmd_run_consolidate_analytics", return_value=0)
-    @patch("pipeline.run._run_connectors_parallel", return_value=0)
-    @patch("pipeline.run.inject_secrets")
-    def test_prod_mode_errors_not_yet_implemented(
-        self,
-        mock_inject: MagicMock,
-        mock_parallel: MagicMock,
-        mock_consolidate: MagicMock,
-        capsys,
-        monkeypatch,
+    def test_prod_starts_execution(
+        self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        """cmd_full --mode prod errors with Phase 3 message."""
         from pipeline.secrets import set_mode
 
         set_mode("prod")
-        args = argparse.Namespace(
-            xtb_file=None,
-            target_currency="EUR",
-            fx_rate=[],
-            isin=[],
-            isin_map_file=[],
-        )
-        rc = cmd_full(args)
+        monkeypatch.setenv("PROD_STATE_MACHINE_ARN", "arn:prod-sfn")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args())
+        assert rc == 0
+        assert start.call_args.args[1] == "arn:prod-sfn"
+        reset_mode()
+
+    def test_with_xtb_errors(self, monkeypatch, capsys: pytest.CaptureFixture) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args(with_xtb=True))
         assert rc == 1
-        stderr = capsys.readouterr().err
-        assert "not yet implemented" in stderr
+        start.assert_not_called()
+        assert "upload-xtb" in capsys.readouterr().err
+        reset_mode()
+
+    def test_xtb_file_errors(self, monkeypatch, capsys: pytest.CaptureFixture) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args(xtb_file=["s3://bucket/file.csv"]))
+        assert rc == 1
+        start.assert_not_called()
+        reset_mode()
+
+    def test_aws_creds_missing_errors(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
+        self._stub_session(monkeypatch, has_creds=False)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args())
+        assert rc == 1
+        start.assert_not_called()
+        assert "AWS credentials not found" in capsys.readouterr().err
+        reset_mode()
+
+    def test_state_machine_arn_missing_errors(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        monkeypatch.delenv("STAGING_STATE_MACHINE_ARN", raising=False)
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args())
+        assert rc == 1
+        start.assert_not_called()
+        assert "STAGING_STATE_MACHINE_ARN" in capsys.readouterr().err
+        reset_mode()
+
+    def test_wait_succeeded_returns_zero(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
+        self._stub_session(monkeypatch)
+        self._stub_sfn(monkeypatch, wait_status="SUCCEEDED")
+
+        rc = cmd_full(self._base_args(wait=True))
+        assert rc == 0
+        assert "succeeded" in capsys.readouterr().out.lower()
+        reset_mode()
+
+    def test_wait_failed_prints_details(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
+        self._stub_session(monkeypatch)
+        self._stub_sfn(monkeypatch, wait_status="FAILED", details="TASK FAILED DETAILS")
+
+        rc = cmd_full(self._base_args(wait=True))
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "FAILED" in captured.err
+        assert "TASK FAILED DETAILS" in captured.err
+        reset_mode()
+
+    def test_wait_timeout_returns_one(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
+        self._stub_session(monkeypatch)
+        self._stub_sfn(monkeypatch, wait_raises=TimeoutError("timed out"))
+
+        rc = cmd_full(self._base_args(wait=True))
+        assert rc == 1
+        assert "timed out" in capsys.readouterr().err
         reset_mode()
 
 

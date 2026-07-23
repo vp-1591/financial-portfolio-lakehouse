@@ -101,6 +101,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0088 | Raise on Missing AWS Credentials for DuckDB S3 | 2026-07-22 | active | — |
 | 0089 | Fail Loudly on Missing Broker Credentials | 2026-07-22 | active | — |
 | 0090 | Replace DEMO and STORAGE_TYPE with --mode Flag | 2026-07-23 | active | — |
+| 0091 | Trigger Step Functions in cmd_full for staging/prod | 2026-07-23 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
