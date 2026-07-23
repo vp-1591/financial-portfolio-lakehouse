@@ -185,7 +185,7 @@ The `demo` field is dropped from the input — it was vestigial (the ASL never r
 
 ---
 
-### Phase 4 — Remove `_DEMO` env var pattern *[status: planned]*
+### Phase 4 — Remove `_DEMO` env var pattern *[status: done]*
 
 The `_DEMO` suffix is a double indirection: SSM parameter names have `_DEMO`, env var names have `_DEMO`, and Python has `DEMO_SECRET_MAP` to swap them. But demo and prod ECS tasks are **completely separate containers** — they never share an environment. There is no reason for the env var names to differ between them. The SSM path prefix (`/pipeline/demo/` vs `/pipeline/prod/`) already provides isolation; the env var suffix is redundant.
 
