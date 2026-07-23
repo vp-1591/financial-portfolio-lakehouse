@@ -81,7 +81,7 @@ Make `fetch` fail loudly when all broker credentials are missing, instead of sil
 Add a `--mode docker|staging|prod` CLI flag that replaces `DEMO` and `STORAGE_TYPE`. Mode determines storage backend, credential resolution strategy, and whether `full` runs locally or triggers SFN. There is no env var — `--mode` is the single source of truth. ECS task definitions pass `--mode` as a command argument (e.g., `["run-connector", "ibkr", "--mode", "staging"]`).
 
 **Scope:**
-- [ ] Add `--mode` flag to `pipeline run` top-level parser (applies to all subcommands)
+- [ ] Add `--mode` flag via a **parent parser** shared by all subparsers, so it appears *after* the subcommand name — e.g. `pipeline run full --mode docker`, `pipeline run run-connector ibkr --mode staging`, `pipeline run query "..." --mode docker`. This matches the ECS command form `["run-connector", "ibkr", "--mode", "staging"]`. Do NOT put `--mode` on the top-level parser (before the subcommand) — under argparse that would require `--mode` to precede the subcommand, conflicting with the ECS command form and the success-criteria examples
 - [ ] Add `resolve_mode()` function that reads `--mode` flag from parsed args — error if unset
 - [ ] Derive storage config from mode: docker → MinIO, staging → demo S3, prod → prod S3
 - [ ] Derive `is_demo()` from mode: staging → True, docker/prod → False
@@ -89,8 +89,9 @@ Add a `--mode docker|staging|prod` CLI flag that replaces `DEMO` and `STORAGE_TY
 - [ ] Add `--mode` to `query` and `report` commands (determines which S3 bucket to read)
 - [ ] Rewrite `cmd_full` in docker mode to mirror the SFN workflow: run each connector via `cmd_run_connector` (fetch + transform + validate), then `cmd_run_consolidate_analytics` (consolidate + CDC + analytics + validate) — same building blocks the SFN uses
 - [ ] In docker mode, run connectors in parallel using `concurrent.futures.ThreadPoolExecutor` with fail-fast on any connector error
+- [ ] `cmd_full --mode staging` and `--mode prod` print a clear "not yet implemented" error and exit 1 — the Step Functions trigger lands in Phase 3. They must NOT fall back to running the orchestrator locally against S3 (that path is rejected in the alternatives table — risk of writing to prod data from a local machine). Message: `full --mode staging is not yet implemented (Step Functions trigger lands in Phase 3). Use --mode docker, or run run-connector / run-consolidate-analytics directly.`
 - [ ] Remove `fetch`, `transform`, `consolidate`, `analytics` subcommands, their handler functions (`cmd_fetch`, `cmd_transform`), and CLI parser registrations — `cmd_consolidate` and `cmd_analytics` stay as internal helpers called by `cmd_run_consolidate_analytics`
-- [ ] Remove dead command options from `.github/workflows/pipeline.yml`: `fetch`, `transform`, `consolidate`, and `allocate` (already removed per ADR 0026)
+- [ ] Delete `.github/workflows/pipeline.yml` entirely (pulled forward from Phase 4). It runs the pipeline locally in CI using `DEMO`/`STORAGE_TYPE`/`*_DEMO` env vars and offers the deleted `fetch`/`transform`/`consolidate`/`allocate` commands — exactly the pattern Phase 2 removes, so a "minimal `--mode` update" would actually be a full rewrite of a file that is doomed in Phase 4. Staging deploys already trigger SFN via `deploy-staging.yml`; prod via `deploy-prod.yml`. No remaining purpose.
 - [ ] Update comment in `pipeline/connectors/xtb/connector.py:32` that references `cmd_fetch`
 - [ ] Update `README.md`, `docs/deployment/local.md`, `docs/brokers/xtb.md` to remove references to deleted commands
 - [ ] Delete `TestCmdFetchRegression` and `TestCmdTransformRegression` from `tests/test_run_subcommands.py` — they test deleted commands
@@ -112,7 +113,7 @@ Add a `--mode docker|staging|prod` CLI flag that replaces `DEMO` and `STORAGE_TY
 
 ### Phase 3 — Make `full` trigger Step Functions in staging/prod modes *[status: planned]*
 
-When `--mode staging` or `--mode prod`, `cmd_full` starts a Step Functions execution instead of running the pipeline locally. Absorb `scripts/run_prod_pipeline.py` into `cmd_full`.
+When `--mode staging` or `--mode prod`, `cmd_full` starts a Step Functions execution instead of running the pipeline locally. Absorb `scripts/run_prod_pipeline.py` into `cmd_full`. This replaces the Phase 2 "not yet implemented" stub for staging/prod `full` with the real SFN trigger.
 
 **Credential model:** In staging/prod modes, the caller's machine needs only AWS credentials with `states:StartExecution` permission — no broker API keys, no S3 data-plane credentials, no `_DEMO` env vars. Broker secrets are injected into ECS containers by SSM at task launch time. The Step Functions orchestrator handles all connector execution in AWS, so the local CLI only needs permission to trigger the run, not to access broker data.
 
@@ -194,7 +195,7 @@ Prod ECS task:  SSM /pipeline/prod/IBKR_FLEX_TOKEN → env var IBKR_FLEX_TOKEN
 - [ ] Simplify `resolve_secret()` to always read the base env var name — no suffix swapping
 - [ ] Simplify `is_demo()` to check `--mode staging` instead of `DEMO=true`
 - [ ] Remove `_DEMO` env vars from `.env.example`
-- [ ] Delete `.github/workflows/pipeline.yml` — it runs the pipeline locally in CI with `_DEMO` secrets, which is the entire pattern we're removing. Staging deploys already trigger SFN via `deploy-staging.yml`; there's no reason to run the pipeline locally in CI
+- [ ] ~~Delete `.github/workflows/pipeline.yml`~~ — moved to Phase 2 (the file was already broken by Phase 2's command/env-var deletions, so deletion was pulled forward)
 - [ ] Update `.github/workflows/deploy-staging.yml`: rename GitHub Secrets references from `_DEMO` suffix to `_STAGING` (e.g., `secrets.AWS_ACCESS_KEY_ID_DEMO` → `secrets.AWS_ACCESS_KEY_ID_STAGING`, `secrets.DEMO_STATE_MACHINE_ARN` → `secrets.STAGING_STATE_MACHINE_ARN`). Remove `demo: true` from SFN input
 - [ ] Update `.github/workflows/deploy-prod.yml`: no env var changes needed (mode is a CLI flag, not an env var)
 - [ ] Update ADRs 0037–0044 or create a new ADR documenting the `--mode` approach
