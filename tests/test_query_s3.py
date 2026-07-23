@@ -156,16 +156,14 @@ class TestConfigureS3:
                 _configure_s3(conn)
         conn.close()
 
-    def test_staging_mode_uses_demo_credentials(self):
-        """In staging mode, _configure_s3 uses _DEMO AWS credentials."""
+    def test_staging_mode_uses_credentials(self):
+        """In staging mode, _configure_s3 uses AWS credentials from env vars."""
         conn = duckdb.connect()
         with patch.dict(
             os.environ,
             {
-                "AWS_ACCESS_KEY_ID_DEMO": "demo-key-id",
-                "AWS_SECRET_ACCESS_KEY_DEMO": "demo-secret",
-                "AWS_ACCESS_KEY_ID": "prod-key-id",
-                "AWS_SECRET_ACCESS_KEY": "prod-secret",
+                "AWS_ACCESS_KEY_ID": "staging-key-id",
+                "AWS_SECRET_ACCESS_KEY": "staging-secret",
                 "AWS_REGION": "eu-west-1",
             },
         ):
@@ -175,43 +173,35 @@ class TestConfigureS3:
         secrets = conn.execute(
             "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
         ).fetchall()
-        assert len(secrets) >= 1, f"Expected S3 secret in demo mode, got: {secrets}"
+        assert len(secrets) >= 1, f"Expected S3 secret in staging mode, got: {secrets}"
         secret_str = str(secrets[0])
-        assert "demo-key-id" in secret_str, (
-            f"Secret should use demo credentials, got: {secret_str}"
+        assert "staging-key-id" in secret_str, (
+            f"Secret should use staging credentials, got: {secret_str}"
         )
         conn.close()
 
-    def test_staging_mode_no_fallback_to_prod(self):
-        """In staging mode with missing _DEMO creds, a SECRET with empty
+    def test_staging_mode_no_credentials_creates_empty_secret(self):
+        """In staging mode with missing credentials, a SECRET with empty
         credentials is created to prevent DuckDB from falling back to
-        production credentials in environment variables.
+        any credentials in environment variables.
 
-        This tests the core isolation guarantee: if _DEMO AWS credentials
-        are missing, the pipeline must NOT fall back to production
-        credentials from environment variables.
+        This tests the core isolation guarantee: if AWS credentials
+        are missing, the pipeline must NOT fall back to credentials
+        from a different environment.
         """
         conn = duckdb.connect()
         with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
-            os.environ.pop("AWS_ACCESS_KEY_ID_DEMO", None)
-            os.environ.pop("AWS_SECRET_ACCESS_KEY_DEMO", None)
-            # Production creds are present -- must NOT be used
-            os.environ["AWS_ACCESS_KEY_ID"] = "prod-key-id"
-            os.environ["AWS_SECRET_ACCESS_KEY"] = "prod-secret"
+            os.environ.pop("AWS_ACCESS_KEY_ID", None)
+            os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
             set_mode("staging")
             _configure_s3(conn)
 
         # A SECRET should be created with empty credentials,
-        # preventing DuckDB from falling back to production env vars.
+        # preventing DuckDB from falling back to any env vars.
         secrets = conn.execute(
             "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
         ).fetchall()
         assert len(secrets) >= 1, (
             f"Expected at least one S3 secret with empty credentials, got: {secrets}"
-        )
-        # Verify the secret does NOT contain production credentials
-        secret_str = str(secrets[0])
-        assert "prod-key-id" not in secret_str, (
-            f"SECRET must not contain production credentials: {secret_str}"
         )
         conn.close()

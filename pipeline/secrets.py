@@ -18,15 +18,15 @@ any broker API keys.
 
 - **docker** — local development against MinIO.  Broker credentials come
   from ``.env`` or the environment under their base names.
-- **staging** — staging (demo) environment.  Broker credentials and S3
-  bucket use ``_DEMO``-suffixed env vars via :func:`resolve_secret`.
-  Storage is the demo S3 bucket.
-- **prod** — production environment.  Credentials and S3 bucket use base
-  env var names.
+- **staging** — staging (demo) environment.  ECS tasks inject secrets
+  under base names from ``/portfolio/demo/`` SSM parameters; local runs
+  read them from ``.env`` or the environment.  Storage is the demo S3 bucket.
+- **prod** — production environment.  Same base-name resolution; ECS tasks
+  use ``/portfolio/prod/`` SSM parameters.
 
 :func:`is_demo` returns ``True`` in staging mode, which drives the
-``_DEMO`` secret swap and the demo S3 bucket selection.  There is **no
-cross-mode fallback** — missing credentials for the active mode are logged
+demo S3 bucket selection and the encryption-key file fallback guard.
+There is **no cross-mode fallback** — missing credentials are logged
 as warnings and :func:`resolve_secret` returns ``None``, allowing callers
 to gracefully skip connectors or operations that require the missing secret.
 
@@ -46,7 +46,7 @@ Usage::
     load_env()                 # silent .env loading at startup (no warnings)
     # ... or ...
     inject_secrets()           # load .env AND validate (logs warnings for missing secrets)
-    token = resolve_secret("IBKR_FLEX_TOKEN")  # demo-aware secret lookup
+    token = resolve_secret("IBKR_FLEX_TOKEN")  # secret lookup (env var)
     if is_enabled("IBKR_ENABLED"):              # True unless set to 0/false/no
         ...
     if is_demo():                                # True when --mode staging
@@ -77,39 +77,10 @@ REQUIRED_SECRETS: list[str] = [
     "ENCRYPTION_KEY",
 ]
 
-# Demo-mode secret mappings: base name → _DEMO variant.
-# In demo mode, resolve_secret() uses the _DEMO variant exclusively.
-# There is NO fallback to base secrets in demo mode, and NO fallback
-# to _DEMO secrets in production mode.
-DEMO_SECRET_MAP: dict[str, str] = {
-    "IBKR_FLEX_TOKEN": "IBKR_FLEX_TOKEN_DEMO",
-    "IBKR_FLEX_QUERY_ID": "IBKR_FLEX_QUERY_ID_DEMO",
-    "IBKR_FLEX_CDC_QUERY_ID": "IBKR_FLEX_CDC_QUERY_ID_DEMO",
-    "T212_API_KEY": "T212_API_KEY_DEMO",
-    "T212_API_SECRET": "T212_API_SECRET_DEMO",
-    "ENCRYPTION_KEY": "ENCRYPTION_KEY_DEMO",
-    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID_DEMO",
-    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY_DEMO",
-}
-
 # S3-specific secrets — only required for staging/prod modes (cloud storage).
 REQUIRED_SECRETS_S3: list[str] = [
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
-]
-REQUIRED_SECRETS_S3_DEMO: list[str] = [
-    "AWS_ACCESS_KEY_ID_DEMO",
-    "AWS_SECRET_ACCESS_KEY_DEMO",
-]
-
-# The _DEMO variants listed for inject_secrets() validation in demo mode.
-REQUIRED_SECRETS_DEMO: list[str] = list(DEMO_SECRET_MAP.values())
-
-# Non-AWS demo secrets — validated in the general demo loop of
-# inject_secrets().  AWS demo secrets are validated only for
-# staging/prod modes (cloud storage), matching the production path.
-REQUIRED_SECRETS_DEMO_NON_AWS: list[str] = [
-    name for name in REQUIRED_SECRETS_DEMO if name not in REQUIRED_SECRETS_S3_DEMO
 ]
 
 # ---------------------------------------------------------------------------
@@ -172,8 +143,10 @@ def inject_secrets() -> dict[str, str]:
     environment variables from the ``.env`` file (if present), then
     logs warnings for any required secrets that are still missing.
 
-    In staging mode (``--mode staging``), validates ``_DEMO`` variants
-    instead of base secrets.  There is no cross-mode fallback.
+    Secrets are always read under their base names (e.g.
+    ``IBKR_FLEX_TOKEN``).  In ECS deployments, the SSM path prefix
+    (``/portfolio/demo/`` or ``/portfolio/prod/``) provides environment
+    isolation — there is no ``_DEMO`` suffix swap.
 
     S3-specific secrets (``AWS_ACCESS_KEY_ID``,
     ``AWS_SECRET_ACCESS_KEY``) are validated only for staging and prod
@@ -185,34 +158,24 @@ def inject_secrets() -> dict[str, str]:
 
     secrets: dict[str, str] = {}
 
-    if is_demo():
-        for name in REQUIRED_SECRETS_DEMO_NON_AWS:
-            value = os.environ.get(name)
-            if value:
-                secrets[name] = value
-            else:
-                logger.warning("Demo secret %s is not set (DEMO mode active)", name)
-    else:
-        for name in REQUIRED_SECRETS:
-            value = os.environ.get(name)
-            if value:
-                secrets[name] = value
-            else:
-                logger.warning("Required secret %s is not set", name)
+    for name in REQUIRED_SECRETS:
+        value = os.environ.get(name)
+        if value:
+            secrets[name] = value
+        else:
+            logger.warning("Required secret %s is not set", name)
 
     # Validate S3 secrets only for staging/prod (cloud) modes.
     # Docker mode (MinIO) does not require S3 credentials.
     mode = get_mode()
     if mode in ("staging", "prod"):
-        s3_secrets = REQUIRED_SECRETS_S3_DEMO if is_demo() else REQUIRED_SECRETS_S3
-        label = "Demo S3" if is_demo() else "S3"
-        for name in s3_secrets:
+        for name in REQUIRED_SECRETS_S3:
             value = os.environ.get(name)
             if value:
                 secrets[name] = value
             else:
                 logger.warning(
-                    "%s secret %s is not set (required for cloud storage)", label, name
+                    "S3 secret %s is not set (required for cloud storage)", name
                 )
 
     return secrets
@@ -280,49 +243,30 @@ def is_demo() -> bool:
     """Check if the pipeline is running in demo (staging) mode.
 
     Returns ``True`` when the execution mode is ``staging``.
-    In staging mode, :func:`resolve_secret` returns ``_DEMO``-suffixed
-    secrets and storage uses a separate demo bucket/prefix.
+    In staging mode, storage uses a separate demo bucket/prefix
+    and the encryption-key file fallback is disabled.
     """
     return get_mode() == "staging"
 
 
 def resolve_secret(name: str) -> str | None:
-    """Get a secret, using the ``_DEMO`` variant when in staging mode.
+    """Get a secret from the environment by its base name.
 
-    **Strict isolation — no cross-mode fallback:**
+    Always reads ``os.environ.get(name)`` directly — there is no
+    suffix swap.  Environment isolation is handled by the deployment
+    (ECS tasks inject secrets under base names from environment-scoped
+    SSM parameters; local runs use ``.env`` or exported env vars).
 
-    - When in staging mode (``--mode staging``) and *name* is in
-      :data:`DEMO_SECRET_MAP`, returns the ``_DEMO`` variant.  If the
-      ``_DEMO`` variant is not set, logs a warning and returns ``None``
-      — **never falls back to the base secret**.
-    - When in docker or prod mode, returns ``os.environ.get(name)``
-      directly — **never reads ``_DEMO`` variants**.
-    - For names not in :data:`DEMO_SECRET_MAP` (e.g., config vars
-      like ``IBKR_FLEX_BASE_URL``), returns ``os.environ.get(name)``
-      regardless of mode.
-
-    When a secret is found, logs the source (base or ``_DEMO`` variant)
-    at info level without logging the value.  When a secret is missing,
-    logs a warning with the expected variable name.
+    When a secret is found, logs the name at info level without logging
+    the value.  When a secret is missing, logs a warning and returns
+    ``None``, allowing callers to gracefully skip connectors or
+    operations that require the missing secret.
     """
-    if is_demo() and name in DEMO_SECRET_MAP:
-        demo_name = DEMO_SECRET_MAP[name]
-        value = os.environ.get(demo_name)
-        if value:
-            logger.info("Resolved %s from %s (demo mode)", name, demo_name)
-            return value
-        logger.warning(
-            "Demo mode is active but %s is not set — "
-            "returning None for %s (no fallback to base secret)",
-            demo_name,
-            name,
-        )
-        return None
     value = os.environ.get(name)
     if value:
-        logger.info("Resolved %s from %s", name, name)
+        logger.info("Resolved %s", name)
     else:
-        logger.debug("Secret %s is not set", name)
+        logger.warning("Secret %s is not set", name)
     return value
 
 
@@ -343,7 +287,7 @@ class AwsCredentials:
     When a credential is ``None``, helper methods include it as an
     empty string rather than omitting it.  This prevents the SDK from
     silently falling back to environment variables that may contain
-    production credentials when running in demo mode.  Callers that
+    credentials from a different environment.  Callers that
     need IAM role fallback should not call these methods when both
     credentials are ``None``.
     """
@@ -366,7 +310,7 @@ class AwsCredentials:
         roles).  When either credential is set, both keys are included
         (with the missing one as an empty string) to prevent the SDK
         from silently falling back to environment variables that may
-        contain production credentials.
+        contain credentials from a different environment.
         """
         opts: dict[str, str] = {
             "aws_region": self.region,
@@ -453,11 +397,10 @@ def resolve_aws_credentials() -> AwsCredentials:
     """Resolve AWS credentials from environment variables.
 
     Uses :func:`resolve_secret` for ``AWS_ACCESS_KEY_ID`` and
-    ``AWS_SECRET_ACCESS_KEY`` so that demo mode uses ``_DEMO``
-    variants exclusively.  When a credential is not set or set to an
+    ``AWS_SECRET_ACCESS_KEY``.  When a credential is not set or set to an
     empty string, it is normalized to ``None`` (not an empty string),
     which prevents the SDK from falling back to environment variables
-    that may contain production credentials.
+    that may contain credentials from a different environment.
 
     ``AWS_REGION``, ``S3_ENDPOINT_URL``, and ``S3_ALLOW_HTTP`` are
     configuration (not secrets) and are read directly from the

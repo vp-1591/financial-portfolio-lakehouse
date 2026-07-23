@@ -78,13 +78,13 @@ class TestResolveStorage:
         use_storage(config)  # just verify it doesn't crash
         reset_mode()
 
-    def test_staging_mode_uses_demo_bucket(self, monkeypatch) -> None:
+    def test_staging_mode_uses_s3_bucket(self, monkeypatch) -> None:
         from pipeline.storage import resolve_storage
 
         set_mode("staging")
-        monkeypatch.setenv("S3_BUCKET_DEMO", "staging-bucket")
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID_DEMO", "demo-key")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY_DEMO", "demo-secret")
+        monkeypatch.setenv("S3_BUCKET", "staging-bucket")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "staging-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "staging-secret")
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
         config = resolve_storage()
         assert config.backend.bucket == "staging-bucket"
@@ -126,22 +126,7 @@ class TestResolveStorage:
         from pipeline.storage import resolve_storage
 
         set_mode("staging")
-        # Neither S3_BUCKET_DEMO nor S3_BUCKET set
+        # S3_BUCKET not set
         with pytest.raises(ValueError, match="Staging mode requires"):
             resolve_storage()
-        reset_mode()
-
-    def test_staging_mode_falls_back_to_s3_bucket_demo_suffix(
-        self, monkeypatch
-    ) -> None:
-        from pipeline.storage import resolve_storage
-
-        set_mode("staging")
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID_DEMO", "demo-key")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY_DEMO", "demo-secret")
-        monkeypatch.setenv("AWS_REGION", "eu-west-1")
-        # S3_BUCKET_DEMO not set → falls back to {S3_BUCKET}-demo
-        config = resolve_storage()
-        assert config.backend.bucket == "my-bucket-demo"
         reset_mode()

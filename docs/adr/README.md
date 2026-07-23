@@ -47,14 +47,14 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0034 | Add required_version Constraint for Terraform 1.11+ | 2026-07-01 | active | — |
 | 0035 | Remove dead cashBalance and startingCash fallbacks from IBKR transform | 2026-07-02 | active | — |
 | 0036 | Remove conid and side from IBKR pipeline | 2026-07-02 | active | — |
-| 0037 | Demo Mode with _DEMO Secrets and Isolated Storage | 2026-07-02 | active | — |
+| 0037 | Demo Mode with _DEMO Secrets and Isolated Storage | 2026-07-02 | superseded | 0092 |
 | 0038 | Demo Terraform Infrastructure in Separate Directory | 2026-07-02 | active | — |
-| 0039 | STORAGE_TYPE Env Var and resolve_secret Credential Isolation | 2026-07-02 | active | — |
-| 0040 | Consolidate AWS Credentials and Fix Demo Isolation Bugs | 2026-07-02 | active | — |
+| 0039 | STORAGE_TYPE Env Var and resolve_secret Credential Isolation | 2026-07-02 | superseded | 0092 |
+| 0040 | Consolidate AWS Credentials and Fix Demo Isolation Bugs | 2026-07-02 | superseded | 0092 |
 | 0041 | Step-Level CI Secrets and Explicit Empty Credentials | 2026-07-02 | superseded | 0055 |
-| 0042 | Fix Demo Bucket Naming — Use Hyphen Instead of Underscore | 2026-07-02 | active | — |
+| 0042 | Fix Demo Bucket Naming — Use Hyphen Instead of Underscore | 2026-07-02 | superseded | 0092 |
 | 0043 | Fix Empty-String Env Var Fallback and Broaden Demo IAM Policy | 2026-07-02 | active | — |
-| 0044 | S3_BUCKET_DEMO Standalone — Demo Cloud Storage Without S3_BUCKET | 2026-07-02 | active | — |
+| 0044 | S3_BUCKET_DEMO Standalone — Demo Cloud Storage Without S3_BUCKET | 2026-07-02 | superseded | 0092 |
 | 0045 | Replace List-Append Pattern with Polars build_normalized_table | 2026-07-02 | active | — |
 | 0046 | Fix Consolidated Holdings Currency Column | 2026-07-03 | active | — |
 | 0047 | Move XLSX Parsing to Silver Layer and Remove account_id from Raw Schema | 2026-07-03 | active | — |
@@ -102,6 +102,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0089 | Fail Loudly on Missing Broker Credentials | 2026-07-22 | active | — |
 | 0090 | Replace DEMO and STORAGE_TYPE with --mode Flag | 2026-07-23 | active | — |
 | 0091 | Trigger Step Functions in cmd_full for staging/prod | 2026-07-23 | active | — |
+| 0092 | Remove _DEMO env var suffix pattern | 2026-07-23 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

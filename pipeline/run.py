@@ -14,7 +14,7 @@ The ``--mode`` flag (``docker|staging|prod``) is required for all commands
 except ``keygen``.  It determines storage backend and credential resolution:
 
 - **docker** — MinIO (local S3-compatible storage)
-- **staging** — demo S3 bucket, ``_DEMO``-suffixed secrets
+- **staging** — demo S3 bucket, secrets under base names from SSM
 - **prod** — production S3 bucket, production secrets
 
 Connector enable/disable is controlled by environment variables:

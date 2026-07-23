@@ -1,5 +1,7 @@
 # ADR 0040: Consolidate AWS Credentials and Fix Demo Isolation Bugs
 
+> **Superseded by [ADR 0092](./0092-remove-demo-env-var-suffix.md)** — `REQUIRED_SECRETS_DEMO_NON_AWS` and `_DEMO`-specific credential handling are removed. All secrets use base names; environment isolation is via SSM path prefix.
+
 ## Context
 
 PR #16 introduced DEMO mode with isolated secrets and Terraform infrastructure. Code review found three bugs:

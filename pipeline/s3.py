@@ -49,8 +49,8 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
 def _make_s3fs() -> pafs.S3FileSystem:
     """Build an ``S3FileSystem`` from resolved AWS credentials.
 
-    Uses :func:`pipeline.secrets.resolve_aws_credentials` which respects
-    demo isolation (``_DEMO`` credential variants).
+    Uses :func:`pipeline.secrets.resolve_aws_credentials` which provides
+    environment-scoped credentials (no cross-mode fallback).
     """
     creds = resolve_aws_credentials()
     kwargs = creds.to_pyarrow_kwargs()

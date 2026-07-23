@@ -22,10 +22,11 @@ Enable **Flex Web Service Configuration** and generate a token.
 | `IBKR_FLEX_BASE_URL` | Base URL (default: `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService`) |
 | `IBKR_ENABLED` | Enable/disable connector (default: enabled) |
 
-### Demo mode
+### Staging mode
 
-When `DEMO=true`, the connector uses `IBKR_FLEX_TOKEN_DEMO`,
-`IBKR_FLEX_QUERY_ID_DEMO`, and `IBKR_FLEX_CDC_QUERY_ID_DEMO` instead.
+In `--mode staging`, the connector uses `IBKR_FLEX_TOKEN`,
+`IBKR_FLEX_QUERY_ID`, and `IBKR_FLEX_CDC_QUERY_ID` (injected from
+`/portfolio/demo/` SSM parameters in ECS, or set in `.env` locally).
 
 ## Detailed field configuration
 

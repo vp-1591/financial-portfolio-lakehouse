@@ -18,10 +18,11 @@ def generate_key() -> bytes:
 def load_key(path: Path | None = None) -> bytes:
     """Load a Fernet key from the ``ENCRYPTION_KEY`` env var or a key file.
 
-    In demo mode, checks ``ENCRYPTION_KEY_DEMO`` via
-    :func:`pipeline.secrets.resolve_secret`.  There is no cross-mode
+    The ``ENCRYPTION_KEY`` environment variable is always read under its
+    base name — ECS tasks inject it from environment-scoped SSM parameters
+    (``/portfolio/demo/`` or ``/portfolio/prod/``).  There is no cross-mode
     fallback — if the key for the active mode is missing, a hard error
-    is raised.  In demo mode, the file-based fallback is **disabled**
+    is raised.  In staging mode, the file-based fallback is **disabled**
     because ``.secrets/encryption.key`` is shared between modes and
     would contain the production key.
 
@@ -30,12 +31,12 @@ def load_key(path: Path | None = None) -> bytes:
     path:
         Explicit path to the key file.  When *None* and the env var
         is not set, falls back to ``.secrets/encryption.key`` relative
-        to the project root (production mode only; raises in demo mode).
+        to the project root (production mode only; raises in staging mode).
 
     Raises
     ------
     EnvironmentError
-        If demo mode is active and ``ENCRYPTION_KEY_DEMO`` is not set.
+        If staging mode is active and ``ENCRYPTION_KEY`` is not set.
     FileNotFoundError
         If the key file does not exist at the resolved path.
     """
@@ -45,13 +46,12 @@ def load_key(path: Path | None = None) -> bytes:
     if env_key:
         return env_key.encode("utf-8") if isinstance(env_key, str) else env_key
 
-    # resolve_secret returned None — in demo mode, this means
-    # ENCRYPTION_KEY_DEMO was not set.  Falling through to the
-    # file-based key would use the production key, violating isolation.
+    # resolve_secret returned None — in staging mode, falling through
+    # to the file-based key would use the production key, violating isolation.
     if is_demo():
         raise EnvironmentError(
-            "ENCRYPTION_KEY_DEMO is not set.  In demo mode, the encryption "
-            "key must be provided via the ENCRYPTION_KEY_DEMO environment "
+            "ENCRYPTION_KEY is not set in staging mode.  The encryption "
+            "key must be provided via the ENCRYPTION_KEY environment "
             "variable — there is no fallback to the file-based key."
         )
 

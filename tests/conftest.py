@@ -14,40 +14,26 @@ from pipeline.storage import StorageConfig, use_storage
 # All pipeline-related environment variables that tests must isolate from.
 # Cleared before each test so local .env files and shell env vars don't leak.
 # Note: DEMO and STORAGE_TYPE are removed (replaced by --mode flag).
-# _DEMO-suffixed vars remain until Phase 4.
 _PIPELINE_ENV_VARS = [
     "S3_BUCKET",
-    "S3_BUCKET_DEMO",
     "S3_PREFIX",
-    "S3_PREFIX_DEMO",
     "PIPELINE_DATA_DIR",
-    "PIPELINE_DATA_DIR_DEMO",
     "S3_ENDPOINT_URL",
     "S3_ALLOW_HTTP",
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_REGION",
-    "AWS_ACCESS_KEY_ID_DEMO",
-    "AWS_SECRET_ACCESS_KEY_DEMO",
     "IBKR_FLEX_TOKEN",
     "IBKR_FLEX_QUERY_ID",
     "IBKR_FLEX_CDC_QUERY_ID",
-    "IBKR_FLEX_TOKEN_DEMO",
-    "IBKR_FLEX_QUERY_ID_DEMO",
-    "IBKR_FLEX_CDC_QUERY_ID_DEMO",
     "T212_API_KEY",
     "T212_API_SECRET",
-    "T212_API_KEY_DEMO",
-    "T212_API_SECRET_DEMO",
     "ENCRYPTION_KEY",
-    "ENCRYPTION_KEY_DEMO",
     "IBKR_ENABLED",
     "T212_ENABLED",
     "XTB_ENABLED",
     "IBKR_FLEX_BASE_URL",
-    "IBKR_FLEX_BASE_URL_DEMO",
     "T212_BASE_URL",
-    "T212_BASE_URL_DEMO",
     "XTB_REPORT_PATH",
 ]
 

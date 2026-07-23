@@ -89,7 +89,7 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
     prefix and checks for ``_delta_log/`` objects to identify Delta tables.
 
     Uses :func:`pipeline.secrets.resolve_aws_credentials` for AWS
-    credentials so that demo mode uses ``_DEMO`` variants exclusively.
+    credentials so that the active mode's credentials are used exclusively.
     """
     import pyarrow as pa
     import pyarrow.fs as pafs
@@ -301,8 +301,9 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     to all extensions including ``delta_scan()``.
 
     Uses :func:`pipeline.secrets.resolve_aws_credentials` for AWS
-    credentials so that demo mode uses ``_DEMO`` variants exclusively
-    — no fallback to base credentials.
+    credentials so that the active mode's credentials are used
+    exclusively — no fallback to credentials from a different
+    environment.
 
     When credentials are available (even if empty strings for missing
     demo credentials), they are registered as a DuckDB SECRET.  Empty
@@ -327,7 +328,7 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
 
     # Decision: docs/adr/0088-raise-on-missing-aws-credentials.md
     # When both key_id and secret_key are None, the caller has no explicit
-    # credentials.  In demo mode this means _DEMO credentials are missing —
+    # credentials.  In staging mode this means credentials are missing —
     # create a SECRET with empty KEY_ID/SECRET so that DuckDB does not fall
     # back to production credentials.  In production mode, DuckDB's
     # delta_scan() cannot reach ~/.aws/credentials or AWS SSO, so raise an

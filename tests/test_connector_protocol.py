@@ -74,16 +74,14 @@ class TestIbkrFetchKwargs:
         assert kwargs["flex_base_url"] == "https://custom.example.com"
         reset_mode()
 
-    def test_demo_mode_uses_demo_variants(self, monkeypatch) -> None:
-        monkeypatch.setenv("IBKR_FLEX_TOKEN_DEMO", "demo-token")
-        monkeypatch.setenv("IBKR_FLEX_QUERY_ID_DEMO", "99")
-        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
-        monkeypatch.delenv("IBKR_FLEX_QUERY_ID", raising=False)
+    def test_staging_mode_uses_base_secrets(self, monkeypatch) -> None:
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "staging-token")
+        monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "99")
         set_mode("staging")
         connector = get("ibkr")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs["flex_token"] == "demo-token"
+        assert kwargs["flex_token"] == "staging-token"
         assert kwargs["flex_query_id"] == "99"
         reset_mode()
 
@@ -114,11 +112,9 @@ class TestTrading212FetchKwargs:
         assert connector.fetch_kwargs(args) == {}
         reset_mode()
 
-    def test_demo_mode_selects_demo_base_url(self, monkeypatch) -> None:
-        monkeypatch.setenv("T212_API_KEY_DEMO", "demo-key")
-        monkeypatch.setenv("T212_API_SECRET_DEMO", "demo-secret")
-        monkeypatch.delenv("T212_API_KEY", raising=False)
-        monkeypatch.delenv("T212_API_SECRET", raising=False)
+    def test_staging_mode_selects_demo_base_url(self, monkeypatch) -> None:
+        monkeypatch.setenv("T212_API_KEY", "staging-key")
+        monkeypatch.setenv("T212_API_SECRET", "staging-secret")
         monkeypatch.delenv("T212_BASE_URL", raising=False)
         set_mode("staging")
         connector = get("trading212")

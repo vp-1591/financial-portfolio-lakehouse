@@ -5,7 +5,7 @@ Storage backend selection is driven by the ``--mode`` CLI flag (set via
 
 - **docker** — :class:`S3Backend` with MinIO endpoint (``S3_ENDPOINT_URL``).
 - **staging** — :class:`S3Backend` with the demo S3 bucket
-  (``S3_BUCKET_DEMO`` or ``{S3_BUCKET}-demo``, prefix ``pipeline_demo``).
+  (``S3_BUCKET``, prefix ``pipeline_demo``).
 - **prod** — :class:`S3Backend` with the production S3 bucket
   (``S3_BUCKET``, prefix ``pipeline``).
 
@@ -125,10 +125,9 @@ class S3Backend:
         """AWS credentials for deltalake S3 operations.
 
         Uses :func:`pipeline.secrets.resolve_aws_credentials` for AWS
-        credentials so that demo mode uses ``_DEMO`` variants
-        exclusively — no fallback to base credentials.  In production
-        mode, uses base credentials only — no fallback to demo
-        credentials.
+        credentials so that the active mode's credentials are used
+        exclusively — no fallback to credentials from a different
+        environment.
 
         Keys use lowercase convention required by the ``object_store``
         Rust crate (e.g. ``aws_access_key_id``).  Uppercase keys like
@@ -226,7 +225,7 @@ def resolve_storage() -> StorageConfig:
     - **docker** — :class:`S3Backend` with MinIO endpoint.  Requires
       ``S3_BUCKET``; warns if ``S3_ENDPOINT_URL`` is not set.
     - **staging** — :class:`S3Backend` with the demo S3 bucket
-      (``S3_BUCKET_DEMO`` or ``{S3_BUCKET}-demo``, prefix ``pipeline_demo``).
+      (``S3_BUCKET``, prefix ``pipeline_demo``).
     - **prod** — :class:`S3Backend` with the production S3 bucket
       (``S3_BUCKET``, prefix ``pipeline``).
 
@@ -267,16 +266,12 @@ def resolve_storage() -> StorageConfig:
         )
     elif mode == "staging":
         # Demo S3 bucket.
-        bucket = get_env("S3_BUCKET_DEMO") or (
-            f"{s3_bucket}-demo" if s3_bucket else None
-        )
-        if not bucket:
+        if not s3_bucket:
             raise ValueError(
-                "Staging mode requires S3_BUCKET_DEMO or S3_BUCKET "
-                "to determine the S3 bucket"
+                "Staging mode requires S3_BUCKET to determine the S3 bucket"
             )
-        prefix = get_env("S3_PREFIX_DEMO", "pipeline_demo")
-        backend = S3Backend(bucket=bucket, prefix=prefix)
+        prefix = get_env("S3_PREFIX", "pipeline_demo")
+        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
         base = f"s3://{backend.bucket}/{prefix}"
         config = StorageConfig(
             data_dir=base,

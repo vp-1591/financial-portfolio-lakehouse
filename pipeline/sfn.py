@@ -20,8 +20,9 @@ This module is split into:
 Clients are built with boto3's default credential chain (the base
 ``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY`` env vars exported by the
 ``configure-aws-credentials`` GitHub Action), not via
-:func:`pipeline.secrets.resolve_aws_credentials`.  The ``_DEMO`` secret swap
-is for broker / S3 data-plane isolation; the SFN trigger only needs IAM
+:func:`pipeline.secrets.resolve_aws_credentials`.  The credential
+isolation between environments is handled at the SSM / ECS level; the SFN
+trigger only needs IAM
 ``states:StartExecution`` / ``ecs:DescribeTaskDefinition`` /
 ``logs:FilterLogEvents`` permissions, which the same access key provides in
 either environment.

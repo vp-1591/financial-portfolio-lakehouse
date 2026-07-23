@@ -3,7 +3,7 @@
 Verifies that:
 - ``resolve_storage`` uses execution mode (``set_mode``) to select backend
 - ``resolve_storage`` requires ``S3_BUCKET`` in docker/prod modes
-- ``resolve_storage`` uses ``S3_BUCKET_DEMO`` in staging mode
+- ``resolve_storage`` uses ``S3_BUCKET`` in staging mode
 - ``use_storage`` injects custom configs
 - ``get_storage`` returns the active config
 - ``pipeline.paths`` module delegates to the active ``StorageConfig``
@@ -73,74 +73,64 @@ class TestResolveStorage:
         with pytest.raises(ValueError, match="S3_BUCKET is required"):
             resolve_storage()
 
-    def test_staging_mode_default_bucket_suffix(self, monkeypatch):
-        """In staging mode, S3 bucket gets -demo suffix by default."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
-        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+    def test_staging_mode_uses_s3_bucket_directly(self, monkeypatch):
+        """In staging mode, S3 bucket is read from S3_BUCKET (no suffix fallback)."""
+        monkeypatch.setenv("S3_BUCKET", "my-staging-bucket")
         set_mode("staging")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "my-bucket-demo"
+        assert config.backend.bucket == "my-staging-bucket"
         assert config.backend.prefix == "pipeline_demo"
 
-    def test_staging_mode_explicit_bucket(self, monkeypatch):
-        """S3_BUCKET_DEMO and S3_PREFIX_DEMO override defaults."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
-        monkeypatch.setenv("S3_PREFIX_DEMO", "custom-demo-prefix")
+    def test_staging_mode_explicit_prefix(self, monkeypatch):
+        """S3_BUCKET and S3_PREFIX override defaults in staging mode."""
+        monkeypatch.setenv("S3_BUCKET", "my-staging-bucket")
+        monkeypatch.setenv("S3_PREFIX", "custom-prefix")
         set_mode("staging")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "explicit-demo-bucket"
-        assert config.backend.prefix == "custom-demo-prefix"
+        assert config.backend.bucket == "my-staging-bucket"
+        assert config.backend.prefix == "custom-prefix"
 
     def test_staging_mode_paths_include_prefix(self, monkeypatch):
         """Staging mode uses pipeline_demo prefix in S3 paths."""
-        monkeypatch.setenv("S3_BUCKET", "pipeline")
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
-        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        monkeypatch.setenv("S3_BUCKET", "pipeline-staging")
         set_mode("staging")
         config = resolve_storage()
-        assert config.raw_dir == "s3://pipeline-demo/pipeline_demo/raw"
-        assert config.normalized_dir == "s3://pipeline-demo/pipeline_demo/normalized"
-        assert config.analytics_dir == "s3://pipeline-demo/pipeline_demo/analytics"
+        assert config.raw_dir == "s3://pipeline-staging/pipeline_demo/raw"
+        assert config.normalized_dir == "s3://pipeline-staging/pipeline_demo/normalized"
+        assert config.analytics_dir == "s3://pipeline-staging/pipeline_demo/analytics"
 
-    def test_staging_mode_bucket_demo_standalone(self, monkeypatch):
-        """S3_BUCKET_DEMO alone (without S3_BUCKET) works in staging mode."""
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
+    def test_staging_mode_s3_bucket_alone(self, monkeypatch):
+        """S3_BUCKET alone works in staging mode."""
+        monkeypatch.setenv("S3_BUCKET", "my-staging-bucket")
         set_mode("staging")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "explicit-demo-bucket"
+        assert config.backend.bucket == "my-staging-bucket"
         assert config.backend.prefix == "pipeline_demo"
 
     def test_staging_mode_requires_bucket(self, monkeypatch):
         """Staging mode raises ValueError when no S3 bucket is configured."""
         monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
         set_mode("staging")
         with pytest.raises(ValueError, match="Staging mode requires"):
             resolve_storage()
 
-    def test_staging_prefix_demo_empty_falls_back(self, monkeypatch):
-        """Empty S3_PREFIX_DEMO falls back to pipeline_demo."""
+    def test_staging_prefix_empty_falls_back(self, monkeypatch):
+        """Empty S3_PREFIX falls back to pipeline_demo in staging mode."""
         monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_PREFIX_DEMO", "")
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.setenv("S3_PREFIX", "")
         set_mode("staging")
         config = resolve_storage()
         assert config.backend.prefix == "pipeline_demo"
 
-    def test_staging_bucket_demo_empty_falls_back(self, monkeypatch):
-        """Empty S3_BUCKET_DEMO falls back to derived name."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_BUCKET_DEMO", "")
-        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+    def test_staging_empty_bucket_raises(self, monkeypatch):
+        """Empty S3_BUCKET in staging mode raises ValueError (no suffix fallback)."""
+        monkeypatch.setenv("S3_BUCKET", "")
         set_mode("staging")
-        config = resolve_storage()
-        assert config.backend.bucket == "my-bucket-demo"
+        with pytest.raises(ValueError, match="Staging mode requires"):
+            resolve_storage()
 
     def test_prod_mode_with_s3_bucket(self, monkeypatch):
         """In prod mode, resolve_storage creates S3Backend with production bucket."""
@@ -492,36 +482,31 @@ class TestS3Backend:
         assert "aws_endpoint_url" not in opts
         assert "aws_allow_http" not in opts
 
-    def test_storage_options_staging_mode_uses_demo_creds(self, monkeypatch):
-        """In staging mode, storage_options uses _DEMO AWS credentials."""
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID_DEMO", "demo-key-id")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY_DEMO", "demo-secret")
+    def test_storage_options_staging_mode_uses_credentials(self, monkeypatch):
+        """In staging mode, storage_options uses AWS credentials from env vars."""
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "staging-key-id")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "staging-secret")
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
-        # Even if base creds are set, staging mode must NOT use them
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key-id")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "prod-secret")
         set_mode("staging")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        assert opts["aws_access_key_id"] == "demo-key-id"
-        assert opts["aws_secret_access_key"] == "demo-secret"
+        assert opts["aws_access_key_id"] == "staging-key-id"
+        assert opts["aws_secret_access_key"] == "staging-secret"
 
-    def test_storage_options_staging_mode_no_fallback(self, monkeypatch):
-        """In staging mode, missing _DEMO creds result in omitted keys, not empty strings.
+    def test_storage_options_staging_mode_no_credentials_omitted(self, monkeypatch):
+        """In staging mode, missing credentials result in omitted keys, not empty strings.
 
         Omitting keys allows IAM role fallback on ECS. In CI, step-level
         conditionals ensure production env vars are absent in staging runs
         (ADR 0041 Decision #1), so there is nothing to fall back to.
         """
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key-id")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "prod-secret")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
         set_mode("staging")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        # Should omit credential keys entirely, not use production credentials.
+        # Should omit credential keys entirely, allowing IAM role fallback.
         assert "aws_access_key_id" not in opts
         assert "aws_secret_access_key" not in opts
 

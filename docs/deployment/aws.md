@@ -74,7 +74,7 @@ terraform apply
    [SSM secrets reference](#ssm-secrets-reference) below).
 2. **Push Docker image** to ECR so task definitions have something to run.
 3. **Store outputs** in GitHub Secrets: `access_key_id`, `s3_bucket`, `s3_prefix`
-   (and `_DEMO` variants for demo).
+   (use `_STAGING` variants for the demo environment).
 
 ### SSM secrets reference
 
@@ -90,22 +90,22 @@ Replace `<kms-key-id>` with the output of `terraform output kms_key_arn` from
 
 | SSM parameter name | Env var in container | Description |
 |---|---|---|
-| `/portfolio/demo/IBKR_FLEX_TOKEN_DEMO` | `IBKR_FLEX_TOKEN_DEMO` | IBKR Flex Token |
-| `/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO` | `IBKR_FLEX_QUERY_ID_DEMO` | IBKR Flex Query ID |
-| `/portfolio/demo/T212_API_KEY_DEMO` | `T212_API_KEY_DEMO` | Trading 212 API Key |
-| `/portfolio/demo/T212_API_SECRET_DEMO` | `T212_API_SECRET_DEMO` | Trading 212 API Secret |
-| `/portfolio/demo/ENCRYPTION_KEY_DEMO` | `ENCRYPTION_KEY_DEMO` | Fernet encryption key for Delta table values |
+| `/portfolio/demo/IBKR_FLEX_TOKEN` | `IBKR_FLEX_TOKEN` | IBKR Flex Token |
+| `/portfolio/demo/IBKR_FLEX_QUERY_ID` | `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID |
+| `/portfolio/demo/T212_API_KEY` | `T212_API_KEY` | Trading 212 API Key |
+| `/portfolio/demo/T212_API_SECRET` | `T212_API_SECRET` | Trading 212 API Secret |
+| `/portfolio/demo/ENCRYPTION_KEY` | `ENCRYPTION_KEY` | Fernet encryption key for Delta table values |
 
 **Bash / Git Bash:**
 
 ```bash
 KMS_KEY_ID=$(terraform -chdir=terraform/demo output -raw kms_key_arn)
 
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN_DEMO   --value "TOKEN"    --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO --value "QUERY_ID" --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_KEY_DEMO      --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET_DEMO   --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 ```
 
 **PowerShell:**
@@ -113,11 +113,11 @@ aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FER
 ```powershell
 $KMS_KEY_ID = (terraform -chdir=terraform/demo output -raw kms_key_arn)
 
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN_DEMO   --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_KEY_DEMO      --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET_DEMO   --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
 ```
 
 #### Production environment
@@ -162,7 +162,7 @@ aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"
 > data becomes unreadable. Verify the key before the first cloud run.
 
 > **Note:** AWS credential SSM parameters (`AWS_ACCESS_KEY_ID`,
-> `AWS_SECRET_ACCESS_KEY` and their `_DEMO` variants) are **not** needed. ECS
+> `AWS_SECRET_ACCESS_KEY`) are **not** needed in SSM. ECS
 > tasks use IAM role credentials instead (see
 > [ADR 0055](../adr/0055-iam-role-credential-fallback.md)).
 

@@ -5,11 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pipeline.secrets import (
-    DEMO_SECRET_MAP,
     REQUIRED_SECRETS,
-    REQUIRED_SECRETS_DEMO,
-    REQUIRED_SECRETS_DEMO_NON_AWS,
-    REQUIRED_SECRETS_S3_DEMO,
     AwsCredentials,
     get_env,
     get_mode,
@@ -303,212 +299,51 @@ class TestIsDemo:
 
 
 class TestResolveSecret:
-    """Test resolve_secret() in staging (demo) and docker (non-demo) modes.
+    """Test resolve_secret() reads secrets from the environment.
 
-    Strict isolation: demo mode must NOT fall back to base secrets,
-    and docker/prod mode must NOT read _DEMO secrets.
+    resolve_secret() always reads the base env var name directly.
+    Environment isolation is handled by the deployment (SSM path prefix,
+    .env file), not by Python code.
     """
 
-    def test_returns_base_secret_in_docker_mode(self, monkeypatch):
+    def test_returns_secret_when_set(self, monkeypatch):
         set_mode("docker")
-        monkeypatch.setenv("IBKR_FLEX_TOKEN", "live-token")
-        monkeypatch.delenv("IBKR_FLEX_TOKEN_DEMO", raising=False)
-        assert resolve_secret("IBKR_FLEX_TOKEN") == "live-token"
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "my-token")
+        assert resolve_secret("IBKR_FLEX_TOKEN") == "my-token"
 
-    def test_returns_demo_secret_in_staging_mode(self, monkeypatch):
-        set_mode("staging")
-        monkeypatch.setenv("IBKR_FLEX_TOKEN_DEMO", "demo-token")
-        monkeypatch.setenv("IBKR_FLEX_TOKEN", "live-token")
-        assert resolve_secret("IBKR_FLEX_TOKEN") == "demo-token"
-
-    def test_returns_none_when_demo_secret_missing(self, monkeypatch, caplog):
-        """In staging mode, missing _DEMO variant returns None with a warning."""
-        set_mode("staging")
-        monkeypatch.delenv("IBKR_FLEX_TOKEN_DEMO", raising=False)
-        # Even if base secret is set, it must NOT be used in staging mode
-        monkeypatch.setenv("IBKR_FLEX_TOKEN", "live-token")
-        result = resolve_secret("IBKR_FLEX_TOKEN")
-        assert result is None
-        # Warning should mention the missing demo secret
-        assert any("IBKR_FLEX_TOKEN_DEMO" in msg for msg in caplog.messages), (
-            "Expected warning about missing IBKR_FLEX_TOKEN_DEMO"
-        )
-
-    def test_returns_none_when_base_secret_missing_in_docker_mode(self, monkeypatch):
-        set_mode("docker")
-        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
-        assert resolve_secret("IBKR_FLEX_TOKEN") is None
-
-    def test_pass_through_for_unknown_names(self, monkeypatch):
-        """Names not in DEMO_SECRET_MAP are returned from env directly."""
-        set_mode("staging")
-        monkeypatch.setenv("SOME_OTHER_VAR", "value")
-        # Not in DEMO_SECRET_MAP, so demo mode has no effect
-        assert resolve_secret("SOME_OTHER_VAR") == "value"
-
-    def test_docker_mode_never_reads_demo_secrets(self, monkeypatch):
-        """In docker mode, _DEMO secrets must NOT be used."""
-        set_mode("docker")
-        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
-        monkeypatch.setenv("IBKR_FLEX_TOKEN_DEMO", "demo-token")
-        assert resolve_secret("IBKR_FLEX_TOKEN") is None
-
-    def test_all_secrets_in_demo_secret_map(self):
-        """Every REQUIRED_SECRETS entry must have a _DEMO mapping."""
-        for name in REQUIRED_SECRETS:
-            assert name in DEMO_SECRET_MAP, f"{name} missing from DEMO_SECRET_MAP"
-
-    def test_all_demo_secrets_in_required_demo(self):
-        """Every _DEMO variant must be in REQUIRED_SECRETS_DEMO."""
-        for base, demo in DEMO_SECRET_MAP.items():
-            assert demo in REQUIRED_SECRETS_DEMO, (
-                f"{demo} missing from REQUIRED_SECRETS_DEMO"
-            )
-
-    def test_required_secrets_demo_non_aws_excludes_aws(self):
-        """REQUIRED_SECRETS_DEMO_NON_AWS must not contain AWS credential names."""
-        for name in REQUIRED_SECRETS_S3_DEMO:
-            assert name not in REQUIRED_SECRETS_DEMO_NON_AWS, (
-                f"{name} should not be in REQUIRED_SECRETS_DEMO_NON_AWS"
-            )
-
-    def test_required_secrets_demo_non_aws_union_equals_demo(self):
-        """Non-AWS + S3 demo lists must equal the full REQUIRED_SECRETS_DEMO."""
-        combined = sorted(REQUIRED_SECRETS_DEMO_NON_AWS + REQUIRED_SECRETS_S3_DEMO)
-        expected = sorted(REQUIRED_SECRETS_DEMO)
-        assert combined == expected
-
-
-class TestInjectSecretsDemoMode:
-    """Test inject_secrets() validation in staging (demo) mode."""
-
-    def setup_method(self):
-        import pipeline.storage
-
-        pipeline.storage._config = None
-
-    def teardown_method(self):
-        import pipeline.storage
-
-        pipeline.storage._config = None
-
-    def test_staging_mode_validates_demo_secrets(self, monkeypatch):
-        """In staging mode, _DEMO variants are validated, not base secrets.
-
-        Staging mode validates all demo secrets (non-AWS in the general loop
-        and AWS in the S3-specific section).
-        """
-        set_mode("staging")
-        # Set all _DEMO variants (non-AWS and AWS S3)
-        for demo_name in REQUIRED_SECRETS_DEMO:
-            monkeypatch.setenv(demo_name, "demo-value")
-        # Do NOT set base secrets -- they should not be required in staging mode
-        for name in REQUIRED_SECRETS:
-            monkeypatch.delenv(name, raising=False)
-
-        secrets = inject_secrets()
-        for demo_name in REQUIRED_SECRETS_DEMO:
-            assert demo_name in secrets
-            assert secrets[demo_name] == "demo-value"
-
-    def test_staging_mode_warns_on_missing_demo_secrets(self, monkeypatch, caplog):
-        """Missing _DEMO secrets generate warnings in staging mode."""
-        set_mode("staging")
-        for name in REQUIRED_SECRETS_DEMO:
-            monkeypatch.delenv(name, raising=False)
-        for name in REQUIRED_SECRETS:
-            monkeypatch.delenv(name, raising=False)
-
-        secrets = inject_secrets()
-        # No secrets should be found
-        assert not secrets
-        # Warnings should mention all demo secrets (non-AWS and S3)
-        for demo_name in REQUIRED_SECRETS_DEMO:
-            assert any(demo_name in msg for msg in caplog.messages), (
-                f"Expected warning for {demo_name}"
-            )
-
-    def test_docker_mode_does_not_warn_about_demo_secrets(self, monkeypatch, caplog):
-        """In docker mode, missing _DEMO secrets are not warned about."""
-        set_mode("docker")
-        # Set all base secrets
-        for name in REQUIRED_SECRETS:
-            monkeypatch.setenv(name, "value")
-        # _DEMO variants are not set
-        for demo_name in REQUIRED_SECRETS_DEMO:
-            monkeypatch.delenv(demo_name, raising=False)
-
-        inject_secrets()
-        # Warnings should NOT mention _DEMO variants
-        for demo_name in REQUIRED_SECRETS_DEMO:
-            assert not any(demo_name in msg for msg in caplog.messages), (
-                f"Unexpected warning for {demo_name} in docker mode"
-            )
-
-
-class TestResolveSecretLogging:
-    """Test that resolve_secret logs which variant is used."""
-
-    def test_logs_demo_variant_when_resolved(self, monkeypatch, caplog):
-        """In staging mode, resolve_secret logs that it used the _DEMO variant."""
-        caplog.set_level("INFO")
-        set_mode("staging")
-        monkeypatch.setenv("IBKR_FLEX_TOKEN_DEMO", "demo-token")
-        result = resolve_secret("IBKR_FLEX_TOKEN")
-        assert result == "demo-token"
-        assert any(
-            "Resolved IBKR_FLEX_TOKEN from IBKR_FLEX_TOKEN_DEMO" in msg
-            for msg in caplog.messages
-        ), f"Expected info log about demo variant, got: {caplog.messages}"
-
-    def test_logs_base_variant_when_resolved(self, monkeypatch, caplog):
-        """In docker mode, resolve_secret logs that it used the base variant."""
-        caplog.set_level("INFO")
-        set_mode("docker")
-        monkeypatch.setenv("IBKR_FLEX_TOKEN", "live-token")
-        result = resolve_secret("IBKR_FLEX_TOKEN")
-        assert result == "live-token"
-        assert any(
-            "Resolved IBKR_FLEX_TOKEN from IBKR_FLEX_TOKEN" in msg
-            for msg in caplog.messages
-        ), f"Expected info log about base variant, got: {caplog.messages}"
-
-    def test_logs_debug_when_secret_missing(self, monkeypatch, caplog):
-        """In docker mode, missing secrets are logged at debug level."""
-        caplog.set_level("DEBUG")
+    def test_returns_none_when_secret_missing(self, monkeypatch, caplog):
         set_mode("docker")
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
         result = resolve_secret("IBKR_FLEX_TOKEN")
         assert result is None
-        assert any("IBKR_FLEX_TOKEN is not set" in msg for msg in caplog.messages), (
-            f"Expected debug log about missing secret, got: {caplog.messages}"
-        )
+        assert any("IBKR_FLEX_TOKEN" in msg for msg in caplog.messages)
 
-
-class TestAWSSecretsInDemoMap:
-    """Test that AWS credentials are in DEMO_SECRET_MAP."""
-
-    def test_aws_access_key_in_demo_map(self):
-        assert "AWS_ACCESS_KEY_ID" in DEMO_SECRET_MAP
-        assert DEMO_SECRET_MAP["AWS_ACCESS_KEY_ID"] == "AWS_ACCESS_KEY_ID_DEMO"
-
-    def test_aws_secret_key_in_demo_map(self):
-        assert "AWS_SECRET_ACCESS_KEY" in DEMO_SECRET_MAP
-        assert DEMO_SECRET_MAP["AWS_SECRET_ACCESS_KEY"] == "AWS_SECRET_ACCESS_KEY_DEMO"
-
-    def test_aws_creds_resolve_demo_variant(self, monkeypatch):
-        """In staging mode, AWS creds use _DEMO variants."""
+    def test_returns_secret_in_staging_mode(self, monkeypatch):
+        """In staging mode, resolve_secret reads the base name directly."""
         set_mode("staging")
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID_DEMO", "demo-key")
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key")
-        assert resolve_secret("AWS_ACCESS_KEY_ID") == "demo-key"
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "staging-token")
+        assert resolve_secret("IBKR_FLEX_TOKEN") == "staging-token"
 
-    def test_aws_creds_no_fallback_in_demo(self, monkeypatch):
-        """In staging mode, missing _DEMO AWS creds return None, not base creds."""
-        set_mode("staging")
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key")
-        assert resolve_secret("AWS_ACCESS_KEY_ID") is None
+    def test_returns_secret_in_prod_mode(self, monkeypatch):
+        """In prod mode, resolve_secret reads the base name directly."""
+        set_mode("prod")
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "prod-token")
+        assert resolve_secret("IBKR_FLEX_TOKEN") == "prod-token"
+
+    def test_logs_resolved_secret(self, monkeypatch, caplog):
+        """resolve_secret logs the name of the resolved secret at info level."""
+        caplog.set_level("INFO")
+        set_mode("docker")
+        monkeypatch.setenv("IBKR_FLEX_TOKEN", "my-token")
+        resolve_secret("IBKR_FLEX_TOKEN")
+        assert any("Resolved IBKR_FLEX_TOKEN" in msg for msg in caplog.messages)
+
+    def test_logs_warning_when_secret_missing(self, monkeypatch, caplog):
+        """resolve_secret logs a warning when a secret is not set."""
+        set_mode("docker")
+        monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+        resolve_secret("IBKR_FLEX_TOKEN")
+        assert any("IBKR_FLEX_TOKEN" in msg for msg in caplog.messages)
 
 
 class TestInjectSecretsS3Validation:
@@ -527,6 +362,20 @@ class TestInjectSecretsS3Validation:
     def test_s3_secrets_validated_for_prod(self, monkeypatch, caplog):
         """In prod mode, missing AWS creds generate a warning."""
         set_mode("prod")
+        for name in REQUIRED_SECRETS:
+            monkeypatch.setenv(name, "value")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+        inject_secrets()
+        assert any(
+            "AWS_ACCESS_KEY_ID" in msg and "cloud storage" in msg
+            for msg in caplog.messages
+        ), f"Expected S3 warning, got: {caplog.messages}"
+
+    def test_s3_secrets_validated_for_staging(self, monkeypatch, caplog):
+        """In staging mode, missing AWS creds generate a warning."""
+        set_mode("staging")
         for name in REQUIRED_SECRETS:
             monkeypatch.setenv(name, "value")
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
@@ -567,39 +416,27 @@ class TestInjectSecretsS3Validation:
             f"Unexpected S3 warning in docker mode: {caplog.messages}"
         )
 
-    def test_staging_s3_secrets_validated(self, monkeypatch, caplog):
-        """In staging mode, missing _DEMO AWS creds generate a warning."""
+    def test_staging_s3_secrets_present_no_warning(self, monkeypatch, caplog):
+        """In staging mode, present AWS creds produce no S3 warnings."""
         set_mode("staging")
-        for name in REQUIRED_SECRETS_DEMO:
-            monkeypatch.setenv(name, "demo-value")
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
-
-        inject_secrets()
-        assert any(
-            "AWS_ACCESS_KEY_ID_DEMO" in msg and "cloud storage" in msg
-            for msg in caplog.messages
-        ), f"Expected demo S3 warning, got: {caplog.messages}"
-
-    def test_docker_mode_no_aws_demo_warnings(self, monkeypatch, caplog):
-        """In docker mode, missing AWS _DEMO creds do NOT generate warnings.
-
-        Docker mode validates base secrets only and skips S3 validation.
-        No _DEMO variants are checked, so missing AWS _DEMO credentials
-        should not produce any warnings.
-        """
-        set_mode("docker")
-        # Set base secrets
         for name in REQUIRED_SECRETS:
             monkeypatch.setenv(name, "value")
-        # Explicitly do NOT set AWS credentials (base or demo)
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "staging-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "staging-secret")
 
         inject_secrets()
-        # No warning should mention AWS credentials at all
+        s3_warnings = [msg for msg in caplog.messages if "cloud storage" in msg]
+        assert not s3_warnings, f"Unexpected S3 warnings: {s3_warnings}"
+
+    def test_docker_mode_no_aws_warnings(self, monkeypatch, caplog):
+        """In docker mode, missing AWS creds produce no warnings at all."""
+        set_mode("docker")
+        for name in REQUIRED_SECRETS:
+            monkeypatch.setenv(name, "value")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+
+        inject_secrets()
         aws_warnings = [
             msg
             for msg in caplog.messages
@@ -607,31 +444,6 @@ class TestInjectSecretsS3Validation:
         ]
         assert not aws_warnings, (
             f"Unexpected AWS warnings in docker mode: {aws_warnings}"
-        )
-
-    def test_staging_single_aws_demo_warning(self, monkeypatch, caplog):
-        """In staging mode, each missing AWS _DEMO cred is warned about once.
-
-        Previously, AWS demo credentials were warned about twice -- once
-        in the general demo loop and once in the S3-specific section.
-        Now they should only appear in the S3-specific section.
-        """
-        set_mode("staging")
-        # Set non-AWS demo secrets
-        for name in REQUIRED_SECRETS_DEMO_NON_AWS:
-            monkeypatch.setenv(name, "demo-value")
-        # Do NOT set AWS _DEMO creds
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
-
-        inject_secrets()
-        # Count how many times AWS_ACCESS_KEY_ID_DEMO appears in warnings
-        key_warnings = [
-            msg for msg in caplog.messages if "AWS_ACCESS_KEY_ID_DEMO" in msg
-        ]
-        assert len(key_warnings) == 1, (
-            f"Expected exactly 1 warning for AWS_ACCESS_KEY_ID_DEMO, "
-            f"got {len(key_warnings)}: {key_warnings}"
         )
 
 
@@ -649,30 +461,17 @@ class TestResolveAwsCredentials:
         assert creds.secret_key == "prod-secret"
 
     def test_staging_credentials(self, monkeypatch):
-        """In staging mode, _DEMO AWS credentials are used."""
+        """In staging mode, AWS credentials are read from base names."""
         set_mode("staging")
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID_DEMO", "demo-key")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY_DEMO", "demo-secret")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "staging-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "staging-secret")
 
         creds = resolve_aws_credentials()
-        assert creds.key_id == "demo-key"
-        assert creds.secret_key == "demo-secret"
+        assert creds.key_id == "staging-key"
+        assert creds.secret_key == "staging-secret"
 
-    def test_staging_no_fallback_to_base(self, monkeypatch):
-        """In staging mode, missing _DEMO AWS creds return None, not base creds."""
-        set_mode("staging")
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
-        # Base creds are set -- must NOT be used
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "prod-secret")
-
-        creds = resolve_aws_credentials()
-        assert creds.key_id is None
-        assert creds.secret_key is None
-
-    def test_docker_mode_missing_creds(self, monkeypatch):
-        """In docker mode, missing AWS creds return None."""
+    def test_missing_creds_return_none(self, monkeypatch):
+        """Missing AWS credentials return None."""
         set_mode("docker")
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
@@ -745,13 +544,7 @@ class TestAwsCredentialsDataclass:
         }
 
     def test_to_storage_options_none_credentials_omitted(self):
-        """When both credentials are None, keys are omitted to allow IAM role fallback.
-
-        Omitting credential keys allows object_store to fall through its default
-        credential chain (including ECS IAM task roles). When either credential
-        is set, both keys are included (with the missing one as empty string) to
-        block fallback to environment variables.
-        """
+        """When both credentials are None, keys are omitted to allow IAM role fallback."""
         creds = AwsCredentials(
             key_id=None,
             secret_key=None,
@@ -805,13 +598,7 @@ class TestAwsCredentialsDataclass:
         assert kwargs["region"] == "eu-west-1"
 
     def test_to_pyarrow_kwargs_none_credentials_omitted(self):
-        """When both credentials are None, keys are omitted to allow IAM role fallback.
-
-        Omitting credential keys allows PyArrow to fall through its default
-        credential chain (including ECS IAM task roles). When either credential
-        is set, both keys are included (with the missing one as empty string) to
-        block fallback to environment variables.
-        """
+        """When both credentials are None, keys are omitted to allow IAM role fallback."""
         creds = AwsCredentials(
             key_id=None,
             secret_key=None,
@@ -879,7 +666,7 @@ class TestAwsCredentialsDataclass:
         """When credentials are None, they are included as empty strings.
 
         Empty KEY_ID/SECRET prevent DuckDB from falling back to environment
-        variables that may contain production credentials.
+        variables that may contain credentials from a different environment.
         """
         creds = AwsCredentials(
             key_id=None,

@@ -40,7 +40,7 @@ terraform {
 
 locals {
   # --mode flag passed through to connector / consolidate commands.  The demo
-  # environment runs in "staging" mode (demo S3 bucket, _DEMO secrets); prod
+  # environment runs in "staging" mode (demo S3 bucket, base-name secrets from /portfolio/demo/ SSM); prod
   # runs in "prod" mode.  Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md
   mode_flag = var.demo ? "staging" : "prod"
 
