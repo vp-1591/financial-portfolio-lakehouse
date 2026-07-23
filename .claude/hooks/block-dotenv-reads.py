@@ -47,11 +47,31 @@ def _is_real_dotenv(text: str) -> bool:
 # Bash: command-level detection
 # ---------------------------------------------------------------------------
 
-_READ_COMMANDS = frozenset({
-    "cat", "less", "more", "head", "tail", "nl", "tac", "rev",
-    "nano", "vim", "vi", "nvim", "code", "notepad", "explorer",
-    "xdg-open", "start", "open", "type", "grep", "rg",
-})
+_READ_COMMANDS = frozenset(
+    {
+        "cat",
+        "less",
+        "more",
+        "head",
+        "tail",
+        "nl",
+        "tac",
+        "rev",
+        "nano",
+        "vim",
+        "vi",
+        "nvim",
+        "code",
+        "notepad",
+        "explorer",
+        "xdg-open",
+        "start",
+        "open",
+        "type",
+        "grep",
+        "rg",
+    }
+)
 
 # <read-command> ... <dotenv-filename><boundary>
 _READ_CMD_RE = re.compile(

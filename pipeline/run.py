@@ -921,13 +921,17 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Set execution mode from --mode flag before storage resolution.
-    set_mode(args.mode)
+    # keygen is a standalone utility that generates an encryption key without
+    # touching storage or secrets, so it does not require --mode and must not
+    # trigger storage resolution (which would raise with no mode set).
+    if args.command != "keygen":
+        # Set execution mode from --mode flag before storage resolution.
+        set_mode(args.mode)
 
-    # Resolve storage configuration before any path access.
-    from pipeline.storage import resolve_storage
+        # Resolve storage configuration before any path access.
+        from pipeline.storage import resolve_storage
 
-    resolve_storage()
+        resolve_storage()
 
     commands = {
         "keygen": cmd_keygen,

@@ -63,8 +63,8 @@ def load_key(path: Path | None = None) -> bytes:
     if not path.exists():
         raise FileNotFoundError(
             f"Encryption key not found at {path}. "
-            "Run 'python -m pipeline.keygen' to create one, "
-            "or set the ENCRYPTION_KEY environment variable."
+            "Set the ENCRYPTION_KEY environment variable "
+            "(run 'python -m pipeline.keygen' for instructions)."
         )
     return path.read_bytes().strip()
 
