@@ -1,23 +1,30 @@
 """Swappable storage configuration for data paths.
 
-Supports local filesystem paths and S3 cloud storage.  The active
-configuration is a module-level singleton resolved from environment
-variables:
+Storage backend selection is driven by the ``--mode`` CLI flag (set via
+:func:`pipeline.secrets.set_mode` before calling :func:`resolve_storage`):
 
-- ``S3_BUCKET``: if set, uses :class:`S3Backend` with ``s3://bucket/prefix/...``
-- ``PIPELINE_DATA_DIR``: local data directory (default: ``PROJECT_ROOT / "data"``)
+- **docker** — :class:`S3Backend` with MinIO endpoint (``S3_ENDPOINT_URL``).
+- **staging** — :class:`S3Backend` with the demo S3 bucket
+  (``S3_BUCKET_DEMO`` or ``{S3_BUCKET}-demo``, prefix ``pipeline_demo``).
+- **prod** — :class:`S3Backend` with the production S3 bucket
+  (``S3_BUCKET``, prefix ``pipeline``).
 
-Local development can also use a ``.env`` file (loaded by
-:mod:`pipeline.secrets`) to set these variables.
+Local development can use a ``.env`` file (loaded by
+:mod:`pipeline.secrets`) to set S3 credentials and bucket names.
+
+Tests must call :func:`use_storage` with a ``tmp_path``-based
+config to prevent accidental writes to the project's ``data/``
+directory.
 
 Usage::
 
+    from pipeline.secrets import set_mode
     from pipeline.storage import get_storage
 
+    set_mode("docker")
     config = get_storage()
     raw_path = config.raw_path("ibkr_snapshot")
-    # e.g. "/abs/path/to/data/raw/ibkr_snapshot"  (LocalBackend)
-    # or  "s3://my-bucket/pipeline/raw/ibkr_snapshot"  (S3Backend)
+    # e.g. "s3://my-bucket/pipeline/raw/ibkr_snapshot"  (S3Backend)
 """
 
 from __future__ import annotations
@@ -30,10 +37,8 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from pipeline.secrets import (
-    STORAGE_TYPE_CLOUD,
-    STORAGE_TYPE_MINIO,
     get_env,
-    get_storage_type,
+    get_mode,
     is_demo,
 )
 
@@ -251,7 +256,6 @@ class StorageConfig:
         Uses ``staging`` prefix in production, ``staging_demo`` in demo
         mode — matching the existing ``pipeline``/``pipeline_demo`` pattern.
         """
-        from pipeline.secrets import is_demo
 
         prefix = "staging_demo" if is_demo() else "staging"
         return self.backend.staging_path(prefix, connector_name, filename)
@@ -276,21 +280,15 @@ _config: StorageConfig | None = None
 def resolve_storage() -> StorageConfig:
     """Resolve and activate a :class:`StorageConfig`.
 
-    Backend selection is controlled by the ``STORAGE_TYPE`` env var:
+    Backend selection is driven by the execution mode (set via
+    :func:`pipeline.secrets.set_mode`):
 
-    - ``cloud`` (default when ``S3_BUCKET`` is set): use
-      :class:`S3Backend` with AWS S3.
-    - ``minio``: use :class:`S3Backend` with a MinIO-compatible
-      endpoint (requires ``S3_ENDPOINT_URL``).
-    - ``local`` (default when ``S3_BUCKET`` is not set): use
-      :class:`LocalBackend` with the local filesystem.
-
-    In demo mode (``DEMO=true``), storage paths are isolated:
-
-    - **S3 mode**: uses ``S3_BUCKET_DEMO`` (or ``{S3_BUCKET}-demo``)
-      and ``S3_PREFIX_DEMO`` (or ``"pipeline_demo"``).
-    - **Local mode**: uses ``PIPELINE_DATA_DIR_DEMO`` (or
-      ``{data_dir}_demo``).
+    - **docker** — :class:`S3Backend` with MinIO endpoint.  Requires
+      ``S3_BUCKET``; warns if ``S3_ENDPOINT_URL`` is not set.
+    - **staging** — :class:`S3Backend` with the demo S3 bucket
+      (``S3_BUCKET_DEMO`` or ``{S3_BUCKET}-demo``, prefix ``pipeline_demo``).
+    - **prod** — :class:`S3Backend` with the production S3 bucket
+      (``S3_BUCKET``, prefix ``pipeline``).
 
     Tests must call :func:`use_storage` with a ``tmp_path``-based
     config to prevent accidental writes to the project's ``data/``
@@ -298,36 +296,46 @@ def resolve_storage() -> StorageConfig:
     """
     global _config
 
-    storage_type = get_storage_type()
-    demo = is_demo()
+    mode = get_mode()
 
-    if storage_type in (STORAGE_TYPE_CLOUD, STORAGE_TYPE_MINIO):
-        s3_bucket = get_env("S3_BUCKET")
-        if storage_type == STORAGE_TYPE_MINIO:
-            endpoint_url = get_env("S3_ENDPOINT_URL")
-            if not endpoint_url:
-                logger.warning(
-                    "STORAGE_TYPE is 'minio' but S3_ENDPOINT_URL is not set; "
-                    "MinIO typically requires an endpoint URL"
-                )
+    s3_bucket = get_env("S3_BUCKET")
 
-        if demo:
-            bucket = get_env("S3_BUCKET_DEMO") or (
-                f"{s3_bucket}-demo" if s3_bucket else None
+    if mode == "docker":
+        # MinIO — local S3-compatible storage.
+        if not s3_bucket:
+            raise ValueError(
+                "S3_BUCKET is required in docker mode (MinIO). "
+                "Set S3_BUCKET in .env or environment."
             )
-            if not bucket:
-                raise ValueError(
-                    "Demo mode requires S3_BUCKET_DEMO or S3_BUCKET "
-                    "to determine the S3 bucket"
-                )
-            prefix = get_env("S3_PREFIX_DEMO", "pipeline_demo")
-        else:
-            if not s3_bucket:
-                raise ValueError(
-                    f"STORAGE_TYPE is '{storage_type}' but S3_BUCKET is not set"
-                )
-            bucket = s3_bucket
-            prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
+        endpoint_url = get_env("S3_ENDPOINT_URL")
+        if not endpoint_url:
+            logger.warning(
+                "S3_ENDPOINT_URL is not set; "
+                "docker mode (MinIO) typically requires an endpoint URL"
+            )
+        prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
+        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
+        base = f"s3://{backend.bucket}/{prefix}"
+        config = StorageConfig(
+            data_dir=base,
+            raw_dir=f"{base}/raw",
+            normalized_dir=f"{base}/normalized",
+            analytics_dir=f"{base}/analytics",
+            secrets_dir=str(PROJECT_ROOT / ".secrets"),
+            encryption_key_file=str(PROJECT_ROOT / ".secrets" / "encryption.key"),
+            backend=backend,
+        )
+    elif mode == "staging":
+        # Demo S3 bucket.
+        bucket = get_env("S3_BUCKET_DEMO") or (
+            f"{s3_bucket}-demo" if s3_bucket else None
+        )
+        if not bucket:
+            raise ValueError(
+                "Staging mode requires S3_BUCKET_DEMO or S3_BUCKET "
+                "to determine the S3 bucket"
+            )
+        prefix = get_env("S3_PREFIX_DEMO", "pipeline_demo")
         backend = S3Backend(bucket=bucket, prefix=prefix)
         base = f"s3://{backend.bucket}/{prefix}"
         config = StorageConfig(
@@ -339,29 +347,27 @@ def resolve_storage() -> StorageConfig:
             encryption_key_file=str(PROJECT_ROOT / ".secrets" / "encryption.key"),
             backend=backend,
         )
-    else:
-        data_dir_str = get_env("PIPELINE_DATA_DIR")
-        if data_dir_str:
-            data_dir = Path(data_dir_str)
-        else:
-            data_dir = PROJECT_ROOT / "data"
-
-        if demo:
-            demo_dir_str = get_env("PIPELINE_DATA_DIR_DEMO")
-            if demo_dir_str:
-                data_dir = Path(demo_dir_str)
-            else:
-                data_dir = Path(f"{data_dir}_demo")
-
+    elif mode == "prod":
+        # Production S3 bucket.
+        if not s3_bucket:
+            raise ValueError(
+                "S3_BUCKET is required in prod mode. "
+                "Set S3_BUCKET in .env or environment."
+            )
+        prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
+        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
+        base = f"s3://{backend.bucket}/{prefix}"
         config = StorageConfig(
-            data_dir=str(data_dir),
-            raw_dir=str(data_dir / "raw"),
-            normalized_dir=str(data_dir / "normalized"),
-            analytics_dir=str(data_dir / "analytics"),
+            data_dir=base,
+            raw_dir=f"{base}/raw",
+            normalized_dir=f"{base}/normalized",
+            analytics_dir=f"{base}/analytics",
             secrets_dir=str(PROJECT_ROOT / ".secrets"),
             encryption_key_file=str(PROJECT_ROOT / ".secrets" / "encryption.key"),
-            backend=LocalBackend(data_dir),
+            backend=backend,
         )
+    else:
+        raise ValueError(f"Unsupported mode: {mode!r}")
 
     _config = config
     return config

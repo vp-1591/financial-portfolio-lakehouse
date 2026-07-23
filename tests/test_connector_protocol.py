@@ -18,6 +18,7 @@ import polars as pl
 from pipeline.connectors.registry import get
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.consolidate import Holding
+from pipeline.secrets import reset_mode, set_mode
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ class TestIbkrFetchKwargs:
     def test_returns_kwargs_when_secrets_set(self, monkeypatch) -> None:
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "test-token")
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
+        set_mode("docker")
         connector = get("ibkr")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
@@ -39,41 +41,49 @@ class TestIbkrFetchKwargs:
             "flex_query_id": "42",
             "flex_base_url": "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
         }
+        reset_mode()
 
     def test_returns_empty_dict_when_token_missing(self, monkeypatch) -> None:
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
+        set_mode("docker")
         connector = get("ibkr")
         args = argparse.Namespace()
         assert connector.fetch_kwargs(args) == {}
+        reset_mode()
 
     def test_returns_empty_dict_when_query_id_missing(self, monkeypatch) -> None:
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "test-token")
         monkeypatch.delenv("IBKR_FLEX_QUERY_ID", raising=False)
+        set_mode("docker")
         connector = get("ibkr")
         args = argparse.Namespace()
         assert connector.fetch_kwargs(args) == {}
+        reset_mode()
 
     def test_custom_base_url(self, monkeypatch) -> None:
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "test-token")
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
         monkeypatch.setenv("IBKR_FLEX_BASE_URL", "https://custom.example.com")
+        set_mode("docker")
         connector = get("ibkr")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
         assert kwargs["flex_base_url"] == "https://custom.example.com"
+        reset_mode()
 
     def test_demo_mode_uses_demo_variants(self, monkeypatch) -> None:
-        monkeypatch.setenv("DEMO", "true")
         monkeypatch.setenv("IBKR_FLEX_TOKEN_DEMO", "demo-token")
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID_DEMO", "99")
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
         monkeypatch.delenv("IBKR_FLEX_QUERY_ID", raising=False)
+        set_mode("staging")
         connector = get("ibkr")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
         assert kwargs["flex_token"] == "demo-token"
         assert kwargs["flex_query_id"] == "99"
+        reset_mode()
 
 
 class TestTrading212FetchKwargs:
@@ -83,7 +93,7 @@ class TestTrading212FetchKwargs:
         monkeypatch.setenv("T212_API_KEY", "test-key")
         monkeypatch.setenv("T212_API_SECRET", "test-secret")
         monkeypatch.delenv("T212_BASE_URL", raising=False)
-        monkeypatch.delenv("DEMO", raising=False)
+        set_mode("docker")
         connector = get("trading212")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
@@ -92,33 +102,39 @@ class TestTrading212FetchKwargs:
             "api_secret": "test-secret",
             "base_url": "https://live.trading212.com/api/v0",
         }
+        reset_mode()
 
     def test_returns_empty_dict_when_api_key_missing(self, monkeypatch) -> None:
         monkeypatch.delenv("T212_API_KEY", raising=False)
+        set_mode("docker")
         connector = get("trading212")
         args = argparse.Namespace()
         assert connector.fetch_kwargs(args) == {}
+        reset_mode()
 
     def test_demo_mode_selects_demo_base_url(self, monkeypatch) -> None:
-        monkeypatch.setenv("DEMO", "true")
         monkeypatch.setenv("T212_API_KEY_DEMO", "demo-key")
         monkeypatch.setenv("T212_API_SECRET_DEMO", "demo-secret")
         monkeypatch.delenv("T212_API_KEY", raising=False)
         monkeypatch.delenv("T212_API_SECRET", raising=False)
         monkeypatch.delenv("T212_BASE_URL", raising=False)
+        set_mode("staging")
         connector = get("trading212")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
         assert kwargs["base_url"] == "https://demo.trading212.com/api/v0"
+        reset_mode()
 
     def test_custom_base_url_overrides_default(self, monkeypatch) -> None:
         monkeypatch.setenv("T212_API_KEY", "test-key")
         monkeypatch.setenv("T212_API_SECRET", "test-secret")
         monkeypatch.setenv("T212_BASE_URL", "https://custom.api.com")
+        set_mode("docker")
         connector = get("trading212")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
         assert kwargs["base_url"] == "https://custom.api.com"
+        reset_mode()
 
 
 class TestXtbFetchKwargs:
@@ -156,7 +172,11 @@ class TestFetchCdcKwargs:
     """CDC kwargs: T212 returns snapshot kwargs, IBKR/XTB return {}."""
 
     def test_ibkr_returns_empty(self) -> None:
+        from pipeline.secrets import reset_mode, set_mode
+
+        set_mode("docker")
         assert get("ibkr").fetch_cdc_kwargs() == {}
+        reset_mode()
 
     def test_xtb_returns_empty(self) -> None:
         assert get("xtb").fetch_cdc_kwargs() == {}
@@ -165,11 +185,12 @@ class TestFetchCdcKwargs:
         monkeypatch.setenv("T212_API_KEY", "test-key")
         monkeypatch.setenv("T212_API_SECRET", "test-secret")
         monkeypatch.delenv("T212_BASE_URL", raising=False)
-        monkeypatch.delenv("DEMO", raising=False)
+        set_mode("docker")
         connector = get("trading212")
         cdc_kwargs = connector.fetch_cdc_kwargs()
         snapshot_kwargs = connector.fetch_kwargs(argparse.Namespace())
         assert cdc_kwargs == snapshot_kwargs
+        reset_mode()
 
 
 # ---------------------------------------------------------------------------

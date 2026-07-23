@@ -33,6 +33,8 @@ from tests.fixtures.xtb import xtb_normalized_snapshot
 @pytest.fixture(autouse=True)
 def _setup_storage(tmp_path: Path) -> None:
     """Inject a tmp_path-based StorageConfig for all report tests."""
+    from pipeline.secrets import set_mode
+
     data = tmp_path / "data"
     for subdir in [
         "raw/ibkr_snapshot",
@@ -66,6 +68,7 @@ def _setup_storage(tmp_path: Path) -> None:
         backend=LocalBackend(data),
     )
     use_storage(config)
+    set_mode("docker")
 
 
 def _build_all_gold_tables(fernet_key: bytes) -> None:

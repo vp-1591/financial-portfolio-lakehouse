@@ -12,9 +12,9 @@ from pipeline.storage import LocalBackend, StorageConfig, use_storage
 
 # All pipeline-related environment variables that tests must isolate from.
 # Cleared before each test so local .env files and shell env vars don't leak.
+# Note: DEMO and STORAGE_TYPE are removed (replaced by --mode flag).
+# _DEMO-suffixed vars remain until Phase 4.
 _PIPELINE_ENV_VARS = [
-    "DEMO",
-    "STORAGE_TYPE",
     "S3_BUCKET",
     "S3_BUCKET_DEMO",
     "S3_PREFIX",
@@ -71,16 +71,35 @@ def _isolate_pipeline_env(monkeypatch, tmp_path):
     monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
     # Reset storage singleton so resolve_storage() re-reads env vars
     import pipeline.storage
+    import pipeline.secrets
 
     pipeline.storage._config = None
+    pipeline.secrets.reset_mode()
     yield
     pipeline.storage._config = None
+    pipeline.secrets.reset_mode()
 
 
 @pytest.fixture()
 def fernet_key() -> bytes:
     """Return a freshly generated Fernet key for test use."""
     return generate_key()
+
+
+@pytest.fixture()
+def docker_mode():
+    """Set execution mode to 'docker' for the duration of a test.
+
+    Most tests run in docker mode (MinIO/local S3).  The autouse
+    _isolate_pipeline_env fixture resets the mode to None before and
+    after each test, so this fixture is only needed for tests that
+    exercise code that calls get_mode() / is_demo() / resolve_storage().
+    """
+    import pipeline.secrets
+
+    pipeline.secrets.set_mode("docker")
+    yield
+    pipeline.secrets.reset_mode()
 
 
 @pytest.fixture()

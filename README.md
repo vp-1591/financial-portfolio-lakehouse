@@ -73,7 +73,7 @@ Sample report output generated from demo data for presentation purposes.
 ```bash
 docker compose build
 docker compose up minio -d
-docker compose run --rm pipeline full
+docker compose run --rm pipeline full --mode docker
 docker compose run --rm pipeline query "SELECT * FROM portfolio_holdings_analytics" --decrypt
 ```
 
@@ -84,7 +84,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[pipeline]"
 .venv\Scripts\python -m pipeline.run keygen   # generate encryption key (once)
-.venv\Scripts\python -m pipeline.run full
+.venv\Scripts\python -m pipeline.run full --mode docker
 ```
 
 ### Query data
@@ -117,7 +117,7 @@ variables. Copy [`.env.example`](.env.example) to `.env` and fill in your
 values — the pipeline loads it via `python-dotenv`.
 
 See the [Configuration Guide](docs/configuration.md) for details on secrets
-management, demo mode, S3 setup, and MinIO configuration.
+management, mode selection (`--mode docker|staging|prod`), S3 setup, and MinIO configuration.
 
 Broker-specific setup:
 - [IBKR Flex Web Service](docs/brokers/ibkr.md)

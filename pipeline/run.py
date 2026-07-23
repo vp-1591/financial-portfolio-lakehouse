@@ -2,17 +2,20 @@
 
 Usage::
 
-    python -m pipeline.run fetch
-    python -m pipeline.run transform
-    python -m pipeline.run consolidate --target-currency EUR
-    python -m pipeline.run analytics --target-currency EUR
-    python -m pipeline.run full
+    python -m pipeline.run full --mode docker
+    python -m pipeline.run full --mode staging
     python -m pipeline.run keygen
-    python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics"
-    python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
-    python -m pipeline.run run-connector ibkr
-    python -m pipeline.run run-connector xtb --xtb-file s3://bucket/staging/xtb/report.xlsx
-    python -m pipeline.run run-consolidate-analytics --target-currency EUR
+    python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --mode docker
+    python -m pipeline.run run-connector ibkr --mode docker
+    python -m pipeline.run run-connector xtb --xtb-file report.xlsx --mode docker
+    python -m pipeline.run run-consolidate-analytics --mode docker
+
+The ``--mode`` flag (``docker|staging|prod``) is required for all commands
+except ``keygen``.  It determines storage backend and credential resolution:
+
+- **docker** — MinIO (local S3-compatible storage)
+- **staging** — demo S3 bucket, ``_DEMO``-suffixed secrets
+- **prod** — production S3 bucket, production secrets
 
 Connector enable/disable is controlled by environment variables:
 
@@ -29,6 +32,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import IntEnum
 from pathlib import Path
 
@@ -37,9 +41,11 @@ from pipeline.connectors.registry import all as all_connectors, get
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import (
+    get_mode,
     inject_secrets,
     is_enabled,
     load_env,
+    set_mode,
 )
 from pipeline.storage import get_storage
 
@@ -263,59 +269,6 @@ def transform_connector(connector, fernet_key: bytes) -> int:
     return 0
 
 
-def cmd_fetch(args: argparse.Namespace) -> int:
-    """Fetch data from brokers and write to raw Delta tables."""
-    inject_secrets()
-    fernet_key = load_key()
-
-    results: list[FetchResult] = []
-    for connector in all_connectors():
-        if not is_enabled(connector.enabled_env_var):
-            logger.debug(
-                "Skipping %s: %s is false",
-                connector.display_name,
-                connector.enabled_env_var,
-            )
-            continue
-        results.append(fetch_connector(connector, args, fernet_key))
-
-    if not results:
-        # All connectors are disabled — not an error, but nothing to do.
-        return 0
-
-    if all(r == FetchResult.SKIPPED for r in results):
-        print(
-            "No broker credentials found. In Docker mode, set IBKR_FLEX_TOKEN "
-            "or T212_API_KEY in .env. In staging/prod mode, use --mode staging "
-            "or --mode prod to trigger the pipeline in AWS "
-            "(no local broker credentials needed).",
-            file=sys.stderr,
-        )
-        return 1
-
-    if any(r == FetchResult.ERROR for r in results):
-        succeeded = sum(1 for r in results if r == FetchResult.SUCCESS)
-        failed = sum(1 for r in results if r == FetchResult.ERROR)
-        print(
-            f"{succeeded} of {len(results)} connector(s) succeeded, "
-            f"{failed} failed. Check errors above.",
-            file=sys.stderr,
-        )
-        return 1
-
-    return 0
-
-
-def cmd_transform(args: argparse.Namespace) -> int:
-    """Transform raw data into normalized Delta tables."""
-    fernet_key = load_key()
-
-    for connector in all_connectors():
-        transform_connector(connector, fernet_key)
-
-    return 0
-
-
 def cmd_consolidate(args: argparse.Namespace) -> int:
     """Consolidate normalized broker snapshots into the holdings table."""
     import csv
@@ -514,26 +467,89 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_full(args: argparse.Namespace) -> int:
-    """Run the full pipeline: fetch → transform → consolidate → analytics."""
+    """Run the full pipeline: connectors in parallel, then consolidate+analytics.
+
+    In docker mode, mirrors the Step Functions workflow: each connector runs
+    fetch+transform+validate via :func:`cmd_run_connector`, then
+    :func:`cmd_run_consolidate_analytics` runs consolidate+CDC+analytics+validate.
+
+    Staging and prod modes are not yet implemented (Step Functions trigger
+    lands in Phase 3).
+    """
+    mode = get_mode()
+    if mode != "docker":
+        print(
+            f"full --mode {mode} is not yet implemented (Step Functions trigger "
+            "lands in Phase 3). Use --mode docker, or run run-connector / "
+            "run-consolidate-analytics directly.",
+            file=sys.stderr,
+        )
+        return 1
+
     inject_secrets()
-    result = cmd_fetch(args)
-    if result != 0:
-        return result
-    result = cmd_transform(args)
-    if result != 0:
-        return result
-    result = cmd_consolidate(args)
-    if result != 0:
-        return result
-    # Consolidate CDC events after snapshot consolidation
-    cdc_rc = _consolidate_cdc()
-    if cdc_rc:
-        return cdc_rc
-    # Normalize target currency columns in CDC events
-    norm_rc = _normalize_cdc(args)
-    if norm_rc:
-        return norm_rc
-    return cmd_analytics(args)
+    rc = _run_connectors_parallel(args)
+    if rc:
+        return rc
+    return cmd_run_consolidate_analytics(args)
+
+
+def _run_connectors_parallel(args: argparse.Namespace) -> int:
+    """Run enabled connectors in parallel via :func:`cmd_run_connector`.
+
+    Mirrors the Step Functions Map state: each connector runs
+    fetch+transform+validate in its own thread, with fail-fast on first
+    error.  Returns 0 if all connectors succeed (or are disabled).
+    """
+    enabled = [c for c in all_connectors() if is_enabled(c.enabled_env_var)]
+    if not enabled:
+        logger.info("All connectors are disabled — nothing to fetch.")
+        return 0
+
+    base_ns = argparse.Namespace(
+        target_currency=getattr(args, "target_currency", "EUR"),
+        fx_rate=getattr(args, "fx_rate", []),
+        isin=getattr(args, "isin", []),
+        isin_map_file=getattr(args, "isin_map_file", []),
+        xtb_file=getattr(args, "xtb_file", None),
+        mode=get_mode(),
+    )
+
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=len(enabled)) as pool:
+        future_to_name = {
+            pool.submit(cmd_run_connector, _ns_for(base_ns, c.name)): c.name
+            for c in enabled
+        }
+        for fut in as_completed(future_to_name):
+            name = future_to_name[fut]
+            try:
+                rc = fut.result()
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+                # Fail-fast: cancel not-yet-started futures.
+                for f in future_to_name:
+                    f.cancel()
+                break
+            if rc != 0:
+                errors.append(f"{name}: exit code {rc}")
+                for f in future_to_name:
+                    f.cancel()
+                break
+
+    if errors:
+        print(
+            "Connector stage failed (fail-fast):\n  " + "\n  ".join(errors),
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _ns_for(base: argparse.Namespace, connector: str) -> argparse.Namespace:
+    """Create a per-connector args namespace from a shared base."""
+    ns = argparse.Namespace(**vars(base))
+    ns.connector = connector
+    return ns
 
 
 def _consolidate_cdc() -> int:
@@ -680,8 +696,7 @@ def cmd_upload_xtb(args: argparse.Namespace) -> int:
 
     if not isinstance(config.backend, S3Backend):
         print(
-            "Error: upload-xtb requires S3 storage. "
-            "Set S3_BUCKET to use cloud storage.",
+            "Error: upload-xtb requires S3 storage. Use --mode staging or --mode prod.",
             file=sys.stderr,
         )
         return 1
@@ -712,6 +727,16 @@ def main() -> int:
         help="Target currency for consolidation (default: EUR)",
     )
 
+    # Mode flag — required for all commands that touch storage/credentials.
+    # Appears after the subcommand (e.g. pipeline run full --mode docker).
+    mode_parser = argparse.ArgumentParser(add_help=False)
+    mode_parser.add_argument(
+        "--mode",
+        choices=["docker", "staging", "prod"],
+        required=True,
+        help="Execution mode: docker=MinIO local, staging=demo S3, prod=prod S3",
+    )
+
     parser = argparse.ArgumentParser(
         description="Investment portfolio data pipeline",
         epilog="Connectors are enabled by default. Set IBKR_ENABLED=0, "
@@ -722,12 +747,13 @@ def main() -> int:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # keygen
+    # keygen (no --mode needed — no storage/credentials)
     subparsers.add_parser("keygen", help="Generate encryption key")
 
     # query
     query_parser = subparsers.add_parser(
         "query",
+        parents=[mode_parser],
         help="Query Delta tables via SQL",
     )
     query_parser.add_argument("sql", help="SQL query to execute")
@@ -743,79 +769,10 @@ def main() -> int:
         help="Output format (default: table)",
     )
 
-    # fetch
-    fetch_parser = subparsers.add_parser("fetch", help="Fetch data from brokers")
-    fetch_parser.add_argument(
-        "--xtb-file",
-        action="append",
-        type=str,
-        default=None,
-        help="Path to XTB Excel report, or an s3:// URI (can be specified multiple times)",
-    )
-
-    # transform
-    subparsers.add_parser("transform", help="Transform raw data into normalized tables")
-
-    # consolidate
-    consolidate_parser = subparsers.add_parser(
-        "consolidate",
-        parents=[common_parser],
-        help="Consolidate normalized snapshots into holdings table",
-    )
-    consolidate_parser.add_argument(
-        "--fx-rate",
-        action="append",
-        type=parse_fx_rate,
-        default=[],
-        help="Manual FX rate override as CURRENCY=RATE",
-    )
-    consolidate_parser.add_argument(
-        "--isin",
-        action="append",
-        type=parse_isin_override,
-        default=[],
-        help="ISIN override as TICKER=ISIN",
-    )
-    consolidate_parser.add_argument(
-        "--isin-map-file",
-        action="append",
-        type=str,
-        default=[],
-        help="CSV file with ticker,isin columns",
-    )
-
-    # analytics
-    analytics_parser = subparsers.add_parser(
-        "analytics",
-        parents=[common_parser],
-        help="Build all analytics tables (portfolio holdings, dividend income, interest income, cash flow summary)",
-    )
-    analytics_parser.add_argument(
-        "--fx-rate",
-        action="append",
-        type=parse_fx_rate,
-        default=[],
-        help="Manual FX rate override as CURRENCY=RATE",
-    )
-    analytics_parser.add_argument(
-        "--isin",
-        action="append",
-        type=parse_isin_override,
-        default=[],
-        help="ISIN override as TICKER=ISIN",
-    )
-    analytics_parser.add_argument(
-        "--isin-map-file",
-        action="append",
-        type=str,
-        default=[],
-        help="CSV file with ticker,isin columns",
-    )
-
     # validate
     validate_parser = subparsers.add_parser(
         "validate",
-        parents=[common_parser],
+        parents=[common_parser, mode_parser],
         help="Run data quality checks against pipeline tables",
     )
     validate_parser.add_argument(
@@ -840,7 +797,7 @@ def main() -> int:
     # report
     report_parser = subparsers.add_parser(
         "report",
-        parents=[common_parser],
+        parents=[common_parser, mode_parser],
         help="Generate a self-contained HTML portfolio report",
     )
     report_parser.add_argument(
@@ -865,8 +822,8 @@ def main() -> int:
     # full
     full_parser = subparsers.add_parser(
         "full",
-        parents=[common_parser],
-        help="Run full pipeline",
+        parents=[common_parser, mode_parser],
+        help="Run full pipeline (docker mode only in Phase 2)",
     )
     full_parser.add_argument(
         "--xtb-file",
@@ -900,6 +857,7 @@ def main() -> int:
     # upload-xtb
     upload_xtb_parser = subparsers.add_parser(
         "upload-xtb",
+        parents=[mode_parser],
         help="Upload XTB .xlsx report to S3 staging",
     )
     upload_xtb_parser.add_argument(
@@ -911,7 +869,7 @@ def main() -> int:
     # run-connector
     run_connector_parser = subparsers.add_parser(
         "run-connector",
-        parents=[common_parser],
+        parents=[common_parser, mode_parser],
         help="Run fetch+transform for a single connector (orchestrator task)",
     )
     run_connector_parser.add_argument(
@@ -930,7 +888,7 @@ def main() -> int:
     # run-consolidate-analytics
     run_consolidate_analytics_parser = subparsers.add_parser(
         "run-consolidate-analytics",
-        parents=[common_parser],
+        parents=[common_parser, mode_parser],
         help="Run consolidate then analytics (orchestrator task)",
     )
     run_consolidate_analytics_parser.add_argument(
@@ -957,11 +915,14 @@ def main() -> int:
 
     subparsers.add_parser(
         "run-migration",
-        parents=[common_parser],
+        parents=[common_parser, mode_parser],
         help="Run schema migrations for existing Delta tables",
     )
 
     args = parser.parse_args()
+
+    # Set execution mode from --mode flag before storage resolution.
+    set_mode(args.mode)
 
     # Resolve storage configuration before any path access.
     from pipeline.storage import resolve_storage
@@ -970,10 +931,6 @@ def main() -> int:
 
     commands = {
         "keygen": cmd_keygen,
-        "fetch": cmd_fetch,
-        "transform": cmd_transform,
-        "consolidate": cmd_consolidate,
-        "analytics": cmd_analytics,
         "validate": cmd_validate,
         "report": cmd_report,
         "full": cmd_full,

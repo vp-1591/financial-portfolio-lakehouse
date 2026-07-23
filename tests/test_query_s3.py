@@ -7,6 +7,7 @@ import duckdb
 import pytest
 
 from pipeline.query import _configure_s3
+from pipeline.secrets import set_mode
 
 
 class TestConfigureS3:
@@ -23,6 +24,7 @@ class TestConfigureS3:
                 "AWS_REGION": "eu-west-1",
             },
         ):
+            set_mode("docker")
             _configure_s3(conn)
 
         secrets = conn.execute("SELECT * FROM duckdb_secrets()").fetchall()
@@ -48,6 +50,7 @@ class TestConfigureS3:
                 "AWS_REGION": "us-east-1",
             },
         ):
+            set_mode("docker")
             _configure_s3(conn)
 
         secrets = conn.execute(
@@ -69,6 +72,7 @@ class TestConfigureS3:
         # Ensure AWS_REGION is absent so default kicks in
         with patch.dict(os.environ, env, clear=False):
             os.environ.pop("AWS_REGION", None)
+            set_mode("docker")
             _configure_s3(conn)
 
         secrets = conn.execute(
@@ -96,6 +100,7 @@ class TestConfigureS3:
                 "AWS_REGION": "eu-west-1",
             },
         ):
+            set_mode("docker")
             _configure_s3(conn)
 
         # After CREATE SECRET, DuckDB should propagate credentials
@@ -124,6 +129,7 @@ class TestConfigureS3:
         with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
             os.environ.pop("AWS_ACCESS_KEY_ID", None)
             os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+            set_mode("docker")
             with pytest.raises(RuntimeError, match="AWS credentials not found"):
                 _configure_s3(conn)
         conn.close()
@@ -145,17 +151,17 @@ class TestConfigureS3:
                 "AWS_REGION": "eu-west-1",
             },
         ):
+            set_mode("docker")
             with pytest.raises(RuntimeError, match="AWS credentials not found"):
                 _configure_s3(conn)
         conn.close()
 
-    def test_demo_mode_uses_demo_credentials(self):
-        """In demo mode, _configure_s3 uses _DEMO AWS credentials."""
+    def test_staging_mode_uses_demo_credentials(self):
+        """In staging mode, _configure_s3 uses _DEMO AWS credentials."""
         conn = duckdb.connect()
         with patch.dict(
             os.environ,
             {
-                "DEMO": "true",
                 "AWS_ACCESS_KEY_ID_DEMO": "demo-key-id",
                 "AWS_SECRET_ACCESS_KEY_DEMO": "demo-secret",
                 "AWS_ACCESS_KEY_ID": "prod-key-id",
@@ -163,6 +169,7 @@ class TestConfigureS3:
                 "AWS_REGION": "eu-west-1",
             },
         ):
+            set_mode("staging")
             _configure_s3(conn)
 
         secrets = conn.execute(
@@ -175,8 +182,8 @@ class TestConfigureS3:
         )
         conn.close()
 
-    def test_demo_mode_no_fallback_to_prod(self):
-        """In demo mode with missing _DEMO creds, a SECRET with empty
+    def test_staging_mode_no_fallback_to_prod(self):
+        """In staging mode with missing _DEMO creds, a SECRET with empty
         credentials is created to prevent DuckDB from falling back to
         production credentials in environment variables.
 
@@ -186,12 +193,12 @@ class TestConfigureS3:
         """
         conn = duckdb.connect()
         with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
-            os.environ["DEMO"] = "true"
             os.environ.pop("AWS_ACCESS_KEY_ID_DEMO", None)
             os.environ.pop("AWS_SECRET_ACCESS_KEY_DEMO", None)
-            # Production creds are present — must NOT be used
+            # Production creds are present -- must NOT be used
             os.environ["AWS_ACCESS_KEY_ID"] = "prod-key-id"
             os.environ["AWS_SECRET_ACCESS_KEY"] = "prod-secret"
+            set_mode("staging")
             _configure_s3(conn)
 
         # A SECRET should be created with empty credentials,

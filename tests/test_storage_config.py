@@ -1,8 +1,9 @@
 """Tests for the storage configuration system.
 
 Verifies that:
-- ``resolve_storage`` uses ``PIPELINE_DATA_DIR`` env var or project default
-- ``resolve_storage`` uses ``S3_BUCKET`` env var for S3Backend
+- ``resolve_storage`` uses execution mode (``set_mode``) to select backend
+- ``resolve_storage`` requires ``S3_BUCKET`` in docker/prod modes
+- ``resolve_storage`` uses ``S3_BUCKET_DEMO`` in staging mode
 - ``use_storage`` injects custom configs
 - ``get_storage`` returns the active config
 - ``pipeline.paths`` module delegates to the active ``StorageConfig``
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from pipeline.secrets import reset_mode, set_mode
 from pipeline.storage import (
     LocalBackend,
     S3Backend,
@@ -30,94 +32,185 @@ from pipeline.storage import (
 
 
 class TestResolveStorage:
-    """Test resolve_storage() data directory resolution."""
+    """Test resolve_storage() with execution modes."""
 
     def setup_method(self):
-        """Reset module-level singleton before each test."""
+        """Reset module-level singletons before each test."""
         import pipeline.storage
 
         pipeline.storage._config = None
+        reset_mode()
 
     def teardown_method(self):
-        """Reset module-level singleton after each test."""
+        """Reset module-level singletons after each test."""
         import pipeline.storage
 
         pipeline.storage._config = None
+        reset_mode()
 
-    def test_default_uses_project_data_dir(self, monkeypatch):
-        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-        assert "data" in config.data_dir
-
-    def test_pipeline_data_dir_env_var(self, monkeypatch, tmp_path: Path):
-        custom = tmp_path / "my-data"
-        custom.mkdir()
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("PIPELINE_DATA_DIR", str(custom))
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-        assert config.data_dir == str(custom)
-
-    def test_pipeline_data_dir_absolute_path(self, monkeypatch, tmp_path: Path):
-        custom = tmp_path / "absolute-path-data"
-        custom.mkdir()
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("PIPELINE_DATA_DIR", str(custom.resolve()))
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-
-    def test_s3_bucket_env_var(self, monkeypatch):
+    def test_docker_mode_with_s3_bucket(self, monkeypatch):
+        """In docker mode, resolve_storage creates S3Backend with MinIO config."""
         monkeypatch.setenv("S3_BUCKET", "test-bucket")
-        monkeypatch.delenv("S3_PREFIX", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        set_mode("docker")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert config.data_dir.startswith("s3://")
         assert "test-bucket" in config.data_dir
 
-    def test_s3_prefix_env_var(self, monkeypatch):
+    def test_docker_mode_with_endpoint_url(self, monkeypatch):
+        """Docker mode with S3_ENDPOINT_URL sets up MinIO endpoint."""
         monkeypatch.setenv("S3_BUCKET", "test-bucket")
-        monkeypatch.setenv("S3_PREFIX", "custom-prefix")
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
+        monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+        set_mode("docker")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
-        assert (
-            config.raw_path("ibkr_snapshot")
-            == "s3://test-bucket/custom-prefix/raw/ibkr_snapshot"
-        )
+        assert config.backend.bucket == "test-bucket"
 
-    def test_s3_does_not_use_pipeline_data_dir(self, monkeypatch):
-        """When S3_BUCKET is set, PIPELINE_DATA_DIR is ignored."""
-        monkeypatch.setenv("S3_BUCKET", "test-bucket")
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("PIPELINE_DATA_DIR", "/tmp/should-be-ignored")
+    def test_docker_mode_requires_s3_bucket(self, monkeypatch):
+        """Docker mode raises ValueError when S3_BUCKET is not set."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        set_mode("docker")
+        with pytest.raises(ValueError, match="S3_BUCKET is required"):
+            resolve_storage()
+
+    def test_staging_mode_default_bucket_suffix(self, monkeypatch):
+        """In staging mode, S3 bucket gets -demo suffix by default."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        set_mode("staging")
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
-        assert "/tmp/should-be-ignored" not in config.data_dir
+        assert config.backend.bucket == "my-bucket-demo"
+        assert config.backend.prefix == "pipeline_demo"
+
+    def test_staging_mode_explicit_bucket(self, monkeypatch):
+        """S3_BUCKET_DEMO and S3_PREFIX_DEMO override defaults."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
+        monkeypatch.setenv("S3_PREFIX_DEMO", "custom-demo-prefix")
+        set_mode("staging")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "explicit-demo-bucket"
+        assert config.backend.prefix == "custom-demo-prefix"
+
+    def test_staging_mode_paths_include_prefix(self, monkeypatch):
+        """Staging mode uses pipeline_demo prefix in S3 paths."""
+        monkeypatch.setenv("S3_BUCKET", "pipeline")
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        set_mode("staging")
+        config = resolve_storage()
+        assert config.raw_dir == "s3://pipeline-demo/pipeline_demo/raw"
+        assert config.normalized_dir == "s3://pipeline-demo/pipeline_demo/normalized"
+        assert config.analytics_dir == "s3://pipeline-demo/pipeline_demo/analytics"
+
+    def test_staging_mode_bucket_demo_standalone(self, monkeypatch):
+        """S3_BUCKET_DEMO alone (without S3_BUCKET) works in staging mode."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
+        set_mode("staging")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "explicit-demo-bucket"
+        assert config.backend.prefix == "pipeline_demo"
+
+    def test_staging_mode_requires_bucket(self, monkeypatch):
+        """Staging mode raises ValueError when no S3 bucket is configured."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        set_mode("staging")
+        with pytest.raises(ValueError, match="Staging mode requires"):
+            resolve_storage()
+
+    def test_staging_prefix_demo_empty_falls_back(self, monkeypatch):
+        """Empty S3_PREFIX_DEMO falls back to pipeline_demo."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_PREFIX_DEMO", "")
+        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
+        set_mode("staging")
+        config = resolve_storage()
+        assert config.backend.prefix == "pipeline_demo"
+
+    def test_staging_bucket_demo_empty_falls_back(self, monkeypatch):
+        """Empty S3_BUCKET_DEMO falls back to derived name."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_BUCKET_DEMO", "")
+        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
+        set_mode("staging")
+        config = resolve_storage()
+        assert config.backend.bucket == "my-bucket-demo"
+
+    def test_prod_mode_with_s3_bucket(self, monkeypatch):
+        """In prod mode, resolve_storage creates S3Backend with production bucket."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        set_mode("prod")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == "my-bucket"
+        assert config.backend.prefix == "pipeline"
+
+    def test_prod_mode_requires_s3_bucket(self, monkeypatch):
+        """Prod mode raises ValueError when S3_BUCKET is not set."""
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        set_mode("prod")
+        with pytest.raises(ValueError, match="S3_BUCKET is required"):
+            resolve_storage()
+
+    def test_prod_prefix_empty_falls_back(self, monkeypatch):
+        """Empty S3_PREFIX falls back to 'pipeline'."""
+        monkeypatch.setenv("S3_BUCKET", "my-bucket")
+        monkeypatch.setenv("S3_PREFIX", "")
+        set_mode("prod")
+        config = resolve_storage()
+        assert config.backend.prefix == "pipeline"
+
+    def test_docker_prefix_empty_falls_back(self, monkeypatch):
+        """Empty S3_PREFIX falls back to 'pipeline' in docker mode."""
+        monkeypatch.setenv("S3_BUCKET", "test-bucket")
+        monkeypatch.setenv("S3_PREFIX", "")
+        set_mode("docker")
+        config = resolve_storage()
+        assert config.backend.prefix == "pipeline"
+
+    def test_mode_not_set_raises(self):
+        """resolve_storage raises RuntimeError when mode is not set."""
+        import pipeline.storage
+
+        pipeline.storage._config = None
+        reset_mode()
+        with pytest.raises(RuntimeError, match="Mode not set"):
+            resolve_storage()
 
     def test_secrets_dir_at_project_root(self, monkeypatch):
+        """secrets_dir is always at project root, not inside data dir."""
         from pipeline.storage import PROJECT_ROOT
 
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
+        monkeypatch.setenv("S3_BUCKET", "test-bucket")
+        set_mode("docker")
         config = resolve_storage()
-        # secrets_dir should be at project root, not inside data dir
         assert config.secrets_dir == str(PROJECT_ROOT / ".secrets")
         assert config.encryption_key_file == str(
             PROJECT_ROOT / ".secrets" / "encryption.key"
         )
 
-    def test_s3_secrets_dir_at_project_root(self, monkeypatch):
-
+    def test_s3_secrets_dir_not_in_s3(self, monkeypatch):
+        """secrets_dir is a local path even when data is on S3."""
         monkeypatch.setenv("S3_BUCKET", "test-bucket")
+        set_mode("docker")
         config = resolve_storage()
         assert ".secrets" in config.secrets_dir
         assert not config.secrets_dir.startswith("s3://")
+
+    def test_s3_does_not_use_pipeline_data_dir(self, monkeypatch):
+        """When S3_BUCKET is set, PIPELINE_DATA_DIR is ignored."""
+        monkeypatch.setenv("S3_BUCKET", "test-bucket")
+        monkeypatch.setenv("PIPELINE_DATA_DIR", "/tmp/should-be-ignored")
+        set_mode("docker")
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert "/tmp/should-be-ignored" not in config.data_dir
 
 
 class TestUseStorage:
@@ -165,17 +258,23 @@ class TestLocalBackend:
     """Test LocalBackend path generation."""
 
     def test_table_path(self, tmp_path: Path):
+        from pipeline.storage import LocalBackend
+
         backend = LocalBackend(tmp_path)
         result = backend.table_path("raw", "ibkr_snapshot")
         assert result == str(tmp_path.resolve() / "raw" / "ibkr_snapshot")
 
     def test_ensure_parent(self, tmp_path: Path):
+        from pipeline.storage import LocalBackend
+
         backend = LocalBackend(tmp_path)
         path = str(tmp_path / "raw" / "ibkr_snapshot")
         backend.ensure_parent(path)
         assert (tmp_path / "raw").exists()
 
     def test_ensure_parent_creates_parent_dirs(self, tmp_path: Path):
+        from pipeline.storage import LocalBackend
+
         backend = LocalBackend(tmp_path)
         path = str(tmp_path / "raw" / "ibkr_snapshot")
         backend.ensure_parent(path)
@@ -183,6 +282,8 @@ class TestLocalBackend:
 
     def test_ensure_parent_rescues_orphaned_parquets(self, tmp_path: Path):
         """Corrupted table dir (parquet files, no _delta_log) is moved to .rescue/."""
+        from pipeline.storage import LocalBackend
+
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "trading212_snapshot"
         table_dir.mkdir(parents=True)
@@ -205,6 +306,8 @@ class TestLocalBackend:
 
     def test_ensure_parent_preserves_valid_table(self, tmp_path: Path):
         """A valid Delta table (with _delta_log) is left intact."""
+        from pipeline.storage import LocalBackend
+
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "ibkr_snapshot"
         table_dir.mkdir(parents=True)
@@ -221,6 +324,8 @@ class TestLocalBackend:
 
     def test_ensure_parent_rescues_empty_dir(self, tmp_path: Path):
         """An empty table directory is moved to .rescue/ so write_deltalake starts fresh."""
+        from pipeline.storage import LocalBackend
+
         backend = LocalBackend(tmp_path)
         table_dir = tmp_path / "raw" / "ibkr_snapshot"
         table_dir.mkdir(parents=True)
@@ -240,6 +345,8 @@ class TestLocalBackend:
 
     def test_ensure_parent_noop_for_nonexistent_path(self, tmp_path: Path):
         """A path that doesn't exist yet is simply prepared (parent created)."""
+        from pipeline.storage import LocalBackend
+
         backend = LocalBackend(tmp_path)
         path = str(tmp_path / "raw" / "new_table")
 
@@ -289,7 +396,7 @@ class TestS3Backend:
 
     def test_ensure_parent_is_noop(self):
         backend = S3Backend(bucket="my-bucket")
-        # Should not raise — S3 doesn't need parent dirs
+        # Should not raise -- S3 doesn't need parent dirs
         backend.ensure_parent("s3://my-bucket/pipeline/raw/ibkr_snapshot")
 
     def test_staging_path_with_prefix(self):
@@ -315,13 +422,13 @@ class TestS3Backend:
 
     def test_storage_options_lowercase_keys(self, monkeypatch):
         """S3Backend.storage_options returns lowercase keys for deltalake."""
-        monkeypatch.delenv("DEMO", raising=False)
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-key-id")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
         monkeypatch.setenv("AWS_REGION", "us-east-1")
+        set_mode("docker")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        # Keys must be lowercase — deltalake's object_store only
+        # Keys must be lowercase -- deltalake's object_store only
         # recognizes lowercase keys.
         assert "aws_access_key_id" in opts
         assert "aws_secret_access_key" in opts
@@ -346,13 +453,11 @@ class TestS3Backend:
         """
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
-        monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
-        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
-        monkeypatch.delenv("DEMO", raising=False)
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        set_mode("docker")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
-        # Credential keys are omitted entirely — not empty strings —
+        # Credential keys are omitted entirely -- not empty strings --
         # allowing object_store to fall through to IAM role metadata.
         assert "aws_access_key_id" not in opts
         assert "aws_secret_access_key" not in opts
@@ -365,7 +470,7 @@ class TestS3Backend:
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
-        monkeypatch.delenv("DEMO", raising=False)
+        set_mode("docker")
         backend = S3Backend(bucket="pipeline")
         opts = backend.storage_options
         assert opts["aws_endpoint_url"] == "http://minio:9000"
@@ -376,7 +481,7 @@ class TestS3Backend:
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         monkeypatch.setenv("S3_ALLOW_HTTP", "true")
-        monkeypatch.delenv("DEMO", raising=False)
+        set_mode("docker")
         backend = S3Backend(bucket="pipeline")
         opts = backend.storage_options
         assert opts["aws_allow_http"] == "true"
@@ -388,38 +493,39 @@ class TestS3Backend:
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         monkeypatch.delenv("S3_ENDPOINT_URL", raising=False)
         monkeypatch.delenv("S3_ALLOW_HTTP", raising=False)
-        monkeypatch.delenv("DEMO", raising=False)
+        set_mode("docker")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
         assert "aws_endpoint_url" not in opts
         assert "aws_allow_http" not in opts
 
-    def test_storage_options_demo_mode_uses_demo_creds(self, monkeypatch):
-        """In demo mode, storage_options uses _DEMO AWS credentials."""
-        monkeypatch.setenv("DEMO", "true")
+    def test_storage_options_staging_mode_uses_demo_creds(self, monkeypatch):
+        """In staging mode, storage_options uses _DEMO AWS credentials."""
         monkeypatch.setenv("AWS_ACCESS_KEY_ID_DEMO", "demo-key-id")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY_DEMO", "demo-secret")
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
-        # Even if base creds are set, demo mode must NOT use them
+        # Even if base creds are set, staging mode must NOT use them
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key-id")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "prod-secret")
+        set_mode("staging")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
         assert opts["aws_access_key_id"] == "demo-key-id"
         assert opts["aws_secret_access_key"] == "demo-secret"
 
-    def test_storage_options_demo_mode_no_fallback(self, monkeypatch, caplog):
-        """In demo mode, missing _DEMO creds result in omitted keys, not empty strings.
+    def test_storage_options_staging_mode_no_fallback(self, monkeypatch):
+        """In staging mode, missing _DEMO creds result in omitted keys, not empty strings.
 
         Omitting keys allows IAM role fallback on ECS. In CI, step-level
-        conditionals ensure production env vars are absent in demo runs
+        conditionals ensure production env vars are absent in staging runs
         (ADR 0041 Decision #1), so there is nothing to fall back to.
         """
-        monkeypatch.setenv("DEMO", "true")
         monkeypatch.delenv("AWS_ACCESS_KEY_ID_DEMO", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY_DEMO", raising=False)
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "prod-key-id")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "prod-secret")
+        monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        set_mode("staging")
         backend = S3Backend(bucket="my-bucket")
         opts = backend.storage_options
         # Should omit credential keys entirely, not use production credentials.
@@ -434,11 +540,13 @@ class TestPathsModule:
         import pipeline.storage
 
         pipeline.storage._config = None
+        reset_mode()
 
     def teardown_method(self):
         import pipeline.storage
 
         pipeline.storage._config = None
+        reset_mode()
 
     def test_paths_module_delegates_to_storage(self, tmp_path: Path):
         import pipeline.paths
@@ -492,9 +600,11 @@ class TestPathsModule:
             data / "analytics" / "portfolio_holdings"
         )
 
-    def test_paths_unknown_attribute_raises(self):
+    def test_paths_unknown_attribute_raises(self, monkeypatch):
         import pipeline.paths
 
+        monkeypatch.setenv("S3_BUCKET", "test-bucket")
+        set_mode("docker")
         with pytest.raises(AttributeError, match="has no attribute"):
             _ = pipeline.paths.NONEXISTENT_PATH
 
@@ -503,6 +613,8 @@ class TestStorageConfigHelpers:
     """Test StorageConfig convenience methods."""
 
     def test_raw_path(self, tmp_path: Path):
+        from pipeline.storage import LocalBackend
+
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
         secrets.mkdir()
@@ -518,6 +630,8 @@ class TestStorageConfigHelpers:
         assert config.raw_path("ibkr_snapshot") == str(data / "raw" / "ibkr_snapshot")
 
     def test_normalized_path(self, tmp_path: Path):
+        from pipeline.storage import LocalBackend
+
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
         secrets.mkdir()
@@ -535,6 +649,8 @@ class TestStorageConfigHelpers:
         )
 
     def test_analytics_path(self, tmp_path: Path):
+        from pipeline.storage import LocalBackend
+
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
         secrets.mkdir()
@@ -552,6 +668,8 @@ class TestStorageConfigHelpers:
         )
 
     def test_staging_path_local_backend(self, tmp_path: Path) -> None:
+        from pipeline.storage import LocalBackend
+
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
         secrets.mkdir()
@@ -564,11 +682,14 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        # Production mode — staging_path uses "staging" prefix
+        # Production mode -- staging_path uses "staging" prefix
+        set_mode("prod")
         result = config.staging_path("xtb", "report.xlsx")
         assert result == str(data / "staging" / "xtb" / "report.xlsx")
 
-    def test_staging_path_local_backend_demo(self, tmp_path: Path, monkeypatch) -> None:
+    def test_staging_path_local_backend_staging(self, tmp_path: Path) -> None:
+        from pipeline.storage import LocalBackend
+
         data = tmp_path / "data_demo"
         secrets = tmp_path / ".secrets"
         secrets.mkdir()
@@ -581,7 +702,8 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        monkeypatch.setenv("DEMO", "true")
+        # Staging mode -- staging_path uses "staging_demo" prefix
+        set_mode("staging")
         result = config.staging_path("xtb", "report.xlsx")
         assert result == str(data / "staging_demo" / "xtb" / "report.xlsx")
 
@@ -596,11 +718,11 @@ class TestStorageConfigHelpers:
             encryption_key_file="/app/.secrets/encryption.key",
             backend=backend,
         )
-        monkeypatch.delenv("DEMO", raising=False)
+        set_mode("docker")
         result = config.staging_path("xtb", "report.xlsx")
         assert result == "s3://my-bucket/pipeline/staging/xtb/report.xlsx"
 
-    def test_staging_path_s3_backend_demo(self, monkeypatch) -> None:
+    def test_staging_path_s3_backend_staging(self, monkeypatch) -> None:
         backend = S3Backend(bucket="my-bucket-demo", prefix="pipeline_demo")
         config = StorageConfig(
             data_dir="s3://my-bucket-demo/pipeline_demo",
@@ -611,249 +733,8 @@ class TestStorageConfigHelpers:
             encryption_key_file="/app/.secrets/encryption.key",
             backend=backend,
         )
-        monkeypatch.setenv("DEMO", "true")
+        set_mode("staging")
         result = config.staging_path("xtb", "report.xlsx")
         assert (
             result == "s3://my-bucket-demo/pipeline_demo/staging_demo/xtb/report.xlsx"
         )
-
-
-class TestDemoStorage:
-    """Test resolve_storage() in demo mode.
-
-    When DEMO=true, storage paths are isolated from production.
-    No cross-mode fallback — demo mode uses demo paths exclusively.
-    """
-
-    def setup_method(self):
-        import pipeline.storage
-
-        pipeline.storage._config = None
-
-    def teardown_method(self):
-        import pipeline.storage
-
-        pipeline.storage._config = None
-
-    def test_local_demo_mode_appends_demo_suffix(self, monkeypatch, tmp_path):
-        """In demo mode with local storage, data dir gets _demo suffix."""
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
-        monkeypatch.delenv("PIPELINE_DATA_DIR_DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        monkeypatch.setattr("pipeline.storage.PROJECT_ROOT", tmp_path)
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-        assert config.data_dir.endswith("_demo")
-        assert "data_demo" in config.data_dir
-
-    def test_local_demo_mode_custom_dir(self, monkeypatch, tmp_path):
-        """PIPELINE_DATA_DIR_DEMO overrides the default demo data dir."""
-        custom = tmp_path / "custom-demo-data"
-        custom.mkdir()
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("PIPELINE_DATA_DIR_DEMO", str(custom))
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-        assert config.data_dir == str(custom)
-
-    def test_s3_demo_mode_default_bucket_suffix(self, monkeypatch):
-        """In demo mode, S3 bucket gets -demo suffix by default."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
-        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "my-bucket-demo"
-        assert config.backend.prefix == "pipeline_demo"
-
-    def test_s3_demo_mode_explicit_bucket(self, monkeypatch):
-        """S3_BUCKET_DEMO and S3_PREFIX_DEMO override defaults."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
-        monkeypatch.setenv("S3_PREFIX_DEMO", "custom-demo-prefix")
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "explicit-demo-bucket"
-        assert config.backend.prefix == "custom-demo-prefix"
-
-    def test_non_demo_unchanged(self, monkeypatch):
-        """Without DEMO, storage config is unchanged from production."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.delenv("DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "my-bucket"
-        assert config.backend.prefix == "pipeline"
-
-    def test_local_non_demo_unchanged(self, monkeypatch, tmp_path):
-        """Without DEMO, local storage uses the default data dir."""
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
-        monkeypatch.delenv("DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setattr("pipeline.storage.PROJECT_ROOT", tmp_path)
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-        assert config.data_dir == str(tmp_path / "data")
-
-    def test_s3_demo_paths_include_prefix(self, monkeypatch):
-        """Demo S3 paths use pipeline_demo prefix by default."""
-        monkeypatch.setenv("S3_BUCKET", "pipeline")
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
-        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert config.raw_dir == "s3://pipeline-demo/pipeline_demo/raw"
-        assert config.normalized_dir == "s3://pipeline-demo/pipeline_demo/normalized"
-        assert config.analytics_dir == "s3://pipeline-demo/pipeline_demo/analytics"
-
-    def test_s3_prefix_demo_empty_string_falls_back(self, monkeypatch):
-        """Empty S3_PREFIX_DEMO env var falls back to 'pipeline_demo'."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_PREFIX_DEMO", "")
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert config.backend.prefix == "pipeline_demo"
-
-    def test_s3_prefix_empty_string_falls_back(self, monkeypatch):
-        """Empty S3_PREFIX env var falls back to 'pipeline'."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_PREFIX", "")
-        monkeypatch.delenv("DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        config = resolve_storage()
-        assert config.backend.prefix == "pipeline"
-
-    def test_s3_bucket_demo_empty_string_falls_back(self, monkeypatch):
-        """Empty S3_BUCKET_DEMO env var falls back to derived name."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_BUCKET_DEMO", "")
-        monkeypatch.delenv("S3_PREFIX_DEMO", raising=False)
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert config.backend.bucket == "my-bucket-demo"
-
-    def test_pipeline_data_dir_demo_empty_string_falls_back(
-        self, monkeypatch, tmp_path
-    ):
-        """Empty PIPELINE_DATA_DIR_DEMO env var falls back to {data_dir}_demo."""
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.setenv("PIPELINE_DATA_DIR", str(tmp_path / "data"))
-        monkeypatch.setenv("PIPELINE_DATA_DIR_DEMO", "")
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-        assert config.data_dir == str(tmp_path / "data_demo")
-
-    def test_s3_bucket_demo_standalone_without_s3_bucket(self, monkeypatch):
-        """S3_BUCKET_DEMO alone (without S3_BUCKET) creates S3Backend in demo mode."""
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.setenv("S3_BUCKET_DEMO", "explicit-demo-bucket")
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "explicit-demo-bucket"
-        assert config.backend.prefix == "pipeline_demo"
-
-    def test_s3_bucket_demo_missing_without_s3_bucket_raises(self, monkeypatch):
-        """Demo cloud mode without S3_BUCKET or S3_BUCKET_DEMO raises ValueError."""
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("S3_BUCKET_DEMO", raising=False)
-        monkeypatch.setenv("STORAGE_TYPE", "cloud")
-        monkeypatch.setenv("DEMO", "true")
-        with pytest.raises(ValueError, match="S3_BUCKET_DEMO"):
-            resolve_storage()
-
-
-class TestStorageType:
-    """Test resolve_storage() with STORAGE_TYPE env var."""
-
-    def setup_method(self):
-        import pipeline.storage
-
-        pipeline.storage._config = None
-
-    def teardown_method(self):
-        import pipeline.storage
-
-        pipeline.storage._config = None
-
-    def test_cloud_explicit(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TYPE", "cloud")
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "my-bucket"
-
-    def test_minio_explicit(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TYPE", "minio")
-        monkeypatch.setenv("S3_BUCKET", "minio-bucket")
-        monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-
-    def test_local_explicit_ignores_s3_bucket(self, monkeypatch, tmp_path):
-        """STORAGE_TYPE=local forces local even if S3_BUCKET is set."""
-        monkeypatch.setenv("STORAGE_TYPE", "local")
-        monkeypatch.setenv("S3_BUCKET", "should-be-ignored")
-        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
-        monkeypatch.setattr("pipeline.storage.PROJECT_ROOT", tmp_path)
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-
-    def test_cloud_without_s3_bucket_raises(self, monkeypatch):
-        """STORAGE_TYPE=cloud without S3_BUCKET raises ValueError."""
-        monkeypatch.setenv("STORAGE_TYPE", "cloud")
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        with pytest.raises(ValueError, match="S3_BUCKET is not set"):
-            resolve_storage()
-
-    def test_default_cloud_when_s3_bucket_set(self, monkeypatch):
-        """When S3_BUCKET is set and STORAGE_TYPE is unset, defaults to cloud."""
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-
-    def test_default_local_when_no_s3_bucket(self, monkeypatch, tmp_path):
-        """When S3_BUCKET is unset and STORAGE_TYPE is unset, defaults to local."""
-        monkeypatch.delenv("STORAGE_TYPE", raising=False)
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.delenv("PIPELINE_DATA_DIR", raising=False)
-        monkeypatch.setattr("pipeline.storage.PROJECT_ROOT", tmp_path)
-        config = resolve_storage()
-        assert isinstance(config.backend, LocalBackend)
-
-    def test_minio_warns_without_endpoint_url(self, monkeypatch, caplog):
-        """STORAGE_TYPE=minio without S3_ENDPOINT_URL logs a warning."""
-        monkeypatch.setenv("STORAGE_TYPE", "minio")
-        monkeypatch.setenv("S3_BUCKET", "minio-bucket")
-        monkeypatch.delenv("S3_ENDPOINT_URL", raising=False)
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert any("S3_ENDPOINT_URL" in msg for msg in caplog.messages)
-
-    def test_cloud_with_s3_bucket_demo_in_demo_mode(self, monkeypatch):
-        """STORAGE_TYPE=cloud with S3_BUCKET_DEMO (no S3_BUCKET) works in demo mode."""
-        monkeypatch.setenv("STORAGE_TYPE", "cloud")
-        monkeypatch.delenv("S3_BUCKET", raising=False)
-        monkeypatch.setenv("S3_BUCKET_DEMO", "demo-bucket")
-        monkeypatch.setenv("DEMO", "true")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "demo-bucket"

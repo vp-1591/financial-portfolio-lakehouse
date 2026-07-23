@@ -574,40 +574,49 @@ class TestCdcFetch:
     def test_fetch_cdc_kwargs_with_dedicated_query_id(self, monkeypatch) -> None:
         """When IBKR_FLEX_CDC_QUERY_ID is set, it takes precedence."""
         from pipeline.connectors.registry import get
+        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
         monkeypatch.setenv("IBKR_FLEX_CDC_QUERY_ID", "cdc_query_456")
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
+        set_mode("docker")
 
         kwargs = connector.fetch_cdc_kwargs()
         assert kwargs["token"] == "token123"
         assert kwargs["query_id"] == "cdc_query_456"
+        reset_mode()
 
     def test_fetch_cdc_kwargs_falls_back_to_snapshot_query_id(
         self, monkeypatch
     ) -> None:
         """When IBKR_FLEX_CDC_QUERY_ID is not set, fall back to IBKR_FLEX_QUERY_ID."""
         from pipeline.connectors.registry import get
+        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
         monkeypatch.delenv("IBKR_FLEX_CDC_QUERY_ID", raising=False)
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
+        set_mode("docker")
 
         kwargs = connector.fetch_cdc_kwargs()
         assert kwargs["token"] == "token123"
         assert kwargs["query_id"] == "snapshot_query_789"
+        reset_mode()
 
     def test_fetch_cdc_kwargs_returns_empty_when_no_token(self, monkeypatch) -> None:
         """When IBKR_FLEX_TOKEN is not set, returns empty dict."""
         from pipeline.connectors.registry import get
+        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+        set_mode("docker")
 
         kwargs = connector.fetch_cdc_kwargs()
         assert kwargs == {}
+        reset_mode()
 
 
 class TestCdcTransform:

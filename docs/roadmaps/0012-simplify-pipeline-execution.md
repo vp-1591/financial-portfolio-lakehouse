@@ -55,7 +55,7 @@ Key pain points:
 
 ## Phases
 
-### Phase 1 — Fix silent skip and error early *[status: planned]*
+### Phase 1 — Fix silent skip and error early *[status: done]*
 
 Make `fetch` fail loudly when all broker credentials are missing, instead of silently returning success.
 
@@ -76,7 +76,7 @@ Make `fetch` fail loudly when all broker credentials are missing, instead of sil
 
 ---
 
-### Phase 2 — Add `--mode` flag *[status: planned]*
+### Phase 2 — Add `--mode` flag *[status: done]*
 
 Add a `--mode docker|staging|prod` CLI flag that replaces `DEMO` and `STORAGE_TYPE`. Mode determines storage backend, credential resolution strategy, and whether `full` runs locally or triggers SFN. There is no env var — `--mode` is the single source of truth. ECS task definitions pass `--mode` as a command argument (e.g., `["run-connector", "ibkr", "--mode", "staging"]`).
 
@@ -91,7 +91,7 @@ Add a `--mode docker|staging|prod` CLI flag that replaces `DEMO` and `STORAGE_TY
 - [ ] In docker mode, run connectors in parallel using `concurrent.futures.ThreadPoolExecutor` with fail-fast on any connector error
 - [ ] `cmd_full --mode staging` and `--mode prod` print a clear "not yet implemented" error and exit 1 — the Step Functions trigger lands in Phase 3. They must NOT fall back to running the orchestrator locally against S3 (that path is rejected in the alternatives table — risk of writing to prod data from a local machine). Message: `full --mode staging is not yet implemented (Step Functions trigger lands in Phase 3). Use --mode docker, or run run-connector / run-consolidate-analytics directly.`
 - [ ] Remove `fetch`, `transform`, `consolidate`, `analytics` subcommands, their handler functions (`cmd_fetch`, `cmd_transform`), and CLI parser registrations — `cmd_consolidate` and `cmd_analytics` stay as internal helpers called by `cmd_run_consolidate_analytics`
-- [ ] Delete `.github/workflows/pipeline.yml` entirely (pulled forward from Phase 4). It runs the pipeline locally in CI using `DEMO`/`STORAGE_TYPE`/`*_DEMO` env vars and offers the deleted `fetch`/`transform`/`consolidate`/`allocate` commands — exactly the pattern Phase 2 removes, so a "minimal `--mode` update" would actually be a full rewrite of a file that is doomed in Phase 4. Staging deploys already trigger SFN via `deploy-staging.yml`; prod via `deploy-prod.yml`. No remaining purpose.
+- [x] Delete `.github/workflows/pipeline.yml` entirely (pulled forward from Phase 4). It runs the pipeline locally in CI using `DEMO`/`STORAGE_TYPE`/`*_DEMO` env vars and offers the deleted `fetch`/`transform`/`consolidate`/`allocate` commands — exactly the pattern Phase 2 removes, so a "minimal `--mode` update" would actually be a full rewrite of a file that is doomed in Phase 4. Staging deploys already trigger SFN via `deploy-staging.yml`; prod via `deploy-prod.yml`. No remaining purpose.
 - [ ] Update comment in `pipeline/connectors/xtb/connector.py:32` that references `cmd_fetch`
 - [ ] Update `README.md`, `docs/deployment/local.md`, `docs/brokers/xtb.md` to remove references to deleted commands
 - [ ] Delete `TestCmdFetchRegression` and `TestCmdTransformRegression` from `tests/test_run_subcommands.py` — they test deleted commands

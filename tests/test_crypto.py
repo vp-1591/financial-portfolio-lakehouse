@@ -16,6 +16,7 @@ from pipeline.crypto import (
     generate_key,
     load_key,
 )
+from pipeline.secrets import reset_mode, set_mode
 
 
 class TestGenerateKey:
@@ -81,23 +82,29 @@ class TestEncryptDecrypt:
 
 class TestLoadKey:
     def test_loads_from_env_var(self, fernet_key: bytes, env_key: None) -> None:
+        set_mode("docker")
         loaded = load_key()
         assert loaded == fernet_key
+        reset_mode()
 
     def test_loads_from_file(self, tmp_path: Path) -> None:
         key = generate_key()
         key_file = tmp_path / "test.key"
         key_file.write_bytes(key)
+        set_mode("docker")
         loaded = load_key(key_file)
         assert loaded == key
+        reset_mode()
 
     def test_raises_when_missing(self, tmp_path: Path) -> None:
         # Clear any env var to force file lookup
         import os
 
         os.environ.pop("ENCRYPTION_KEY", None)
+        set_mode("docker")
         with pytest.raises(FileNotFoundError):
             load_key(tmp_path / "nonexistent.key")
+        reset_mode()
 
     def test_env_var_takes_precedence_over_file(
         self, tmp_path: Path, fernet_key: bytes
@@ -106,41 +113,45 @@ class TestLoadKey:
 
         os.environ["ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
         # Even though file doesn't exist, env var should work
+        set_mode("docker")
         loaded = load_key(tmp_path / "nonexistent.key")
         assert loaded == fernet_key
         os.environ.pop("ENCRYPTION_KEY", None)
+        reset_mode()
 
-    def test_demo_mode_raises_when_demo_key_missing(self, monkeypatch, tmp_path):
-        """In demo mode, missing ENCRYPTION_KEY_DEMO raises EnvironmentError.
+    def test_staging_mode_raises_when_demo_key_missing(self, monkeypatch, tmp_path):
+        """In staging mode, missing ENCRYPTION_KEY_DEMO raises EnvironmentError.
 
         load_key() must NOT fall through to the file-based key because
         .secrets/encryption.key contains the production key, which would
         violate demo/production isolation.
         """
-        monkeypatch.setenv("DEMO", "true")
         monkeypatch.delenv("ENCRYPTION_KEY_DEMO", raising=False)
         monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+        set_mode("staging")
 
         with pytest.raises(EnvironmentError, match="ENCRYPTION_KEY_DEMO"):
             load_key()
+        reset_mode()
 
-    def test_demo_mode_uses_demo_key_when_set(self, monkeypatch, tmp_path):
-        """In demo mode, ENCRYPTION_KEY_DEMO is used exclusively."""
+    def test_staging_mode_uses_demo_key_when_set(self, monkeypatch, tmp_path):
+        """In staging mode, ENCRYPTION_KEY_DEMO is used exclusively."""
         from pipeline.crypto import generate_key
 
         demo_key = generate_key()
-        monkeypatch.setenv("DEMO", "true")
         monkeypatch.setenv("ENCRYPTION_KEY_DEMO", demo_key.decode("utf-8"))
         # Production key is set but must NOT be used
         monkeypatch.setenv("ENCRYPTION_KEY", "prod-key-value")
+        set_mode("staging")
 
         result = load_key()
         assert result == demo_key
+        reset_mode()
 
     def test_production_mode_falls_back_to_file(self, monkeypatch, tmp_path):
         """In production mode, load_key() still falls back to file-based key."""
-        monkeypatch.delenv("DEMO", raising=False)
         monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+        set_mode("prod")
 
         key = generate_key()
         key_file = tmp_path / "encryption.key"
@@ -148,3 +159,4 @@ class TestLoadKey:
 
         result = load_key(key_file)
         assert result == key
+        reset_mode()

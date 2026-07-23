@@ -128,7 +128,33 @@ class TestListTables:
     """Verify list_tables() returns layer-qualified aliases."""
 
     def setup_method(self):
-        """Clear cache before each test."""
+        """Clear cache and configure S3 storage before each test."""
+        from pipeline.secrets import set_mode
+
+        clear_table_cache()
+        set_mode("docker")
+        # Use S3Backend pointing to a nonexistent bucket so list_tables()
+        # returns an empty list without needing actual S3 access.
+        backend = S3Backend(bucket="test-bucket", prefix="pipeline")
+        use_storage(
+            StorageConfig(
+                data_dir="s3://test-bucket/pipeline",
+                raw_dir="s3://test-bucket/pipeline/raw",
+                normalized_dir="s3://test-bucket/pipeline/normalized",
+                analytics_dir="s3://test-bucket/pipeline/analytics",
+                secrets_dir="/tmp/secrets",
+                encryption_key_file="/tmp/secrets/encryption.key",
+                backend=backend,
+            )
+        )
+
+    def teardown_method(self):
+        """Reset storage and mode after each test."""
+        import pipeline.storage as _storage_mod
+        from pipeline.secrets import reset_mode
+
+        _storage_mod._config = None
+        reset_mode()
         clear_table_cache()
 
     def test_returns_list_of_strings(self):
@@ -160,6 +186,9 @@ class TestListTables:
 
     def test_s3_backend_returns_empty_for_missing_bucket(self):
         """With S3Backend pointing to nonexistent bucket, result is empty."""
+        from pipeline.secrets import set_mode
+
+        set_mode("docker")
         backend = S3Backend(bucket="test-bucket", prefix="pipeline")
         use_storage(
             StorageConfig(
@@ -178,8 +207,10 @@ class TestListTables:
             assert tables == []
         finally:
             import pipeline.storage as _storage_mod
+            from pipeline.secrets import reset_mode
 
             _storage_mod._config = None
+            reset_mode()
             clear_table_cache()
 
     def test_local_backend_with_delta_tables(self, tmp_path):

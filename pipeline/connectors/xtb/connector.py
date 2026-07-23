@@ -29,7 +29,7 @@ class XtbConnector:
             logger.debug("Skipping XTB: no --xtb-file provided")
             return {}
         # XTB supports multiple files — return kwargs for the first file.
-        # The caller (cmd_fetch) iterates over all files for XTB.
+        # The caller (fetch_connector) iterates over all files for XTB.
         file_path = xtb_file[0] if isinstance(xtb_file, list) else xtb_file
         return {"file_path": file_path}
 

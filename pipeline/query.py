@@ -342,8 +342,8 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
             raise RuntimeError(
                 "AWS credentials not found. Set AWS_ACCESS_KEY_ID and "
                 "AWS_SECRET_ACCESS_KEY in your .env file or environment "
-                "variables. For local development without S3, use "
-                "STORAGE_TYPE=local."
+                "variables. For local development, use "
+                "--mode docker (MinIO)."
             )
     elif parts:
         conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
