@@ -3,7 +3,7 @@
 # Creates:
 #   - S3 bucket for demo Delta table storage
 #   - IAM user with least-privilege access to the demo bucket
-#   - IAM access key (store key ID and secret in GitHub Secrets as _DEMO variants)
+#   - IAM access key (store key ID and secret in GitHub Secrets as _STAGING variants)
 #   - VPC with public subnets, Internet Gateway, and security group
 #   - KMS key for SSM SecureString encryption
 #   - SSM parameter names (values seeded out-of-band)
@@ -109,27 +109,26 @@ locals {
   az_suffixes = ["a"]
 
   # Connector definitions for the ecs-task module for_each.
-  # Demo environment uses _DEMO-suffixed SSM parameter names AND _DEMO-suffixed
-  # env var names, mirroring DEMO_SECRET_MAP in pipeline/secrets.py.
-  # resolve_secret("IBKR_FLEX_TOKEN") in demo mode looks for IBKR_FLEX_TOKEN_DEMO
-  # in the environment, so the ECS task must set the _DEMO-suffixed env var name.
+  # Demo environment uses base env var names (e.g. IBKR_FLEX_TOKEN, not
+  # IBKR_FLEX_TOKEN_DEMO).  Environment isolation is provided by the SSM
+  # path prefix (/portfolio/demo/ vs /portfolio/prod/), not by env var suffix.
   connectors = {
     ibkr = {
-      command = ["run-connector", "ibkr", "--target-currency", "EUR"]
+      command = ["run-connector", "ibkr", "--mode", "staging", "--target-currency", "EUR"]
       secrets = [
-        { env_var = "IBKR_FLEX_TOKEN_DEMO",   param_name = "/portfolio/demo/IBKR_FLEX_TOKEN_DEMO" },
-        { env_var = "IBKR_FLEX_QUERY_ID_DEMO", param_name = "/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO" },
+        { env_var = "IBKR_FLEX_TOKEN",   param_name = "/portfolio/demo/IBKR_FLEX_TOKEN" },
+        { env_var = "IBKR_FLEX_QUERY_ID", param_name = "/portfolio/demo/IBKR_FLEX_QUERY_ID" },
       ]
     }
     trading212 = {
-      command = ["run-connector", "trading212", "--target-currency", "EUR"]
+      command = ["run-connector", "trading212", "--mode", "staging", "--target-currency", "EUR"]
       secrets = [
-        { env_var = "T212_API_KEY_DEMO",    param_name = "/portfolio/demo/T212_API_KEY_DEMO" },
-        { env_var = "T212_API_SECRET_DEMO",  param_name = "/portfolio/demo/T212_API_SECRET_DEMO" },
+        { env_var = "T212_API_KEY",    param_name = "/portfolio/demo/T212_API_KEY" },
+        { env_var = "T212_API_SECRET",  param_name = "/portfolio/demo/T212_API_SECRET" },
       ]
     }
     xtb = {
-      command = ["run-connector", "xtb", "--target-currency", "EUR"]
+      command = ["run-connector", "xtb", "--mode", "staging", "--target-currency", "EUR"]
       secrets = []
     }
   }
@@ -347,13 +346,13 @@ resource "aws_kms_alias" "ssm" {
 
 # ------------------------------------------------------------------------------
 # SSM Parameter Names (values seeded out-of-band, never in Terraform state)
-# Naming convention mirrors DEMO_SECRET_MAP in pipeline/secrets.py:
-#   /portfolio/demo/<SECRET>_DEMO
+# Naming convention: /portfolio/demo/<SECRET> (no _DEMO suffix — environment
+# isolation is provided by the SSM path prefix, not by env var suffixes).
 # ------------------------------------------------------------------------------
 
 # IBKR secrets (demo)
-resource "aws_ssm_parameter" "ibkr_flex_token_demo" {
-  name        = "/portfolio/demo/IBKR_FLEX_TOKEN_DEMO"
+resource "aws_ssm_parameter" "ibkr_flex_token" {
+  name        = "/portfolio/demo/IBKR_FLEX_TOKEN"
   description = "IBKR Flex Token (demo)"
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
@@ -369,8 +368,8 @@ resource "aws_ssm_parameter" "ibkr_flex_token_demo" {
   }
 }
 
-resource "aws_ssm_parameter" "ibkr_flex_query_id_demo" {
-  name        = "/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO"
+resource "aws_ssm_parameter" "ibkr_flex_query_id" {
+  name        = "/portfolio/demo/IBKR_FLEX_QUERY_ID"
   description = "IBKR Flex Query ID (demo)"
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
@@ -387,8 +386,8 @@ resource "aws_ssm_parameter" "ibkr_flex_query_id_demo" {
 }
 
 # Trading 212 secrets (demo)
-resource "aws_ssm_parameter" "t212_api_key_demo" {
-  name        = "/portfolio/demo/T212_API_KEY_DEMO"
+resource "aws_ssm_parameter" "t212_api_key" {
+  name        = "/portfolio/demo/T212_API_KEY"
   description = "Trading 212 API Key (demo)"
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
@@ -404,8 +403,8 @@ resource "aws_ssm_parameter" "t212_api_key_demo" {
   }
 }
 
-resource "aws_ssm_parameter" "t212_api_secret_demo" {
-  name        = "/portfolio/demo/T212_API_SECRET_DEMO"
+resource "aws_ssm_parameter" "t212_api_secret" {
+  name        = "/portfolio/demo/T212_API_SECRET"
   description = "Trading 212 API Secret (demo)"
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
@@ -422,8 +421,8 @@ resource "aws_ssm_parameter" "t212_api_secret_demo" {
 }
 
 # ENCRYPTION_KEY (demo) — must match the key used to write existing demo Delta tables
-resource "aws_ssm_parameter" "encryption_key_demo" {
-  name        = "/portfolio/demo/ENCRYPTION_KEY_DEMO"
+resource "aws_ssm_parameter" "encryption_key" {
+  name        = "/portfolio/demo/ENCRYPTION_KEY"
   description = "Fernet encryption key for Delta table values (demo) — must match existing data"
   type        = "SecureString"
   key_id      = aws_kms_key.ssm.key_id
@@ -445,11 +444,11 @@ resource "aws_ssm_parameter" "encryption_key_demo" {
 
 locals {
   ssm_arns = {
-    "/portfolio/demo/IBKR_FLEX_TOKEN_DEMO"    = aws_ssm_parameter.ibkr_flex_token_demo.arn
-    "/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO" = aws_ssm_parameter.ibkr_flex_query_id_demo.arn
-    "/portfolio/demo/T212_API_KEY_DEMO"        = aws_ssm_parameter.t212_api_key_demo.arn
-    "/portfolio/demo/T212_API_SECRET_DEMO"      = aws_ssm_parameter.t212_api_secret_demo.arn
-    "/portfolio/demo/ENCRYPTION_KEY_DEMO"       = aws_ssm_parameter.encryption_key_demo.arn
+    "/portfolio/demo/IBKR_FLEX_TOKEN"    = aws_ssm_parameter.ibkr_flex_token.arn
+    "/portfolio/demo/IBKR_FLEX_QUERY_ID" = aws_ssm_parameter.ibkr_flex_query_id.arn
+    "/portfolio/demo/T212_API_KEY"        = aws_ssm_parameter.t212_api_key.arn
+    "/portfolio/demo/T212_API_SECRET"    = aws_ssm_parameter.t212_api_secret.arn
+    "/portfolio/demo/ENCRYPTION_KEY"      = aws_ssm_parameter.encryption_key.arn
   }
 
   connectors_with_arns = {
@@ -464,12 +463,9 @@ locals {
   }
 
   common_environment = {
-    DEMO           = "true"
-    STORAGE_TYPE    = "cloud"
-    S3_BUCKET       = var.bucket_name
-    S3_BUCKET_DEMO  = var.bucket_name
-    S3_PREFIX_DEMO  = var.s3_prefix
-    AWS_REGION      = var.aws_region
+    S3_BUCKET  = var.bucket_name
+    S3_PREFIX  = var.s3_prefix
+    AWS_REGION = var.aws_region
   }
 
   # Log group ARNs for all demo tasks (with :* suffix for log-stream access) —
@@ -491,13 +487,9 @@ module "connector_task" {
   cpu        = 256
   memory     = 512
   command    = each.value.command
-  environment = merge(local.common_environment, {
-    IBKR_ENABLED = each.key == "ibkr" ? "true" : "false"
-    T212_ENABLED = each.key == "trading212" ? "true" : "false"
-    XTB_ENABLED  = each.key == "xtb" ? "true" : "false"
-  })
+  environment = local.common_environment
   secrets = concat(each.value.secrets, [
-    { env_var = "ENCRYPTION_KEY_DEMO", arn = aws_ssm_parameter.encryption_key_demo.arn }
+    { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ])
   bucket_arn    = aws_s3_bucket.pipeline_demo.arn
   s3_prefix     = var.s3_prefix
@@ -514,14 +506,10 @@ module "consolidate_allocate" {
   demo   = true
   cpu    = 256
   memory = 512
-  command = ["run-consolidate-analytics", "--target-currency", "EUR"]
-  environment = merge(local.common_environment, {
-    IBKR_ENABLED = "true"
-    T212_ENABLED = "true"
-    XTB_ENABLED  = "true"
-  })
+  command = ["run-consolidate-analytics", "--mode", "staging", "--target-currency", "EUR"]
+  environment = local.common_environment
   secrets = [
-    { env_var = "ENCRYPTION_KEY_DEMO", arn = aws_ssm_parameter.encryption_key_demo.arn }
+    { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ]
   bucket_arn    = aws_s3_bucket.pipeline_demo.arn
   s3_prefix     = var.s3_prefix
@@ -589,6 +577,15 @@ data "aws_iam_policy_document" "pipeline_demo_cicd" {
   }
 
   statement {
+    sid    = "SFNListStateMachines"
+    effect = "Allow"
+    actions = [
+      "states:ListStateMachines",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid    = "SFNStartExecution"
     effect = "Allow"
     actions = [
@@ -646,7 +643,7 @@ output "s3_bucket_arn" {
 }
 
 output "access_key_id" {
-  description = "IAM access key ID (store as GitHub Secret AWS_ACCESS_KEY_ID_DEMO)."
+  description = "IAM access key ID (store as GitHub Secret AWS_ACCESS_KEY_ID_STAGING)."
   value       = aws_iam_access_key.pipeline_demo.id
 }
 

@@ -6,7 +6,7 @@ import hashlib
 import logging
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import polars as pl
@@ -17,8 +17,8 @@ from pipeline.connectors.ibkr.client import (
     as_float,
     parse_account_info,
     parse_cash_report,
-    parse_positions,
     parse_cash_transactions,
+    parse_positions,
     parse_trades,
     parse_transaction_fees,
     parse_transfers,
@@ -440,7 +440,7 @@ def _inject_demo_deposit(
             continue
         normalised = _normalize_ibkr_datetime(str(dt_str))
         try:
-            dt = datetime.fromisoformat(normalised.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(normalised)
         except (ValueError, TypeError):
             continue
         if earliest_dt is None or dt < earliest_dt:
@@ -448,7 +448,7 @@ def _inject_demo_deposit(
 
     if earliest_dt is None:
         # Could not parse any date — use a safe fallback.
-        deposit_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        deposit_date = datetime(2020, 1, 1, tzinfo=UTC)
     else:
         # Zero out the time component so the deposit lands at midnight UTC
         # on the day before the earliest event, regardless of the event's
@@ -462,9 +462,9 @@ def _inject_demo_deposit(
 
     # Use the fetched_at from the first record, or fallback to now.
     fetched_at = (
-        records[0].get("fetched_at", datetime.now(timezone.utc))
+        records[0].get("fetched_at", datetime.now(UTC))
         if records
-        else datetime.now(timezone.utc)
+        else datetime.now(UTC)
     )
 
     # Decision: docs/adr/0079-fix-ibkr-demo-deposit-currency.md
@@ -512,7 +512,7 @@ def _inject_demo_deposit(
     logger.info(
         "IBKR demo: injected initial deposit of %.0f %s for %d account(s)",
         _DEMO_INITIAL_DEPOSIT_AMOUNT,
-        list(accounts.values())[0] if len(accounts) == 1 else "various",
+        next(iter(accounts.values())) if len(accounts) == 1 else "various",
         len(accounts),
     )
 

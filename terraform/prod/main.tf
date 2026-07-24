@@ -113,21 +113,21 @@ locals {
   # Adding a connector = one entry here + SSM params.
   connectors = {
     ibkr = {
-      command = ["run-connector", "ibkr", "--target-currency", "EUR"]
+      command = ["run-connector", "ibkr", "--mode", "prod", "--target-currency", "EUR"]
       secrets = [
         { env_var = "IBKR_FLEX_TOKEN",   param_name = "/portfolio/prod/IBKR_FLEX_TOKEN" },
         { env_var = "IBKR_FLEX_QUERY_ID", param_name = "/portfolio/prod/IBKR_FLEX_QUERY_ID" },
       ]
     }
     trading212 = {
-      command = ["run-connector", "trading212", "--target-currency", "EUR"]
+      command = ["run-connector", "trading212", "--mode", "prod", "--target-currency", "EUR"]
       secrets = [
         { env_var = "T212_API_KEY",    param_name = "/portfolio/prod/T212_API_KEY" },
         { env_var = "T212_API_SECRET",  param_name = "/portfolio/prod/T212_API_SECRET" },
       ]
     }
     xtb = {
-      command = ["run-connector", "xtb", "--target-currency", "EUR"]
+      command = ["run-connector", "xtb", "--mode", "prod", "--target-currency", "EUR"]
       secrets = []
     }
   }
@@ -454,8 +454,6 @@ locals {
 
   # Common environment variables for all connector task definitions
   common_environment = {
-    DEMO         = "false"
-    STORAGE_TYPE = "cloud"
     S3_BUCKET    = var.bucket_name
     AWS_REGION   = var.aws_region
   }
@@ -471,11 +469,7 @@ module "connector_task" {
   cpu        = 256
   memory     = 512
   command    = each.value.command
-  environment = merge(local.common_environment, {
-    IBKR_ENABLED = each.key == "ibkr" ? "true" : "false"
-    T212_ENABLED = each.key == "trading212" ? "true" : "false"
-    XTB_ENABLED  = each.key == "xtb" ? "true" : "false"
-  })
+  environment = local.common_environment
   secrets = concat(each.value.secrets, [
     { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ])
@@ -495,12 +489,8 @@ module "consolidate_allocate" {
   demo   = false
   cpu    = 256
   memory = 512
-  command = ["run-consolidate-analytics", "--target-currency", "EUR"]
-  environment = merge(local.common_environment, {
-    IBKR_ENABLED = "true"
-    T212_ENABLED = "true"
-    XTB_ENABLED  = "true"
-  })
+  command = ["run-consolidate-analytics", "--mode", "prod", "--target-currency", "EUR"]
+  environment = local.common_environment
   secrets = [
     { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ]

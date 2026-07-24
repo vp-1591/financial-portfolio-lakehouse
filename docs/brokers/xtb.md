@@ -13,10 +13,6 @@ argument.
 
 ## Environment Variables
 
-| Variable | Purpose |
-|----------|---------|
-| `XTB_ENABLED` | Enable/disable connector (default: enabled) |
-
 No API key or secret is required for XTB.
 
 ## Usage
@@ -31,7 +27,7 @@ directory.
 
 **Docker:**
 ```bash
-docker compose run --rm pipeline full --xtb-file /path/to/report.xlsx
+docker compose run --rm pipeline full --mode docker --xtb-file /path/to/report.xlsx
 ```
 
 **Single connector:**
@@ -41,9 +37,8 @@ docker compose run --rm pipeline full --xtb-file /path/to/report.xlsx
 
 You can pass `--xtb-file` multiple times to process several reports in one run.
 
-If `--xtb-file` is not provided, XTB is silently skipped during `full` and
-`fetch` commands. The `run-connector xtb` subcommand requires it and will
-error otherwise.
+If `--xtb-file` is not provided, XTB is silently skipped during `full` runs.
+The `run-connector xtb` subcommand requires it and will error otherwise.
 
 **Cloud upload (S3 + EventBridge):**
 ```bash

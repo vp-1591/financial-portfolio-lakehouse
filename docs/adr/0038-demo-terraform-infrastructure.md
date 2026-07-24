@@ -2,8 +2,8 @@
 
 ## Context
 
-The pipeline already supports a `DEMO` mode that routes to `_DEMO`-suffixed
-secrets and separate S3 storage (ADR 0037). However, there was no Terraform to
+The pipeline already supports a `--mode staging` flag that uses environment-scoped
+secrets from `/portfolio/demo/` SSM parameters and separate S3 storage. However, there was no Terraform to
 provision the demo S3 bucket and IAM user — the user had to create these
 resources manually.
 
@@ -39,7 +39,7 @@ The demo config creates:
   public access block)
 - IAM user `pipeline-demo` with least-privilege access scoped to the demo
   bucket and `pipeline_demo` prefix only
-- IAM access key for `AWS_ACCESS_KEY_ID_DEMO` / `AWS_SECRET_ACCESS_KEY_DEMO`
+- IAM access key for `AWS_ACCESS_KEY_ID_STAGING` / `AWS_SECRET_ACCESS_KEY_STAGING`
 
 No shared Terraform modules — the duplication (~20 lines of S3 security
 configuration) is acceptable for this small project. If a third environment

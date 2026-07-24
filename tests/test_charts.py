@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import polars as pl
 import plotly.graph_objects as go
+import polars as pl
 
 from pipeline.report.charts import (
+    _classify_outliers,
     allocation_by_currency,
     cash_flow_breakdown,
-    _classify_outliers,
     data_quality_chart,
     passive_income_timeline,
     positions_chart,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

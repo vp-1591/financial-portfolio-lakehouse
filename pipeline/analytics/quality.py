@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import polars as pl
 import pyarrow as pa
@@ -353,17 +353,17 @@ def check_freshness(
         )
 
     # Ensure timezone-aware comparison
-    cutoff = datetime.now(timezone.utc) - timedelta(days=freshness_days)
+    cutoff = datetime.now(UTC) - timedelta(days=freshness_days)
     if isinstance(max_ts, datetime):
         if max_ts.tzinfo is None:
             # Assume UTC if no timezone info
-            max_ts = max_ts.replace(tzinfo=timezone.utc)
+            max_ts = max_ts.replace(tzinfo=UTC)
     else:
         # String timestamp — parse it
-        max_ts = datetime.fromisoformat(str(max_ts)).replace(tzinfo=timezone.utc)
+        max_ts = datetime.fromisoformat(str(max_ts)).replace(tzinfo=UTC)
 
     if max_ts < cutoff:
-        age_days = (datetime.now(timezone.utc) - max_ts).days
+        age_days = (datetime.now(UTC) - max_ts).days
         return CheckResult(
             status=WARN,
             details=f"Data is {age_days} days old (threshold: {freshness_days} days)",
@@ -371,7 +371,7 @@ def check_freshness(
             actual=f"{age_days} days old",
         )
 
-    age_days = (datetime.now(timezone.utc) - max_ts).days
+    age_days = (datetime.now(UTC) - max_ts).days
     return CheckResult(
         status=PASS,
         details=f"Data is {age_days} days old (within {freshness_days}-day threshold)",
@@ -642,7 +642,7 @@ def run_validation(
             result_metadata.append((table_name, "reconciliation"))
 
     # Persist results to data_quality table
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = {
         "checked_at": [now] * len(all_results),
         "table_name": [m[0] for m in result_metadata],

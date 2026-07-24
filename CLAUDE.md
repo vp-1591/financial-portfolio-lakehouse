@@ -1,15 +1,38 @@
 ## Goal
-To create a single dashboard that consolidates assests from different brokers.
 
-## Test maintenance
+Single dashboard consolidating assets from different brokers. Medallion architecture: raw (encrypted broker payloads → Delta) → normalized (parsed, consolidated, FX-converted) → analytics (portfolio aggregations). All financial values are Fernet-encrypted at rest. Delta Lake for storage, DuckDB for queries, Polars for all data manipulation, PyArrow only for table schemas (`models.py`) and S3 filesystem (`s3.py`). `write_deltalake` accepts `pl.DataFrame` directly — do not convert to `pa.Table` for writes.
+
+## Checks
+
+Always use the project venv — never the system Python (`C:\Python314`). On Windows, use `python.exe -m pip` instead of bare `pip`:
+
+```bash
+.venv/Scripts/python.exe -m pip install <package>
+```
+
+Before committing, run all three checks. After linting, re-run tests to ensure auto-fixes didn't break anything:
+
+```bash
+ruff check --fix . && ruff format .
+.venv/Scripts/python -m pyright pipeline/ tests/
+.venv/Scripts/python -m pytest tests/ -v
+```
+
+Run a single test file or specific test:
+
+```bash
+.venv/Scripts/python -m pytest tests/test_consolidate.py -v
+.venv/Scripts/python -m pytest tests/test_consolidate.py::test_consolidate_holdings -v
+```
 
 - When changing portfolio math, broker data normalization, or dashboard output, add or update focused tests that cover the changed behavior and any reported regression.
-- Run the relevant tests before finishing changes.
 
-## Linting
+## Useful commands
 
-- Before committing, run `ruff check --fix .` and `ruff format .` to fix lint issues.
-- After running ruff, re-run tests to ensure the auto-fixes didn't break anything.
+```bash
+.venv/Scripts/python -m pipeline.run query "SELECT * FROM portfolio_holdings" --decrypt --mode staging
+.venv/Scripts/python -m pipeline.run report --mode staging --open
+```
 
 @~/.claude/shared/adr-workflow.md
 
@@ -28,27 +51,6 @@ When a table schema changes (column types, added/removed columns), create a migr
 ## Deploy logs
 
 When a staging deploy fails, the application error (Python tracebacks) is in the "Print container logs on failure". Check the `=== Container logs: <connector> ===` sections.
-
-## Environment
-
-Always use the project's Python virtual environment for dependency installs and code execution:
-
-```
-.venv/Scripts/python
-.venv/Scripts/pip
-```
-
-Never use the system Python (`C:\Python314`). Always prefix commands with the venv, e.g.:
-
-```bash
-.venv/Scripts/python -m pytest tests/ -v
-```
-
-Note: on Windows, use `python.exe -m pip` instead of bare `pip` — the venv's `pip` scripts are not directly callable from Git Bash:
-
-```bash
-.venv/Scripts/python.exe -m pip install <package>
-```
 
 ## AWS Guidance
 

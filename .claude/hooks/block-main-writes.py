@@ -19,6 +19,7 @@ def get_current_branch() -> str:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         return result.stdout.strip()
     except (subprocess.SubprocessError, FileNotFoundError):

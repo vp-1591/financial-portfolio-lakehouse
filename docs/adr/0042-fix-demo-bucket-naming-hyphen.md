@@ -1,5 +1,7 @@
 # 0042: Fix Demo Bucket Naming — Use Hyphen Instead of Underscore
 
+> **Superseded by [ADR 0092](./0092-remove-demo-env-var-suffix.md)** — `S3_BUCKET_DEMO` is removed. The staging bucket is now set via `S3_BUCKET` in the demo ECS task environment.
+
 ## Context
 
 The pipeline's demo mode constructs a default S3 bucket name by appending `_demo` (underscore) to the production bucket name via `f"{s3_bucket}_demo"` in `pipeline/storage.py`. However, S3 bucket names **cannot contain underscores** — only lowercase letters, numbers, and hyphens are allowed.

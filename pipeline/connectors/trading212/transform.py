@@ -9,16 +9,9 @@ from __future__ import annotations
 
 import logging
 
-import pyarrow as pa
 import polars as pl
+import pyarrow as pa
 
-from pipeline.connectors.transform_utils import (
-    build_normalized_table,
-    decrypt_cdc_payloads,
-    filter_latest_snapshot,
-    finalize_table,
-    iter_raw_payloads,
-)
 from pipeline.connectors.trading212.client import (
     account_currency,
     cash_value,
@@ -30,6 +23,13 @@ from pipeline.connectors.trading212.client import (
     position_name,
     position_security_currency,
     position_value,
+)
+from pipeline.connectors.transform_utils import (
+    build_normalized_table,
+    decrypt_cdc_payloads,
+    filter_latest_snapshot,
+    finalize_table,
+    iter_raw_payloads,
 )
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,

@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 class IbkrConnector:
     name = "ibkr"
     display_name = "IBKR"
-    enabled_env_var = "IBKR_ENABLED"
     cdc_supported = True
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:

@@ -12,7 +12,6 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-
 DEFAULT_BASE_URL = "https://live.trading212.com/api/v0"
 DEMO_BASE_URL = "https://demo.trading212.com/api/v0"
 DEFAULT_USER_AGENT = (

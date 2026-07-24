@@ -12,7 +12,7 @@ are stored directly in ``consolidated_holdings``, so no snapshot join is needed.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import polars as pl
 import pyarrow as pa
@@ -96,7 +96,7 @@ def build_portfolio_holdings(
     # ------------------------------------------------------------------
     # 2. Build the final table matching the schema
     # ------------------------------------------------------------------
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     result = cons.select(
         [

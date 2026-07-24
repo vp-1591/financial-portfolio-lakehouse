@@ -18,11 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (demo)
+      - name: Configure AWS credentials (staging)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEMO }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEMO }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_STAGING }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_STAGING }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -47,165 +47,16 @@ jobs:
           docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:staging-latest
           docker run --rm ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:staging-latest --help
 
-      - name: Trigger demo pipeline
-        id: trigger-pipeline
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pipeline
         run: |
-          # Resolve the latest demo task definition ARNs dynamically.
-          # ECS task definition families follow the pattern portfolio-pipeline-demo-{name}.
-          # XTB is excluded: it requires --xtb-file and is triggered by EventBridge
-          # when a file lands in S3, not by the CI/CD pipeline.
-          ibkr_arn=$(aws ecs describe-task-definition --task-definition portfolio-pipeline-demo-ibkr --query 'taskDefinition.taskDefinitionArn' --output text)
-          t212_arn=$(aws ecs describe-task-definition --task-definition portfolio-pipeline-demo-trading212 --query 'taskDefinition.taskDefinitionArn' --output text)
-          consolidate_arn=$(aws ecs describe-task-definition --task-definition portfolio-pipeline-demo-consolidate-allocate --query 'taskDefinition.taskDefinitionArn' --output text)
+          python -m pip install --upgrade pip
+          pip install -e .[pipeline]
 
-          # Build the execution input matching the state machine's expected schema:
-          #   connectors: [{name, task_def_arn, command}, ...]
-          #   consolidate_allocate_task_def_arn: string
-          #   demo: bool
-          input_json=$(jq -n \
-            --arg ibkr "$ibkr_arn" \
-            --arg t212 "$t212_arn" \
-            --arg consolidate "$consolidate_arn" \
-            '{
-              connectors: [
-                {name: "ibkr", task_def_arn: $ibkr, command: ["run-connector", "ibkr", "--target-currency", "EUR"]},
-                {name: "trading212", task_def_arn: $t212, command: ["run-connector", "trading212", "--target-currency", "EUR"]}
-              ],
-              consolidate_allocate_task_def_arn: $consolidate,
-              demo: true
-            }')
-
-          execution_arn=$(aws stepfunctions start-execution \
-            --state-machine-arn ${{ secrets.DEMO_STATE_MACHINE_ARN }} \
-            --name "staging-$(echo ${{ github.sha }} | cut -c1-7)-$(date +%Y%m%d%H%M%S)" \
-            --input "$input_json" \
-            --query 'executionArn' \
-            --output text)
-
-          echo "execution_arn=$execution_arn" >> "$GITHUB_OUTPUT"
-          echo "Step Function execution started: $execution_arn"
-
-      - name: Wait for demo pipeline
-        id: wait-pipeline
+      - name: Run staging pipeline
         run: |
-          EXECUTION_ARN="${{ steps.trigger-pipeline.outputs.execution_arn }}"
-          TIMEOUT=900   # 15 minutes
-          INTERVAL=30
-          ELAPSED=0
-
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            STATUS=$(aws stepfunctions describe-execution \
-              --execution-arn "$EXECUTION_ARN" \
-              --query 'status' \
-              --output text)
-
-            case $STATUS in
-              SUCCEEDED)
-                echo "Step Function execution succeeded"
-                exit 0
-                ;;
-              FAILED|TIMED_OUT|ABORTED)
-                echo "::error::Step Function execution failed with status: $STATUS"
-                # Print execution history for diagnostics.
-                # ECS RunTask failures surface as TaskFailed events, but the
-                # cause field contains the entire ECS task JSON (network
-                # interfaces, container ARNs, etc.). Parse it to show only
-                # the useful bits: exit code, stopped reason, task definition.
-                echo "=== Execution History ==="
-
-                echo "--- Task Failures ---"
-                aws stepfunctions get-execution-history \
-                  --execution-arn "$EXECUTION_ARN" \
-                  --query 'events[?type==`TaskFailed`].taskFailedEventDetails' \
-                  --output json > "$RUNNER_TEMP/task_failures.json" 2>&1 || echo "[]" > "$RUNNER_TEMP/task_failures.json"
-                python3 .github/scripts/parse_stepfunctions_event.py task_failed "$RUNNER_TEMP/task_failures.json" || echo "(failed to fetch TaskFailed events)"
-
-                echo "--- Task Timeouts ---"
-                aws stepfunctions get-execution-history \
-                  --execution-arn "$EXECUTION_ARN" \
-                  --query 'events[?type==`TaskTimedOut`].taskTimedOutEventDetails' \
-                  --output json > "$RUNNER_TEMP/task_timeouts.json" 2>&1 || echo "[]" > "$RUNNER_TEMP/task_timeouts.json"
-                python3 .github/scripts/parse_stepfunctions_event.py task_timed_out "$RUNNER_TEMP/task_timeouts.json" || echo "(failed to fetch TaskTimedOut events)"
-
-                echo "--- Execution Failure ---"
-                aws stepfunctions get-execution-history \
-                  --execution-arn "$EXECUTION_ARN" \
-                  --query 'events[?type==`ExecutionFailed`].executionFailedEventDetails' \
-                  --output json > "$RUNNER_TEMP/exec_failure.json" 2>&1 || echo "[]" > "$RUNNER_TEMP/exec_failure.json"
-                python3 .github/scripts/parse_stepfunctions_event.py execution_failed "$RUNNER_TEMP/exec_failure.json" || echo "(failed to fetch ExecutionFailed events)"
-                exit 1
-                ;;
-              RUNNING)
-                echo "Step Function still running ($ELAPSED/${TIMEOUT}s elapsed)..."
-                sleep $INTERVAL
-                ELAPSED=$((ELAPSED + INTERVAL))
-                ;;
-              *)
-                echo "::error::Unexpected Step Function status: $STATUS"
-                exit 1
-                ;;
-            esac
-          done
-
-          echo "::error::Step Function execution timed out after ${TIMEOUT}s"
-          exit 1
-
-      - name: Print container logs on failure
-        if: failure()
-        run: |
-          EXECUTION_ARN="${{ steps.trigger-pipeline.outputs.execution_arn }}"
-          if [ -z "$EXECUTION_ARN" ]; then
-            echo "No execution ARN available — cannot fetch logs"
-            exit 0
-          fi
-
-          # Get the execution start time to scope the log query.
-          # AWS CLI v2 returns ISO 8601 timestamps (e.g. 2026-07-16T09:43:10.808000+00:00).
-          # Convert to epoch milliseconds for CloudWatch Logs --start-time.
-          START_SECONDS=$(aws stepfunctions describe-execution \
-            --execution-arn "$EXECUTION_ARN" \
-            --query 'startDate' \
-            --output text)
-
-          if [ -z "$START_SECONDS" ]; then
-            echo "::warning::Could not determine execution start time; fetching all log events"
-            START_MS="0"
-          elif echo "$START_SECONDS" | grep -qP '^\d{4}-'; then
-            # ISO 8601 format (AWS CLI v2 default) — convert via date
-            START_MS=$(date -d "$START_SECONDS" +%s%3N)
-            echo "Execution start: ${START_SECONDS} → START_MS=${START_MS}ms"
-          else
-            # Epoch format (CLI v1 or wire-format) — existing parsing
-            SECS="${START_SECONDS%%.*}"
-            FRAC="${START_SECONDS#*.}"
-            # Pad or truncate fractional part to exactly 3 digits
-            FRAC="$(echo "${FRAC}000" | cut -c1-3)"
-            START_MS="${SECS}${FRAC}"
-            echo "Execution start: ${START_SECONDS}s → START_MS=${START_MS}ms"
-          fi
-
-          # Connector names that run in the CI-triggered pipeline (excludes XTB,
-          # which is triggered by S3 file arrival instead).
-          # Note: consolidate-allocate only runs after all connectors succeed,
-          # so its log group may be empty when the pipeline failed at the
-          # connector stage.
-          CONNECTORS="ibkr trading212 consolidate-allocate"
-
-          for NAME in $CONNECTORS; do
-            LOG_GROUP="/ecs/portfolio-pipeline-demo-${NAME}"
-            echo "=== Container logs: ${NAME} ==="
-            echo "Log group: ${LOG_GROUP}"
-            EVENTS=$(aws logs filter-log-events \
-              --log-group-name "$LOG_GROUP" \
-              --start-time "$START_MS" \
-              --limit 500 \
-              --query 'events[*].message' \
-              --output json 2>&1) || {
-              echo "::warning::Failed to fetch logs from ${LOG_GROUP}: ${EVENTS}"
-              echo ""
-              continue
-            }
-            echo "$EVENTS" > "$RUNNER_TEMP/logs_${NAME}.json"
-            python3 .github/scripts/format_log_events.py "$RUNNER_TEMP/logs_${NAME}.json" 2>/dev/null || echo "$EVENTS"
-            echo ""
-          done
+          python -m pipeline.run full --mode staging --wait

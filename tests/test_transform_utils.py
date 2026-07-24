@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 import pytest
@@ -78,7 +78,7 @@ class TestCoerceFetchedAt:
     """Tests for coerce_fetched_at."""
 
     def test_passes_through_datetime(self) -> None:
-        dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
         assert coerce_fetched_at(dt) is dt
 
     def test_parses_iso_string(self) -> None:
@@ -139,7 +139,7 @@ class TestIterRawPayloads:
         table = self._make_raw_table(
             [
                 (
-                    datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    datetime(2024, 1, 1, tzinfo=UTC),
                     "/positions",
                     payload,
                     "",
@@ -158,7 +158,7 @@ class TestIterRawPayloads:
         table = self._make_raw_table(
             [
                 (
-                    datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    datetime(2024, 1, 1, tzinfo=UTC),
                     "/positions",
                     payload,
                     "",
@@ -176,7 +176,7 @@ class TestIterRawPayloads:
         table = self._make_raw_table(
             [
                 (
-                    datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    datetime(2024, 1, 1, tzinfo=UTC),
                     "/positions",
                     b"not-json",
                     "",
@@ -192,7 +192,7 @@ class TestIterRawPayloads:
         table = self._make_raw_table(
             [
                 (
-                    datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    datetime(2024, 1, 1, tzinfo=UTC),
                     "/positions",
                     b"<xml>data</xml>",
                     "",
@@ -213,13 +213,13 @@ class TestIterRawPayloads:
         table = self._make_raw_table(
             [
                 (
-                    datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    datetime(2024, 1, 1, tzinfo=UTC),
                     "/positions",
                     payload1,
                     "",
                 ),
                 (
-                    datetime(2024, 1, 2, tzinfo=timezone.utc),
+                    datetime(2024, 1, 2, tzinfo=UTC),
                     "/positions",
                     payload2,
                     "",
@@ -274,7 +274,7 @@ class TestBuildNormalizedTable:
     def test_single_record_with_encrypted_column(self, fernet_key: bytes) -> None:
         from pipeline.normalized.models import xtb_snapshot_normalized_schema
 
-        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [
             {
                 "fetched_at": now,
@@ -304,7 +304,7 @@ class TestBuildNormalizedTable:
     def test_multiple_encrypt_columns(self, fernet_key: bytes) -> None:
         from pipeline.normalized.models import cdc_events_normalized_schema
 
-        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [
             {
                 "fetched_at": now,
@@ -342,7 +342,7 @@ class TestBuildNormalizedTable:
                 pa.field("label", pa.string()),
             ]
         )
-        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [{"fetched_at": now, "account_id": "A1", "label": "X"}]
         result = build_normalized_table(records, schema, fernet_key)
         assert result.num_rows == 1
@@ -352,7 +352,7 @@ class TestBuildNormalizedTable:
     def test_schema_column_ordering_preserved(self, fernet_key: bytes) -> None:
         from pipeline.normalized.models import trading212_snapshot_normalized_schema
 
-        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [
             {
                 "fetched_at": now,
@@ -382,7 +382,7 @@ class TestFilterLatestSnapshot:
 
     def test_single_timestamp_returns_all_rows(self) -> None:
         """All rows share the same fetched_at — none should be removed."""
-        now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
         table = pa.table(
             {
                 "fetched_at": [now, now, now],
@@ -399,8 +399,8 @@ class TestFilterLatestSnapshot:
 
     def test_multiple_timestamps_keeps_only_latest(self) -> None:
         """Only rows from the latest fetched_at should be kept."""
-        t1 = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        t2 = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        t1 = datetime(2024, 6, 1, tzinfo=UTC)
+        t2 = datetime(2024, 6, 15, tzinfo=UTC)
         table = pa.table(
             {
                 "fetched_at": [t1, t1, t2, t2],
@@ -437,7 +437,7 @@ class TestFilterLatestSnapshot:
 
     def test_single_row_returns_unchanged(self) -> None:
         """A table with a single row should be returned unchanged."""
-        now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
         table = pa.table(
             {
                 "fetched_at": [now],
@@ -455,8 +455,8 @@ class TestFilterLatestSnapshot:
 
     def test_preserves_all_columns(self) -> None:
         """After filtering, columns other than fetched_at are preserved."""
-        t1 = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        t2 = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        t1 = datetime(2024, 6, 1, tzinfo=UTC)
+        t2 = datetime(2024, 6, 15, tzinfo=UTC)
         table = pa.table(
             {
                 "fetched_at": [t1, t2],

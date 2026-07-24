@@ -11,7 +11,7 @@ variable "env" {
 }
 
 variable "demo" {
-  description = "Whether this is the demo environment (passed into the execution input)."
+  description = "Whether this is the demo environment (drives the --mode flag: demo -> staging, prod -> prod)."
   type        = bool
 }
 

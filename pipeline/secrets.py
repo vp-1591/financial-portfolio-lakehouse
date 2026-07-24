@@ -10,43 +10,40 @@ one of two sources:
 
 If a secret is missing from both sources, the pipeline will error when
 the secret is actually needed — not at startup.  This allows commands
-like ``transform`` and ``allocate`` to run without any broker API keys.
+like ``run-connector`` and ``run-consolidate-analytics`` to run without
+any broker API keys.
 
-**Demo mode.**  When the ``DEMO`` environment variable is set to ``true``,
-``1``, or ``yes``, the pipeline runs in demo mode.  In demo mode,
-:func:`resolve_secret` returns ``_DEMO``-suffixed secrets instead of the
-base names, and :func:`inject_secrets` validates the ``_DEMO`` variants.
-There is **no cross-mode fallback** — missing credentials for the active
-mode are logged as warnings and :func:`resolve_secret` returns ``None``,
-allowing callers to gracefully skip connectors or operations that require
-the missing secret.
+**Execution modes.**  The ``--mode docker|staging|prod`` CLI flag (see
+:func:`set_mode`) determines the execution context:
 
-**Deployment model.**  In the project's deployment model
-(see :doc:`/docs/adr/0049-deployment-model`), ``DEMO=true`` corresponds to
-the **staging** environment and ``DEMO=false`` (or unset) to **production**.
-Staging uses demo broker credentials and a separate S3 bucket; production
-uses live credentials and the production bucket.  The ``DEMO`` flag is the
-single source of truth for environment selection — there is no separate
-``PIPELINE_ENV`` variable.
+- **docker** — local development against MinIO.  Broker credentials come
+  from ``.env`` or the environment under their base names.
+- **staging** — staging (demo) environment.  ECS tasks inject secrets
+  under base names from ``/portfolio/demo/`` SSM parameters; local runs
+  read them from ``.env`` or the environment.  Storage is the demo S3 bucket.
+- **prod** — production environment.  Same base-name resolution; ECS tasks
+  use ``/portfolio/prod/`` SSM parameters.
 
-Connector toggles (``IBKR_ENABLED``, ``T212_ENABLED``, ``XTB_ENABLED``)
-default to **enabled**.  Set them to ``0``, ``false``, or ``no`` to disable
-a connector.
+:func:`is_demo` returns ``True`` in staging mode, which drives the
+demo S3 bucket selection and the encryption-key file fallback guard.
+There is **no cross-mode fallback** — missing credentials are logged
+as warnings and :func:`resolve_secret` returns ``None``, allowing callers
+to gracefully skip connectors or operations that require the missing secret.
 
 Usage::
 
     from pipeline.secrets import (
-        inject_secrets, get_secret, get_env, is_enabled,
+        inject_secrets, get_secret, get_env,
         load_env, parse_bool, is_demo, resolve_secret,
+        set_mode, get_mode,
     )
 
+    set_mode("docker")         # called by CLI after parsing --mode
     load_env()                 # silent .env loading at startup (no warnings)
     # ... or ...
     inject_secrets()           # load .env AND validate (logs warnings for missing secrets)
-    token = resolve_secret("IBKR_FLEX_TOKEN")  # demo-aware secret lookup
-    if is_enabled("IBKR_ENABLED"):              # True unless set to 0/false/no
-        ...
-    if is_demo():                                # True when DEMO=true
+    token = resolve_secret("IBKR_FLEX_TOKEN")  # secret lookup (env var)
+    if is_demo():                                # True when --mode staging
         ...
 """
 
@@ -74,46 +71,47 @@ REQUIRED_SECRETS: list[str] = [
     "ENCRYPTION_KEY",
 ]
 
-# Demo-mode secret mappings: base name → _DEMO variant.
-# In demo mode, resolve_secret() uses the _DEMO variant exclusively.
-# There is NO fallback to base secrets in demo mode, and NO fallback
-# to _DEMO secrets in production mode.
-DEMO_SECRET_MAP: dict[str, str] = {
-    "IBKR_FLEX_TOKEN": "IBKR_FLEX_TOKEN_DEMO",
-    "IBKR_FLEX_QUERY_ID": "IBKR_FLEX_QUERY_ID_DEMO",
-    "IBKR_FLEX_CDC_QUERY_ID": "IBKR_FLEX_CDC_QUERY_ID_DEMO",
-    "T212_API_KEY": "T212_API_KEY_DEMO",
-    "T212_API_SECRET": "T212_API_SECRET_DEMO",
-    "ENCRYPTION_KEY": "ENCRYPTION_KEY_DEMO",
-    "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID_DEMO",
-    "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY_DEMO",
-}
-
-# S3-specific secrets — only required when STORAGE_TYPE is cloud.
+# S3-specific secrets — only required for staging/prod modes (cloud storage).
 REQUIRED_SECRETS_S3: list[str] = [
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
 ]
-REQUIRED_SECRETS_S3_DEMO: list[str] = [
-    "AWS_ACCESS_KEY_ID_DEMO",
-    "AWS_SECRET_ACCESS_KEY_DEMO",
-]
 
-# The _DEMO variants listed for inject_secrets() validation in demo mode.
-REQUIRED_SECRETS_DEMO: list[str] = list(DEMO_SECRET_MAP.values())
+# ---------------------------------------------------------------------------
+# Execution mode — single source of truth for --mode flag
+# ---------------------------------------------------------------------------
 
-# Non-AWS demo secrets — validated in the general demo loop of
-# inject_secrets().  AWS demo secrets are validated only when
-# STORAGE_TYPE is cloud, matching the production path.
-REQUIRED_SECRETS_DEMO_NON_AWS: list[str] = [
-    name for name in REQUIRED_SECRETS_DEMO if name not in REQUIRED_SECRETS_S3_DEMO
-]
+_VALID_MODES = ("docker", "staging", "prod")
+_mode: str | None = None
 
-# Storage type constants.
-STORAGE_TYPE_CLOUD = "cloud"
-STORAGE_TYPE_MINIO = "minio"
-STORAGE_TYPE_LOCAL = "local"
-VALID_STORAGE_TYPES = (STORAGE_TYPE_CLOUD, STORAGE_TYPE_MINIO, STORAGE_TYPE_LOCAL)
+
+def set_mode(mode: str) -> None:
+    """Set the execution mode from the ``--mode`` CLI flag.
+
+    Must be called once at startup (in ``main()``) before any code that
+    calls :func:`get_mode`, :func:`is_demo`, or :func:`resolve_storage`.
+    Raises :exc:`ValueError` for invalid modes.
+    """
+    if mode not in _VALID_MODES:
+        raise ValueError(f"Invalid mode {mode!r}. Must be one of {_VALID_MODES}.")
+    global _mode
+    _mode = mode
+
+
+def get_mode() -> str:
+    """Return the current execution mode.
+
+    Raises :exc:`RuntimeError` if :func:`set_mode` has not been called.
+    """
+    if _mode is None:
+        raise RuntimeError("Mode not set. Pass --mode (docker|staging|prod).")
+    return _mode
+
+
+def reset_mode() -> None:
+    """Reset the mode to unset.  Used by test fixtures."""
+    global _mode
+    _mode = None
 
 
 def load_env() -> None:
@@ -135,17 +133,18 @@ def inject_secrets() -> dict[str, str]:
     """Load ``.env`` and validate available secrets.
 
     Called by commands that actually need broker or S3 credentials
-    (``fetch``, ``full``, ``run-connector``, ``upload-xtb``).  Loads
+    (``full``, ``run-connector``, ``upload-xtb``).  Loads
     environment variables from the ``.env`` file (if present), then
     logs warnings for any required secrets that are still missing.
 
-    In demo mode (``DEMO=true``), validates ``_DEMO`` variants instead
-    of base secrets.  There is no cross-mode fallback.
+    Secrets are always read under their base names (e.g.
+    ``IBKR_FLEX_TOKEN``).  In ECS deployments, the SSM path prefix
+    (``/portfolio/demo/`` or ``/portfolio/prod/``) provides environment
+    isolation — there is no ``_DEMO`` suffix swap.
 
     S3-specific secrets (``AWS_ACCESS_KEY_ID``,
-    ``AWS_SECRET_ACCESS_KEY``) are validated only when
-    ``STORAGE_TYPE`` is ``"cloud"``.  They are optional for
-    ``"minio"`` and ``"local"`` storage.
+    ``AWS_SECRET_ACCESS_KEY``) are validated only for staging and prod
+    modes (cloud storage).  They are optional for docker mode (MinIO).
 
     Returns a dict of all available secrets for caller convenience.
     """
@@ -153,33 +152,24 @@ def inject_secrets() -> dict[str, str]:
 
     secrets: dict[str, str] = {}
 
-    if is_demo():
-        for name in REQUIRED_SECRETS_DEMO_NON_AWS:
-            value = os.environ.get(name)
-            if value:
-                secrets[name] = value
-            else:
-                logger.warning("Demo secret %s is not set (DEMO mode active)", name)
-    else:
-        for name in REQUIRED_SECRETS:
-            value = os.environ.get(name)
-            if value:
-                secrets[name] = value
-            else:
-                logger.warning("Required secret %s is not set", name)
+    for name in REQUIRED_SECRETS:
+        value = os.environ.get(name)
+        if value:
+            secrets[name] = value
+        else:
+            logger.warning("Required secret %s is not set", name)
 
-    # Validate S3 secrets only for cloud storage.
-    storage_type = get_storage_type()
-    if storage_type == STORAGE_TYPE_CLOUD:
-        s3_secrets = REQUIRED_SECRETS_S3_DEMO if is_demo() else REQUIRED_SECRETS_S3
-        label = "Demo S3" if is_demo() else "S3"
-        for name in s3_secrets:
+    # Validate S3 secrets only for staging/prod (cloud) modes.
+    # Docker mode (MinIO) does not require S3 credentials.
+    mode = get_mode()
+    if mode in ("staging", "prod"):
+        for name in REQUIRED_SECRETS_S3:
             value = os.environ.get(name)
             if value:
                 secrets[name] = value
             else:
                 logger.warning(
-                    "%s secret %s is not set (required for cloud storage)", label, name
+                    "S3 secret %s is not set (required for cloud storage)", name
                 )
 
     return secrets
@@ -219,17 +209,6 @@ def get_env(name: str, default: str | None = None) -> str | None:
     return default
 
 
-def is_enabled(name: str) -> bool:
-    """Check if a connector or feature is enabled via an env var.
-
-    Returns ``True`` unless the env var is explicitly set to one of
-    ``0``, ``false``, or ``no`` (case-insensitive).  This means
-    connectors are **enabled by default**.
-    """
-    value = os.environ.get(name, "").lower()
-    return value not in ("0", "false", "no")
-
-
 def parse_bool(name: str, default: bool = False) -> bool:
     """Parse a boolean env var with an explicit default.
 
@@ -244,81 +223,33 @@ def parse_bool(name: str, default: bool = False) -> bool:
 
 
 def is_demo() -> bool:
-    """Check if the pipeline is running in demo mode.
+    """Check if the pipeline is running in demo (staging) mode.
 
-    Returns ``True`` when the ``DEMO`` env var is set to ``true``,
-    ``1``, or ``yes`` (case-insensitive).  Defaults to ``False``.
-
-    In demo mode, :func:`resolve_secret` returns ``_DEMO``-suffixed
-    secrets and storage uses a separate demo bucket/directory.
+    Returns ``True`` when the execution mode is ``staging``.
+    In staging mode, storage uses a separate demo bucket/prefix
+    and the encryption-key file fallback is disabled.
     """
-    return parse_bool("DEMO", default=False)
-
-
-def get_storage_type() -> str:
-    """Return the storage type from the ``STORAGE_TYPE`` env var.
-
-    Valid values are ``"cloud"`` (S3), ``"minio"`` (S3-compatible),
-    and ``"local"`` (filesystem).  If ``STORAGE_TYPE`` is not set,
-    defaults to ``"cloud"`` when ``S3_BUCKET`` is set, and ``"local"``
-    otherwise.
-
-    Raises :exc:`ValueError` for invalid values.
-    """
-    explicit = os.environ.get("STORAGE_TYPE", "").lower()
-    if explicit:
-        if explicit not in VALID_STORAGE_TYPES:
-            raise ValueError(
-                f"STORAGE_TYPE must be one of {VALID_STORAGE_TYPES}, got {explicit!r}"
-            )
-        return explicit
-    # Backward compatibility: if S3_BUCKET is set and no STORAGE_TYPE,
-    # default to cloud.
-    if get_env("S3_BUCKET"):
-        return STORAGE_TYPE_CLOUD
-    # In demo mode, S3_BUCKET_DEMO alone triggers cloud storage.
-    if is_demo() and get_env("S3_BUCKET_DEMO"):
-        return STORAGE_TYPE_CLOUD
-    return STORAGE_TYPE_LOCAL
+    return get_mode() == "staging"
 
 
 def resolve_secret(name: str) -> str | None:
-    """Get a secret, using the ``_DEMO`` variant when demo mode is active.
+    """Get a secret from the environment by its base name.
 
-    **Strict isolation — no cross-mode fallback:**
+    Always reads ``os.environ.get(name)`` directly — there is no
+    suffix swap.  Environment isolation is handled by the deployment
+    (ECS tasks inject secrets under base names from environment-scoped
+    SSM parameters; local runs use ``.env`` or exported env vars).
 
-    - When ``DEMO=true`` and *name* is in :data:`DEMO_SECRET_MAP`,
-      returns the ``_DEMO`` variant.  If the ``_DEMO`` variant is not
-      set, logs a warning and returns ``None`` — **never falls back to
-      the base secret**.
-    - When ``DEMO=false`` (or unset), returns ``os.environ.get(name)``
-      directly — **never reads ``_DEMO`` variants**.
-    - For names not in :data:`DEMO_SECRET_MAP` (e.g., config vars
-      like ``IBKR_FLEX_BASE_URL``), returns ``os.environ.get(name)``
-      regardless of mode.
-
-    When a secret is found, logs the source (base or ``_DEMO`` variant)
-    at info level without logging the value.  When a secret is missing,
-    logs a warning with the expected variable name.
+    When a secret is found, logs the name at info level without logging
+    the value.  When a secret is missing, logs a warning and returns
+    ``None``, allowing callers to gracefully skip connectors or
+    operations that require the missing secret.
     """
-    if is_demo() and name in DEMO_SECRET_MAP:
-        demo_name = DEMO_SECRET_MAP[name]
-        value = os.environ.get(demo_name)
-        if value:
-            logger.info("Resolved %s from %s (demo mode)", name, demo_name)
-            return value
-        logger.warning(
-            "Demo mode is active but %s is not set — "
-            "returning None for %s (no fallback to base secret)",
-            demo_name,
-            name,
-        )
-        return None
     value = os.environ.get(name)
     if value:
-        logger.info("Resolved %s from %s", name, name)
+        logger.info("Resolved %s", name)
     else:
-        logger.debug("Secret %s is not set", name)
+        logger.warning("Secret %s is not set", name)
     return value
 
 
@@ -339,7 +270,7 @@ class AwsCredentials:
     When a credential is ``None``, helper methods include it as an
     empty string rather than omitting it.  This prevents the SDK from
     silently falling back to environment variables that may contain
-    production credentials when running in demo mode.  Callers that
+    credentials from a different environment.  Callers that
     need IAM role fallback should not call these methods when both
     credentials are ``None``.
     """
@@ -362,7 +293,7 @@ class AwsCredentials:
         roles).  When either credential is set, both keys are included
         (with the missing one as an empty string) to prevent the SDK
         from silently falling back to environment variables that may
-        contain production credentials.
+        contain credentials from a different environment.
         """
         opts: dict[str, str] = {
             "aws_region": self.region,
@@ -449,11 +380,10 @@ def resolve_aws_credentials() -> AwsCredentials:
     """Resolve AWS credentials from environment variables.
 
     Uses :func:`resolve_secret` for ``AWS_ACCESS_KEY_ID`` and
-    ``AWS_SECRET_ACCESS_KEY`` so that demo mode uses ``_DEMO``
-    variants exclusively.  When a credential is not set or set to an
+    ``AWS_SECRET_ACCESS_KEY``.  When a credential is not set or set to an
     empty string, it is normalized to ``None`` (not an empty string),
     which prevents the SDK from falling back to environment variables
-    that may contain production credentials.
+    that may contain credentials from a different environment.
 
     ``AWS_REGION``, ``S3_ENDPOINT_URL``, and ``S3_ALLOW_HTTP`` are
     configuration (not secrets) and are read directly from the

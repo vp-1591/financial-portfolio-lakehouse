@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 import pytest
@@ -219,7 +219,7 @@ class TestTransformSnapshot:
         from pipeline.raw.models import RAW_SCHEMA
 
         key = self._fernet_key
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sources = ["/equity/account/summary", "/equity/positions"]
         raw_payloads = [
             json.dumps(summary).encode("utf-8"),
@@ -462,7 +462,7 @@ class TestCdcFetch:
 
         with caplog.at_level(logging.WARNING):
             # Mock Trading212Client to fail on all CDC endpoints
-            import unittest.mock as mock
+            from unittest import mock
 
             client_class = mock.patch(
                 "pipeline.connectors.trading212.fetch.Trading212Client",
@@ -478,7 +478,6 @@ class TestCdcFetch:
                 instance.captured_responses = []
 
                 # fetch_cdc creates its own client, so we need to patch at module level
-                pass
 
         # Direct unit test of the logging behavior
         from pipeline.connectors.trading212.fetch import logger
@@ -487,7 +486,7 @@ class TestCdcFetch:
 
     def test_fetch_cdc_raises_when_all_endpoints_empty(self) -> None:
         """When all CDC endpoints return empty lists, fetch_cdc raises RuntimeError."""
-        import unittest.mock as mock
+        from unittest import mock
 
         from pipeline.connectors.trading212.fetch import fetch_cdc
 
@@ -560,7 +559,7 @@ class TestCdcTransform:
         """Build a raw-layer table with encrypted CDC event payloads."""
         import hashlib
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         raw_payloads = [json.dumps(events).encode("utf-8")]
         encrypted_payloads = [encrypt(p, fernet_key) for p in raw_payloads]
 

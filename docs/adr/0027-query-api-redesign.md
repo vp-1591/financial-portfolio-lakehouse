@@ -23,7 +23,7 @@ Removed the custom `Result` and `DecryptedResult` classes, the `sql()` and `tabl
 - **`get_connection()`** — returns a cached DuckDB connection with S3 credentials configured and all discovered Delta tables registered as views. Users query using native DuckDB API:
   ```python
   db = get_connection()
-  db.sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5").pl()   # Polars DataFrame
+  db.sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5").pl()  # Polars DataFrame
   db.sql("SELECT * FROM ibkr_snapshot_raw").filter("value > 100")  # native chaining
   ```
 

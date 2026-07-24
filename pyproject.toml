@@ -10,16 +10,20 @@ pipeline = [
     "cryptography==49.0.0",
     "pyarrow==24.0.0",
     "polars==1.42.0",
-    "python-dotenv>=1.0.0",
+    "python-dotenv==1.2.2",
     "tzdata; sys_platform == 'win32'",
-    "jinja2>=3.1.0",
+    "jinja2==3.1.6",
     "plotly==6.2.0",
+    # boto3 is used by pipeline/sfn.py to trigger Step Functions executions
+    # (start_execution/describe_execution/get-execution-history), resolve ECS
+    # task definition ARNs, and fetch CloudWatch container logs on failure.
+    "boto3==1.37.0",
 ]
 dev = [
-    "ipykernel>=6.0.0",
+    "ipykernel==7.3.0",
     "pytest==9.1.1",
-    "ruff>=0.11.0",
-    "pyright>=1.1.0",
+    "ruff==0.16.0",
+    "pyright==1.1.411",
     "financial-portfolio-lakehouse[pipeline]",
 ]
 
@@ -33,3 +37,10 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+exclude = [".claude"]
+
+[tool.ruff.lint]
+ignore = ["BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["TRY002", "B017", "S110"]

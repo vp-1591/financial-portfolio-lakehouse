@@ -10,13 +10,13 @@ fixtures produce Flex-style raw data (source="flex" with XML payloads).
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 
 from pipeline.crypto import encrypt, encrypt_float, generate_key
-from pipeline.raw.models import RAW_SCHEMA
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+from pipeline.raw.models import RAW_SCHEMA
 
 
 def ibkr_raw_positions(
@@ -57,7 +57,7 @@ def ibkr_raw_positions(
         "</FlexQueryResponse>"
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     xml_bytes = xml_str.encode("utf-8")
     encrypted_payload = encrypt(xml_bytes, fernet_key)
     payload_hash = hashlib.sha256(xml_bytes).hexdigest()
@@ -85,7 +85,7 @@ def ibkr_normalized_snapshot(
     """
     if fernet_key is None:
         fernet_key = generate_key()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return pa.table(
         {
             "fetched_at": [now, now, now],
@@ -191,7 +191,7 @@ def ibkr_raw_cdc(
         "</FlexQueryResponse>"
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     xml_bytes = xml_str.encode("utf-8")
     encrypted_payload = encrypt(xml_bytes, fernet_key)
     payload_hash = hashlib.sha256(xml_bytes).hexdigest()

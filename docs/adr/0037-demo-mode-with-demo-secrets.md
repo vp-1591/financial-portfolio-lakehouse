@@ -1,5 +1,7 @@
 # 0037: Demo Mode with `_DEMO` Secrets and Isolated Storage
 
+> **Superseded by [ADR 0092](./0092-remove-demo-env-var-suffix.md)** — The `_DEMO` env var suffix pattern is removed. SSM path prefixes (`/portfolio/demo/` vs `/portfolio/prod/`) provide environment isolation; ECS tasks inject secrets under base names.
+
 ## Context
 
 The pipeline had a narrow `T212_DEMO` flag that only switched the Trading 212 API URL between live and demo endpoints. This was insufficient for a full demo mode because:

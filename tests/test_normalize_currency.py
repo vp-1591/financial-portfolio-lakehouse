@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 
 import pyarrow as pa
 import pytest
@@ -17,9 +18,9 @@ def _make_cdc_table(
     fernet_key: bytes,
 ) -> pa.Table:
     """Build a CDC events table from event dicts."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
     for event in events:
         record = {
@@ -65,6 +66,13 @@ def _make_cdc_table(
 
 class TestNormalizeCurrency:
     """Tests for normalize_currency filling target_fx_rate and target_value."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_storage(self, tmp_data_dir):
+        """Set up storage config and mode for all normalize_currency tests."""
+        from pipeline.secrets import set_mode
+
+        set_mode("docker")
 
     def test_same_currency_gets_rate_1(self, tmp_path) -> None:
         """When security_ccy == target_ccy, target_fx_rate = 1.0."""
@@ -309,9 +317,9 @@ class TestNormalizeCurrency:
         """Rows with null cash_amount get null target_value and target_fx_rate."""
         fernet_key = generate_key()
 
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         records = [
             {
                 "fetched_at": now,

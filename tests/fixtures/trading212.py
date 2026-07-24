@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pyarrow as pa
 
 from pipeline.crypto import encrypt, encrypt_float, generate_key
-from pipeline.raw.models import RAW_SCHEMA
 from pipeline.normalized.models import trading212_snapshot_normalized_schema
+from pipeline.raw.models import RAW_SCHEMA
 
 
 def t212_raw_snapshot(
@@ -64,7 +64,7 @@ def t212_raw_snapshot(
             "US0378331005": {"shortName": "AAPL", "currency": "USD"},
         }
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     summary_bytes = json.dumps(summary).encode("utf-8")
     positions_bytes = json.dumps(positions).encode("utf-8")
     instruments_bytes = json.dumps(instruments).encode("utf-8")
@@ -104,7 +104,7 @@ def t212_normalized_snapshot(
     """
     if fernet_key is None:
         fernet_key = generate_key()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return pa.table(
         {
             "fetched_at": [now, now, now],

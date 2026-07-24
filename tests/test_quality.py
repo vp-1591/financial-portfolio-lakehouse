@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pyarrow as pa
@@ -32,8 +32,8 @@ from pipeline.normalized.models import (
     consolidated_holdings_schema,
     ibkr_snapshot_normalized_schema,
 )
-from pipeline.storage import LocalBackend, StorageConfig, get_storage, use_storage
-
+from pipeline.storage import StorageConfig, get_storage, use_storage
+from tests.local_backend import LocalBackend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,7 +67,7 @@ def _make_holdings_table(
     rows: list[dict] | None = None,
 ) -> pa.Table:
     """Build a minimal consolidated_holdings table."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if rows is None:
         rows = [
             {
@@ -89,7 +89,7 @@ def _make_cdc_table(
     rows: list[dict] | None = None,
 ) -> pa.Table:
     """Build a minimal cdc_events table."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if rows is None:
         rows = [
             {
@@ -125,7 +125,7 @@ def _make_portfolio_holdings_table(fernet_key: bytes) -> pa.Table:
     """Build a minimal portfolio_holdings table with encrypted value columns."""
     from pipeline.crypto import encrypt_float
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return pa.table(
         {
             "calculated_at": [now],
@@ -217,7 +217,7 @@ class TestCheckSchema:
     def test_fail_on_type_mismatch(self) -> None:
         """Schema check fails when a column has a different type."""
         fernet_key = generate_key()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Use float64 instead of binary for security_value (wrong type)
         wrong_table = pa.table(
             {
@@ -278,7 +278,7 @@ class TestCheckRequiredNulls:
     def test_fail_on_null_value(self) -> None:
         """Required nulls check fails when a required field has nulls."""
         fernet_key = generate_key()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Create holdings with null in a required field (broker)
         # broker is in REQUIRED_FIELDS for consolidated_holdings
         rows = [
@@ -361,7 +361,7 @@ class TestCheckFreshness:
         """Data older than the freshness threshold triggers WARN."""
         # Build a table with old timestamps
         fernet_key = generate_key()
-        old_ts = datetime.now(timezone.utc) - timedelta(days=30)
+        old_ts = datetime.now(UTC) - timedelta(days=30)
         table = pa.table(
             {
                 "calculated_at": [old_ts],
@@ -467,7 +467,7 @@ class TestCheckReconciliation:
     def test_warn_on_missing_broker_in_cdc(self) -> None:
         """Reconciliation warns when a holdings broker is missing from CDC."""
         fernet_key = generate_key()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Holdings with broker "XTB"
         holdings_rows = [
             {
@@ -558,7 +558,7 @@ class TestRunValidation:
 
         # Write a CDC table with wrong schema (missing columns)
         # to trigger a schema FAIL
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         bad_cdc = pa.table(
             {
                 "fetched_at": [now],
@@ -592,7 +592,7 @@ class TestRunValidation:
         storage = get_storage()
 
         # Write tables with stale data to trigger freshness WARN
-        old_ts = datetime.now(timezone.utc) - timedelta(days=30)
+        old_ts = datetime.now(UTC) - timedelta(days=30)
         holdings_rows = [
             {
                 "fetched_at": old_ts,
@@ -692,7 +692,7 @@ class TestDataQualityRoundTrip:
 
 def _make_ibkr_snapshot_table(fernet_key: bytes) -> pa.Table:
     """Build a minimal ibkr_snapshot table."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return pa.table(
         {
             "fetched_at": [now],

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -68,7 +68,7 @@ def fetch_snapshot(file_path: str | Path) -> pa.Table:
         Absolute path to the XTB .xlsx report, or an ``s3://`` URI.
     """
     payload, filename = _read_file_bytes(file_path)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     return pa.table(
         {
@@ -95,7 +95,7 @@ def fetch_cdc(file_path: str | Path) -> pa.Table:
         Absolute path to the XTB .xlsx report, or an ``s3://`` URI.
     """
     payload, filename = _read_file_bytes(file_path)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     return pa.table(
         {

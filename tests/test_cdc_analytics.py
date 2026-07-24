@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -22,8 +22,8 @@ from pipeline.analytics.models import (
 from pipeline.connectors.transform_utils import build_normalized_table
 from pipeline.crypto import decrypt_float, generate_key
 from pipeline.normalized.models import cdc_events_normalized_schema
-from pipeline.storage import LocalBackend, StorageConfig, use_storage
-
+from pipeline.storage import StorageConfig, use_storage
+from tests.local_backend import LocalBackend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,7 +40,7 @@ def _make_cdc_table(
     (cash_amount, target_value, target_fx_rate, etc.) should contain plain
     floats — the helper encrypts them automatically.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     encrypt_columns = [
         "cash_amount",
         "target_value",

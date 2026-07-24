@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 
@@ -29,7 +29,7 @@ def fetch_snapshot(
         capture_raw=True,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fetched_ats: list[datetime] = []
     brokers: list[str] = []
     sources: list[str] = []
@@ -98,7 +98,7 @@ def fetch_cdc(
         capture_raw=True,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     fetched_ats: list[datetime] = []
     brokers: list[str] = []
     sources: list[str] = []

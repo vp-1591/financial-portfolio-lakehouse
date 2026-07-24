@@ -13,7 +13,7 @@ Each table is written to the analytics layer in overwrite mode.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import polars as pl
 import pyarrow as pa
@@ -289,7 +289,7 @@ def build_dividend_income(
             "No DIVIDEND events found in CDC data; dividend_income table will be empty"
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if df.is_empty():
         # Write an empty table with the correct schema.
@@ -414,7 +414,7 @@ def build_interest_income(
             "No INTEREST events found in CDC data; interest_income table will be empty"
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if df.is_empty():
         result = pa.table(
@@ -511,7 +511,7 @@ def build_cash_flow_summary(
     if df.is_empty():
         logger.warning("No CDC events found; cash_flow_summary table will be empty")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if df.is_empty():
         result = pa.table(

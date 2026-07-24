@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 import pytest
 
+from pipeline.connectors.ibkr import transform
 from pipeline.connectors.ibkr.client import (
     IbkrFlexClient,
     as_float,
@@ -16,7 +17,6 @@ from pipeline.connectors.ibkr.client import (
     parse_conversion_rates,
     parse_positions,
 )
-from pipeline.connectors.ibkr import transform
 from pipeline.crypto import encrypt, generate_key
 from pipeline.raw.models import RAW_SCHEMA
 
@@ -93,7 +93,7 @@ class TestClientParsing:
         result = parse_cash_report(root)
         assert len(result.per_currency) == 2
         assert len(result.base_summary) == 0
-        usd = [e for e in result.per_currency if e["currency"] == "USD"][0]
+        usd = next(e for e in result.per_currency if e["currency"] == "USD")
         assert usd["accountId"] == "U123"
         assert usd["endingCash"] == "5000.00"
 
@@ -240,7 +240,7 @@ class TestFlexTransformSnapshot:
 
         xml_bytes = xml_str.encode("utf-8")
         encrypted_payload = encrypt(xml_bytes, key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payload_hash = hashlib.sha256(xml_bytes).hexdigest()
 
         return pa.table(
@@ -513,7 +513,7 @@ class TestConnectorFlexDispatch:
 
         xml_bytes = xml_str.encode("utf-8")
         encrypted_payload = encrypt(xml_bytes, fernet_key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         raw = pa.table(
             {
@@ -574,40 +574,49 @@ class TestCdcFetch:
     def test_fetch_cdc_kwargs_with_dedicated_query_id(self, monkeypatch) -> None:
         """When IBKR_FLEX_CDC_QUERY_ID is set, it takes precedence."""
         from pipeline.connectors.registry import get
+        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
         monkeypatch.setenv("IBKR_FLEX_CDC_QUERY_ID", "cdc_query_456")
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
+        set_mode("docker")
 
         kwargs = connector.fetch_cdc_kwargs()
         assert kwargs["token"] == "token123"
         assert kwargs["query_id"] == "cdc_query_456"
+        reset_mode()
 
     def test_fetch_cdc_kwargs_falls_back_to_snapshot_query_id(
         self, monkeypatch
     ) -> None:
         """When IBKR_FLEX_CDC_QUERY_ID is not set, fall back to IBKR_FLEX_QUERY_ID."""
         from pipeline.connectors.registry import get
+        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
         monkeypatch.delenv("IBKR_FLEX_CDC_QUERY_ID", raising=False)
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
+        set_mode("docker")
 
         kwargs = connector.fetch_cdc_kwargs()
         assert kwargs["token"] == "token123"
         assert kwargs["query_id"] == "snapshot_query_789"
+        reset_mode()
 
     def test_fetch_cdc_kwargs_returns_empty_when_no_token(self, monkeypatch) -> None:
         """When IBKR_FLEX_TOKEN is not set, returns empty dict."""
         from pipeline.connectors.registry import get
+        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
+        set_mode("docker")
 
         kwargs = connector.fetch_cdc_kwargs()
         assert kwargs == {}
+        reset_mode()
 
 
 class TestCdcTransform:
@@ -621,9 +630,8 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """IBKR CDC transform produces TRADE and DIVIDEND events from Flex XML."""
-        from tests.fixtures.ibkr import ibkr_raw_cdc
-
         from pipeline.connectors.ibkr.transform import transform_cdc
+        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -646,9 +654,8 @@ class TestCdcTransform:
 
     def test_transform_cdc_event_id_stability(self, fernet_key: bytes) -> None:
         """Deterministic event IDs are consistent across repeated transforms."""
-        from tests.fixtures.ibkr import ibkr_raw_cdc
-
         from pipeline.connectors.ibkr.transform import transform_cdc
+        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result1 = transform_cdc(raw, fernet_key)
@@ -660,10 +667,9 @@ class TestCdcTransform:
 
     def test_transform_cdc_encrypts_value_columns(self, fernet_key: bytes) -> None:
         """IBKR CDC transform encrypts value columns correctly."""
-        from tests.fixtures.ibkr import ibkr_raw_cdc
-
         from pipeline.connectors.ibkr.transform import transform_cdc
         from pipeline.crypto import decrypt_float
+        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -680,9 +686,8 @@ class TestCdcTransform:
 
     def test_transform_cdc_skips_snapshot_source(self, fernet_key: bytes) -> None:
         """IBKR CDC transform skips rows with source='flex' (snapshot data)."""
-        from tests.fixtures.ibkr import ibkr_raw_positions
-
         from pipeline.connectors.ibkr.transform import transform_cdc
+        from tests.fixtures.ibkr import ibkr_raw_positions
 
         raw = ibkr_raw_positions(fernet_key=fernet_key)  # source="flex"
         result = transform_cdc(raw, fernet_key)
@@ -693,9 +698,8 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """When multiple raw payloads contain the same IBKR events, dedup by event_id."""
-        from tests.fixtures.ibkr import ibkr_raw_cdc
-
         from pipeline.connectors.ibkr.transform import transform_cdc
+        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         # Duplicate the payload row with a different fetched_at — simulates
@@ -714,9 +718,8 @@ class TestCdcTransform:
 
     def test_transform_cdc_normalises_compact_datetime(self, fernet_key: bytes) -> None:
         """IBKR compact datetime formats are normalised to ISO 8601."""
-        from tests.fixtures.ibkr import ibkr_raw_cdc
-
         from pipeline.connectors.ibkr.transform import transform_cdc
+        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -730,9 +733,8 @@ class TestCdcTransform:
 
     def test_transform_cdc_settle_date_normalized(self, fernet_key: bytes) -> None:
         """IBKR settle_date compact formats are normalised to ISO 8601."""
-        from tests.fixtures.ibkr import ibkr_raw_cdc
-
         from pipeline.connectors.ibkr.transform import transform_cdc
+        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -833,7 +835,7 @@ class TestIbkrFeeConversion:
 
         xml_bytes = xml_str.encode("utf-8")
         encrypted_payload = encrypt(xml_bytes, fernet_key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payload_hash = hashlib.sha256(xml_bytes).hexdigest()
 
         return pa.table(
@@ -1022,7 +1024,7 @@ class TestInjectDemoDeposit:
         event_datetime: str = "2026-03-01T00:00:00Z",
     ) -> list[dict]:
         """Build minimal CDC record dicts for testing."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return [
             {
                 "fetched_at": now,
@@ -1063,7 +1065,7 @@ class TestInjectDemoDeposit:
         )
         assert len(result) == 2  # original + deposit
 
-        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        deposit = next(r for r in result if r["event_type"] == "DEPOSIT")
         assert deposit["account_id"] == "U123456"
         assert deposit["security_ccy"] == "EUR"
         assert deposit["cash_amount"] == 1_000_000.0
@@ -1083,7 +1085,7 @@ class TestInjectDemoDeposit:
             records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
         )
 
-        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        deposit = next(r for r in result if r["event_type"] == "DEPOSIT")
         assert deposit["event_datetime"] == "2026-06-14T00:00:00Z"
         assert deposit["settle_date"] == "2026-06-14"
 
@@ -1099,7 +1101,7 @@ class TestInjectDemoDeposit:
             records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
         )
 
-        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        deposit = next(r for r in result if r["event_type"] == "DEPOSIT")
         assert deposit["settle_date"] == "2026-02-28"
 
     def test_fallback_date_when_no_records(self) -> None:
@@ -1124,7 +1126,7 @@ class TestInjectDemoDeposit:
         """
         from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         records = [
             {
                 "fetched_at": now,
@@ -1203,7 +1205,7 @@ class TestInjectDemoDeposit:
             base_currency_by_account={"U999": "EUR"},
         )
 
-        deposit = [r for r in result if r["event_type"] == "DEPOSIT"][0]
+        deposit = next(r for r in result if r["event_type"] == "DEPOSIT")
         # The deposit MUST be in EUR (the account's base currency),
         # not USD (the security's trading currency).
         assert deposit["security_ccy"] == "EUR"
@@ -1229,9 +1231,8 @@ class TestInjectDemoDeposit:
 
     def test_transform_cdc_with_demo_flag(self) -> None:
         """transform_cdc with is_demo=True injects a synthetic deposit."""
-        from tests.fixtures.ibkr import ibkr_raw_cdc
-
         from pipeline.connectors.ibkr.transform import transform_cdc
+        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         fernet_key = generate_key()
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
