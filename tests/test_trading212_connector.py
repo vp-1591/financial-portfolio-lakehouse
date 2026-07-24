@@ -297,6 +297,11 @@ class TestTransformSnapshot:
         isins = result.column("isin").to_pylist()
         assert "IE00B4L5Y983" in isins
 
+        # security_ccy should be wallet currency (PLN from walletImpact),
+        # not instrument currency (EUR from instrument.currencyCode)
+        ccys = result.column("security_ccy").to_pylist()
+        assert ccys[0] == "PLN"
+
     def test_transform_produces_cash_from_nested_cash_dict(
         self, fernet_key: bytes
     ) -> None:
@@ -324,8 +329,63 @@ class TestTransformSnapshot:
         cash_amount = decrypt_float(values[cash_idx], fernet_key)
         assert cash_amount == pytest.approx(10500.0)
 
+    def test_snapshot_security_ccy_uses_wallet_currency(
+        self, fernet_key: bytes
+    ) -> None:
+        """Snapshot security_ccy should reflect the currency of security_value.
 
-class TestClientPagination:
+        When walletImpact provides currentValue (in wallet currency PLN),
+        security_ccy must be PLN (wallet currency), not the instrument's
+        trading currency (EUR/GBX/GBP). This is the fix for the value-currency
+        mismatch bug where PLN values were labeled as EUR/GBX/GBP.
+        """
+        summary = {"currencyCode": "PLN", "cash": 10500.0, "total": 24989.22}
+        positions = [
+            {
+                "ticker": "SPYId_EQ",
+                "quantity": 40.724,
+                "currentPrice": 11.325,
+                "walletImpact": {"currency": "PLN", "currentValue": 1991.29},
+                "instrument": {"ticker": "SPYId_EQ", "currencyCode": "EUR"},
+            },
+            {
+                "ticker": "SGLNl_EQ",
+                "quantity": 25.167,
+                "currentPrice": 5901.0,
+                "walletImpact": {"currency": "PLN", "currentValue": 7506.67},
+                "instrument": {"ticker": "SGLNl_EQ", "currencyCode": "GBX"},
+            },
+            {
+                "ticker": "VUAGl_EQ",
+                "quantity": 9.176,
+                "currentPrice": 107.619,
+                "walletImpact": {"currency": "PLN", "currentValue": 4991.41},
+                "instrument": {"ticker": "VUAGl_EQ", "currencyCode": "GBP"},
+            },
+        ]
+        instruments = [
+            {"ticker": "SPYId_EQ", "currencyCode": "EUR", "name": "SPY"},
+            {"ticker": "SGLNl_EQ", "currencyCode": "GBX", "name": "SGLN"},
+            {"ticker": "VUAGl_EQ", "currencyCode": "GBP", "name": "VUAG"},
+        ]
+
+        raw = self._build_raw_table(summary, positions, instruments)
+        result = transform_snapshot(raw, fernet_key)
+
+        ccys = result.column("security_ccy").to_pylist()
+        types = result.column("position_type").to_pylist()
+
+        # All positions use wallet currency (PLN) as security_ccy,
+        # not the instrument's trading currency (EUR/GBX/GBP)
+        equity_ccys = [ccys[i] for i, t in enumerate(types) if t == "EQUITY"]
+        cash_ccys = [ccys[i] for i, t in enumerate(types) if t == "CASH"]
+        assert all(c == "PLN" for c in equity_ccys), (
+            f"Expected all equity security_ccy to be PLN, got {equity_ccys}"
+        )
+        assert all(c == "PLN" for c in cash_ccys), (
+            f"Expected all cash security_ccy to be PLN, got {cash_ccys}"
+        )
+
     """Tests for Trading212Client._fetch_paginated()."""
 
     def test_fetch_paginated_returns_bare_list(self) -> None:

@@ -121,3 +121,22 @@ class TestCurrencyConverter:
     def test_empty_currency_returns_same_value(self) -> None:
         converter = CurrencyConverter("EUR")
         assert converter.convert(100.0, "") == 100.0
+
+    def test_gbx_converts_via_gbp_divided_by_100(self) -> None:
+        """GBX (British pence) should be converted by fetching GBP rate and dividing by 100."""
+        converter = CurrencyConverter("EUR", manual_rates={"GBP": 1.17})
+        # 100 GBX = 1 GBP = 1.17 EUR, so 100 GBX should be 1.17 EUR
+        assert converter.convert(100.0, "GBX") == pytest.approx(1.17)
+
+    def test_gbp_unaffected_by_gbx_mapping(self) -> None:
+        """GBP conversion should not be affected by the GBX minor unit mapping."""
+        converter = CurrencyConverter("EUR", manual_rates={"GBP": 1.17})
+        assert converter.convert(100.0, "GBP") == pytest.approx(117.0)
+
+    def test_gbx_rate_cached_after_first_convert(self) -> None:
+        """After converting GBX, the derived rate should be cached."""
+        converter = CurrencyConverter("EUR", manual_rates={"GBP": 1.17})
+        converter.convert(100.0, "GBX")
+        # GBX rate should be cached: 1.17 / 100 = 0.0117
+        assert "GBX" in converter._rates
+        assert converter._rates["GBX"] == pytest.approx(0.0117)

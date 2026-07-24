@@ -14,6 +14,7 @@ import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import ClassVar
 
 import pyarrow as pa
 from deltalake import write_deltalake
@@ -48,6 +49,16 @@ class PortfolioRow:
 
 
 class CurrencyConverter:
+    # Minor currency units: code -> (major_currency, sub_unit_factor).
+    # GBX (British pence) = GBP / 100.  When the converter encounters a
+    # minor unit, it fetches the major-unit rate and divides by the factor.
+    # Unknown minor currencies are not mapped here — they fall through to
+    # the API providers, which either reject them (loud failure) or return
+    # a wrong rate that should be caught in review.
+    MINOR_CURRENCY_UNITS: ClassVar[dict[str, tuple[str, int]]] = {
+        "GBX": ("GBP", 100),
+    }
+
     def __init__(
         self,
         target_currency: str,
@@ -79,6 +90,17 @@ class CurrencyConverter:
         return value * rate
 
     def fetch_rate(self, source_currency: str) -> float:
+        # Handle minor currency units (e.g., GBX -> GBP / 100)
+        # Decision: docs/adr/0095-fix-t212-snapshot-ccy-gbx-rate.md
+        if source_currency in self.MINOR_CURRENCY_UNITS:
+            major_currency, factor = self.MINOR_CURRENCY_UNITS[source_currency]
+            major_rate = self._rates.get(major_currency)
+            if major_rate is None:
+                major_rate = self.fetch_rate(major_currency)
+            rate = major_rate / factor
+            self._rates[source_currency] = rate
+            return rate
+
         errors: list[str] = []
         for provider_name, fetcher in (
             ("Frankfurter", self.fetch_frankfurter_rate),

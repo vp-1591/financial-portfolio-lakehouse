@@ -47,6 +47,8 @@ def t212_raw_snapshot(
                 "ppl": 500.0,
                 "fxCurrency": "EUR",
                 "value": 2500.0,
+                "walletImpact": {"currency": "GBP", "currentValue": 2500.0},
+                "instrument": {"ticker": "VWCE", "currencyCode": "EUR"},
             },
             {
                 "ticker": "AAPL",
@@ -56,6 +58,8 @@ def t212_raw_snapshot(
                 "ppl": 200.0,
                 "fxCurrency": "USD",
                 "value": 1800.0,
+                "walletImpact": {"currency": "GBP", "currentValue": 1800.0},
+                "instrument": {"ticker": "AAPL", "currencyCode": "USD"},
             },
         ]
     if instruments is None:
@@ -122,7 +126,7 @@ def t212_normalized_snapshot(
                 encrypt_float(1800.0, fernet_key),
                 encrypt_float(1500.0, fernet_key),
             ],
-            "security_ccy": ["EUR", "USD", "GBP"],
+            "security_ccy": ["GBP", "GBP", "GBP"],
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
         },
         schema=trading212_snapshot_normalized_schema,

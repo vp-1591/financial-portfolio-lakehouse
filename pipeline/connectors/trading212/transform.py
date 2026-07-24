@@ -18,10 +18,10 @@ from pipeline.connectors.trading212.client import (
     instrument_currency_by_ticker,
     instrument_isin_by_ticker,
     instrument_name_by_ticker,
+    position_currency,
     position_isin,
     position_label,
     position_name,
-    position_security_currency,
     position_value,
 )
 from pipeline.connectors.transform_utils import (
@@ -91,7 +91,12 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "name": position_name(position, instrument_names),
                 "asset_class": "EQUITY",
                 "security_value": value,
-                "security_ccy": position_security_currency(
+                # Decision: docs/adr/0095-fix-t212-snapshot-ccy-gbx-rate.md
+                # Use wallet currency for snapshot security_ccy because
+                # position_value() returns walletImpact.currentValue (in
+                # wallet currency). Contrast with CDC events where fxRate
+                # converts to instrument currency.
+                "security_ccy": position_currency(
                     position, instrument_currencies, currency
                 ),
                 "isin": position_isin(position, instrument_isins),

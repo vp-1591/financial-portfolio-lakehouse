@@ -377,3 +377,46 @@ class TestNormalizeCurrency:
         # null cash_amount → null target_value and target_fx_rate
         assert result.column("target_fx_rate")[0].as_py() is None
         assert result.column("target_value")[0].as_py() is None
+
+    def test_gbx_converted_via_gbp_divided_by_100(self, tmp_path) -> None:
+        """GBX (British pence) should convert via GBP rate / 100.
+
+        A T212 CDC event with security_ccy=GBX and cash_amount in GBX pence
+        should be converted to EUR using the GBX→EUR rate, which is the
+        GBP→EUR rate divided by 100.
+        """
+        fernet_key = generate_key()
+        table = _make_cdc_table(
+            [
+                {
+                    "broker": "Trading 212",
+                    "security_ccy": "GBX",
+                    "cash_amount": 148484.0,  # GBX pence (≈ 1484.84 GBP)
+                    # No target_fx_rate — T212 doesn't provide it
+                }
+            ],
+            fernet_key,
+        )
+
+        from deltalake import write_deltalake
+
+        table_path = str(tmp_path / "cdc_events")
+        write_deltalake(table_path, table, mode="overwrite")
+
+        from pipeline.normalized.consolidate import CurrencyConverter
+
+        # GBP→EUR rate of 1.17 means GBX→EUR rate of 0.0117
+        converter = CurrencyConverter("EUR", manual_rates={"GBP": 1.17})
+
+        result = normalize_currency(
+            table_path=table_path,
+            fernet_key=fernet_key,
+            converter=converter,
+        )
+
+        assert result.num_rows == 1
+        rate = decrypt_float(result.column("target_fx_rate")[0].as_py(), fernet_key)
+        assert rate == pytest.approx(0.0117)  # 1.17 / 100
+        value = decrypt_float(result.column("target_value")[0].as_py(), fernet_key)
+        assert value == pytest.approx(148484.0 * 0.0117)  # ≈ 1737.26 EUR
+        assert result.column("target_ccy")[0].as_py() == "EUR"
