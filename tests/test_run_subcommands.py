@@ -720,9 +720,7 @@ class TestRunConnectorsParallel:
 
     @patch("pipeline.run.cmd_run_connector", return_value=1)
     @patch("pipeline.run.all_connectors")
-    def test_connector_failure_returns_nonzero(
-        self, mock_all, mock_rc, capsys
-    ) -> None:
+    def test_connector_failure_returns_nonzero(self, mock_all, mock_rc, capsys) -> None:
         from pipeline.secrets import set_mode
 
         set_mode("docker")

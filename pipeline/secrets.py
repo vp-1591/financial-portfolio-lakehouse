@@ -209,7 +209,6 @@ def get_env(name: str, default: str | None = None) -> str | None:
     return default
 
 
-
 def parse_bool(name: str, default: bool = False) -> bool:
     """Parse a boolean env var with an explicit default.
 
