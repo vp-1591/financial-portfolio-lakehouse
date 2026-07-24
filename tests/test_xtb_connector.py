@@ -48,12 +48,6 @@ def sheet(rows: list[str]) -> str:
     )
 
 
-def temporary_report_path() -> Path:
-    directory = Path(__file__).resolve().parents[1] / ".tmp-tests"
-    directory.mkdir(exist_ok=True)
-    return directory / f"xtb-test-{uuid.uuid4().hex}.xlsx"
-
-
 def write_xtb_workbook(
     path: Path, include_isin: bool = False, include_cash_ops: bool = False
 ) -> None:
@@ -225,13 +219,10 @@ class TestParserHelpers:
         else:
             raise AssertionError("relative paths should be rejected")
 
-    def test_load_assets_reads_open_positions_and_cash(self) -> None:
-        report = temporary_report_path()
+    def test_load_assets_reads_open_positions_and_cash(self, tmp_path: Path) -> None:
+        report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report)
-        try:
-            assets, net_worth = load_positions(report.resolve())
-        finally:
-            report.unlink(missing_ok=True)
+        assets, net_worth = load_positions(report.resolve())
 
         assert net_worth == 220.0
         assert assets == [
@@ -239,36 +230,27 @@ class TestParserHelpers:
             XtbPosition("123456", "CASH PLN", "Cash PLN", "CASH", "PLN", 25.0),
         ]
 
-    def test_load_assets_can_override_account_id(self) -> None:
-        report = temporary_report_path()
+    def test_load_assets_can_override_account_id(self, tmp_path: Path) -> None:
+        report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report)
-        try:
-            assets, _net_worth = load_positions(
-                report.resolve(),
-                account_id_override="XTB-1",
-            )
-        finally:
-            report.unlink(missing_ok=True)
+        assets, _net_worth = load_positions(
+            report.resolve(),
+            account_id_override="XTB-1",
+        )
 
         assert {asset.account_id for asset in assets} == {"XTB-1"}
 
-    def test_load_assets_preserves_isin(self) -> None:
-        report = temporary_report_path()
+    def test_load_assets_preserves_isin(self, tmp_path: Path) -> None:
+        report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report, include_isin=True)
-        try:
-            assets, _net_worth = load_positions(report.resolve())
-        finally:
-            report.unlink(missing_ok=True)
+        assets, _net_worth = load_positions(report.resolve())
 
         assert assets[0].isin == "IE00BK5BQT80"
 
-    def test_load_cash_operations(self) -> None:
-        report = temporary_report_path()
+    def test_load_cash_operations(self, tmp_path: Path) -> None:
+        report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report, include_cash_ops=True)
-        try:
-            ops = load_cash_operations_from_report(report.resolve())
-        finally:
-            report.unlink(missing_ok=True)
+        ops = load_cash_operations_from_report(report.resolve())
 
         assert len(ops) == 2
         assert ops[0].operation_type == "Deposit"
@@ -419,16 +401,13 @@ class TestFetchFromS3:
         assert table.column("source_file")[0].as_py() == "cash_ops.xlsx"
         assert table.column("source")[0].as_py() == "CASH OPERATION"
 
-    def test_fetch_snapshot_local_path_still_works(self) -> None:
+    def test_fetch_snapshot_local_path_still_works(self, tmp_path: Path) -> None:
         """Local file paths are not affected by S3 support."""
         from pipeline.connectors.xtb.fetch import fetch_snapshot
 
-        report = temporary_report_path()
+        report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report)
-        try:
-            table = fetch_snapshot(report)
-        finally:
-            report.unlink(missing_ok=True)
+        table = fetch_snapshot(report)
 
         assert table.num_rows == 1
         assert table.column("source_file")[0].as_py() == report.name
@@ -449,16 +428,13 @@ class TestFetchFromS3:
         assert payload == xlsx_bytes
         assert filename == "nested_report.xlsx"
 
-    def test_read_file_bytes_local_path(self) -> None:
+    def test_read_file_bytes_local_path(self, tmp_path: Path) -> None:
         from pipeline.connectors.xtb.fetch import _read_file_bytes
 
-        report = temporary_report_path()
+        report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report)
         expected_bytes = report.read_bytes()
-        try:
-            payload, filename = _read_file_bytes(report)
-        finally:
-            report.unlink(missing_ok=True)
+        payload, filename = _read_file_bytes(report)
 
         assert payload == expected_bytes
         assert filename == report.name

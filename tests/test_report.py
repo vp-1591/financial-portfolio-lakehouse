@@ -233,7 +233,7 @@ def _make_args(output_path: str, **kwargs) -> argparse.Namespace:
 
 
 class TestCmdReport:
-    """Integration tests for the report subcommand."""
+    """End-to-end tests for the report subcommand."""
 
     def test_returns_zero_and_writes_file(self, fernet_key: bytes, tmp_path: Path):
         """cmd_report returns 0 and creates an HTML file."""

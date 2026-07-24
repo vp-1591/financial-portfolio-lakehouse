@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "financial-portfolio-lakehouse"
 version = "0.2.0"
@@ -27,12 +31,15 @@ dev = [
     "financial-portfolio-lakehouse[pipeline]",
 ]
 
-[tool.setuptools.packages.find]
-include = ["pipeline*"]
+[tool.hatch.build.targets.wheel]
+packages = ["pipeline"]
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
+markers = [
+    "integration: tests that call live external APIs (may fail due to network)",
+]
 
 [tool.ruff]
 target-version = "py311"

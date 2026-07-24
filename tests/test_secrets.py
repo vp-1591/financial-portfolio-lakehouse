@@ -415,6 +415,10 @@ class TestInjectSecretsS3Validation:
 class TestResolveAwsCredentials:
     """Test resolve_aws_credentials() and AwsCredentials dataclass."""
 
+    def setup_method(self):
+        """Clear the functools.cache between tests so each sees fresh env vars."""
+        resolve_aws_credentials.cache_clear()
+
     def test_docker_mode_credentials(self, monkeypatch):
         """In docker mode, base AWS credentials are used."""
         set_mode("docker")

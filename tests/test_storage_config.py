@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.secrets import reset_mode, set_mode
+from pipeline.secrets import reset_mode, resolve_aws_credentials, set_mode
 from pipeline.storage import (
     S3_DEFAULT_PREFIX,
     S3Backend,
@@ -341,6 +341,10 @@ class TestLocalBackend:
 
 class TestS3Backend:
     """Test S3Backend URI generation and no-op ensure_parent."""
+
+    def setup_method(self):
+        """Clear the functools.cache between tests so each sees fresh env vars."""
+        resolve_aws_credentials.cache_clear()
 
     def test_table_path_with_prefix(self):
         backend = S3Backend(bucket="my-bucket", prefix="pipeline")

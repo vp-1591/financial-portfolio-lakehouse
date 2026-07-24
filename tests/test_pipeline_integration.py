@@ -1,4 +1,4 @@
-"""Integration tests for pipeline run.py, ingest.py, and path creation.
+"""End-to-end tests for pipeline run.py, ingest.py, and path creation.
 
 Covers bugs found during end-to-end runs:
 - XTB set_column() PyArrow 3-arg API

@@ -2,7 +2,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 pytest-cache-files-*/
-.tmp-tests/
 client-portal-gateway-ibkr/
 *.xlsx
 
@@ -35,3 +34,6 @@ _bmad/*
 
 # review agent output
 .claude/_review-artifacts
+
+# temporary investigation results and artifacts
+tmp/
