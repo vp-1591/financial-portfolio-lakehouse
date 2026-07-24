@@ -15,7 +15,7 @@ Before committing, run all three checks. After linting, re-run tests to ensure a
 ```bash
 ruff check --fix . && ruff format .
 .venv/Scripts/python -m pyright pipeline/ tests/
-.venv/Scripts/python -m pytest tests/ -v
+.venv/Scripts/python -m pytest tests/ -q -rf
 ```
 
 Run a single test file or specific test:
