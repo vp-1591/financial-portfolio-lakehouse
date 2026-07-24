@@ -506,12 +506,12 @@ class TestCheckReconciliation:
 
 
 # ---------------------------------------------------------------------------
-# run_validation integration tests
+# run_validation end-to-end tests
 # ---------------------------------------------------------------------------
 
 
 class TestRunValidation:
-    """Integration tests for run_validation."""
+    """End-to-end tests for run_validation."""
 
     def test_returns_zero_on_all_pass(self, tmp_path: Path) -> None:
         """run_validation returns 0 when all checks pass."""
