@@ -107,6 +107,6 @@ The `--mode` flag controls how the pipeline resolves secrets and storage:
 --mode prod      # Production environment (AWS production secrets, production bucket)
 ```
 
-When `--mode` is omitted, the pipeline uses local filesystem storage and reads
-secrets directly from environment variables (or `.env`). No `STORAGE_TYPE` or
-`DEMO` environment variables are needed — the mode flag handles everything.
+`--mode` is required; there is no default. All modes use S3-backed storage
+(`S3Backend`). In docker mode, MinIO provides a local S3-compatible endpoint.
+Secrets are resolved according to the selected mode (see above).
