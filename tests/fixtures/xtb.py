@@ -9,13 +9,13 @@ from __future__ import annotations
 import hashlib
 import zipfile
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 
 from pipeline.crypto import encrypt, encrypt_float, generate_key
-from pipeline.raw.models import RAW_SCHEMA
 from pipeline.normalized.models import xtb_snapshot_normalized_schema
+from pipeline.raw.models import RAW_SCHEMA
 
 
 def _build_minimal_xlsx_bytes() -> bytes:
@@ -178,7 +178,7 @@ def xtb_raw_snapshot(
     if fernet_key is None:
         fernet_key = generate_key()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = _get_minimal_xlsx_bytes()
     encrypted_payload = encrypt(payload, fernet_key)
 
@@ -205,7 +205,7 @@ def xtb_normalized_snapshot(
     """
     if fernet_key is None:
         fernet_key = generate_key()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return pa.table(
         {
             "fetched_at": [now, now, now],

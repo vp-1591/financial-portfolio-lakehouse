@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 from deltalake import write_deltalake
@@ -41,7 +41,7 @@ def build_raw_table(
     pa.Table
         A table matching :data:`RAW_SCHEMA` with encrypted payloads.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     fetched_ats: list[datetime] = []
     brokers: list[str] = []
@@ -94,6 +94,7 @@ def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
 
     try:
         from deltalake import DeltaTable
+
         from pipeline.storage import get_storage
 
         storage_opts = get_storage().storage_options

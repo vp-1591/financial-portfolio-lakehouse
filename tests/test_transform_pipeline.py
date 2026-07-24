@@ -13,11 +13,11 @@ from deltalake import write_deltalake
 
 from pipeline.connectors.registry import get
 from pipeline.crypto import generate_key
-from tests.local_backend import LocalBackend
 from pipeline.storage import StorageConfig, use_storage
-from tests.fixtures.ibkr import ibkr_raw_positions, ibkr_normalized_snapshot
-from tests.fixtures.trading212 import t212_raw_snapshot, t212_normalized_snapshot
-from tests.fixtures.xtb import xtb_raw_snapshot, xtb_normalized_snapshot
+from tests.fixtures.ibkr import ibkr_normalized_snapshot, ibkr_raw_positions
+from tests.fixtures.trading212 import t212_normalized_snapshot, t212_raw_snapshot
+from tests.fixtures.xtb import xtb_normalized_snapshot, xtb_raw_snapshot
+from tests.local_backend import LocalBackend
 
 
 @pytest.fixture(autouse=True)
@@ -139,7 +139,7 @@ class TestNormalizedFixtureWrite:
     ):
         fernet_key = generate_key()
         table = snapshot_factory(fernet_key=fernet_key)
-        path = str((tmp_path / "data" / "normalized" / f"{broker}_snapshot"))
+        path = str(tmp_path / "data" / "normalized" / f"{broker}_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
         from deltalake import DeltaTable

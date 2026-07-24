@@ -7,7 +7,7 @@ when a required broker CDC table is missing or empty.  XTB is optional.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pyarrow as pa
@@ -32,7 +32,7 @@ class TestConsolidateCdc:
         fernet_key: bytes,
     ) -> pa.Table:
         """Build a CDC events table for a single broker."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         records = []
         for event in events:
             record = {

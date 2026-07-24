@@ -26,6 +26,7 @@ def run_hook(tool, tool_input):
         input=payload,
         capture_output=True,
         text=True,
+        check=False,
     )
     return result.returncode
 

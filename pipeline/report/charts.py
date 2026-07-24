@@ -7,8 +7,8 @@ chart construction.
 
 from __future__ import annotations
 
-import polars as pl
 import plotly.graph_objects as go
+import polars as pl
 
 
 def allocation_by_broker(holdings: pl.DataFrame) -> go.Figure:
@@ -31,7 +31,7 @@ def allocation_by_broker(holdings: pl.DataFrame) -> go.Figure:
         ],
         layout=go.Layout(
             title="Portfolio Allocation by Broker",
-            margin=dict(l=20, r=20, t=40, b=20),
+            margin={"l": 20, "r": 20, "t": 40, "b": 20},
         ),
     )
     return fig
@@ -72,8 +72,8 @@ def positions_chart(holdings: pl.DataFrame) -> go.Figure:
         layout=go.Layout(
             title="Positions",
             xaxis_title="Portfolio Weight (%)",
-            yaxis=dict(autorange="reversed"),
-            margin=dict(l=20, r=20, t=40, b=40),
+            yaxis={"autorange": "reversed"},
+            margin={"l": 20, "r": 20, "t": 40, "b": 40},
         ),
     )
     return fig
@@ -99,7 +99,7 @@ def allocation_by_currency(holdings: pl.DataFrame) -> go.Figure:
         ],
         layout=go.Layout(
             title="Currency Exposure",
-            margin=dict(l=20, r=20, t=40, b=20),
+            margin={"l": 20, "r": 20, "t": 40, "b": 20},
         ),
     )
     return fig
@@ -149,7 +149,7 @@ def passive_income_timeline(
             barmode="stack",
             xaxis_title="Month",
             yaxis_title="Amount (base currency)",
-            margin=dict(l=20, r=20, t=40, b=40),
+            margin={"l": 20, "r": 20, "t": 40, "b": 40},
         ),
     )
     return fig
@@ -199,13 +199,13 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
 
     traces = [go.Bar(x=td["x"], y=td["y"], name=td["name"]) for td in trace_data]
 
-    layout_kwargs: dict = dict(
-        title="Cash Flow Breakdown",
-        barmode="group",
-        xaxis_title="Month",
-        yaxis_title="Amount (base currency)",
-        margin=dict(l=20, r=20, t=40, b=40),
-    )
+    layout_kwargs: dict = {
+        "title": "Cash Flow Breakdown",
+        "barmode": "group",
+        "xaxis_title": "Month",
+        "yaxis_title": "Amount (base currency)",
+        "margin": {"l": 20, "r": 20, "t": 40, "b": 40},
+    }
 
     if any(is_outlier):
         outlier_names = sorted(
@@ -215,33 +215,33 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
         ex_outlier_visible = [not o for o in is_outlier]
 
         layout_kwargs["updatemenus"] = [
-            dict(
-                type="buttons",
-                direction="left",
-                buttons=[
-                    dict(
-                        label="All Events",
-                        method="update",
-                        args=[
+            {
+                "type": "buttons",
+                "direction": "left",
+                "buttons": [
+                    {
+                        "label": "All Events",
+                        "method": "update",
+                        "args": [
                             {"visible": all_visible},
                             {"title": "Cash Flow Breakdown"},
                         ],
-                    ),
-                    dict(
-                        label="Hide Outliers",
-                        method="update",
-                        args=[
+                    },
+                    {
+                        "label": "Hide Outliers",
+                        "method": "update",
+                        "args": [
                             {"visible": ex_outlier_visible},
                             {"title": f"Cash Flow (excl. {', '.join(outlier_names)})"},
                         ],
-                    ),
+                    },
                 ],
-                pad={"r": 10, "t": 10},
-                showactive=True,
-                x=0.0,
-                xanchor="left",
-                y=1.15,
-            )
+                "pad": {"r": 10, "t": 10},
+                "showactive": True,
+                "x": 0.0,
+                "xanchor": "left",
+                "y": 1.15,
+            }
         ]
         layout_kwargs["margin"]["t"] = 60  # room for buttons
 
@@ -282,7 +282,7 @@ def data_quality_chart(dq: pl.DataFrame) -> go.Figure | None:
             title="Data Quality Summary",
             xaxis_title="Status",
             yaxis_title="Count",
-            margin=dict(l=20, r=20, t=40, b=40),
+            margin={"l": 20, "r": 20, "t": 40, "b": 40},
         ),
     )
     return fig
@@ -315,14 +315,14 @@ def _empty_figure(title: str) -> go.Figure:
     fig.update_layout(
         title=title,
         annotations=[
-            dict(
-                text="No data available",
-                showarrow=False,
-                font=dict(size=16),
-            )
+            {
+                "text": "No data available",
+                "showarrow": False,
+                "font": {"size": 16},
+            }
         ],
-        margin=dict(l=20, r=20, t=40, b=20),
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
+        margin={"l": 20, "r": 20, "t": 40, "b": 20},
+        xaxis={"visible": False},
+        yaxis={"visible": False},
     )
     return fig

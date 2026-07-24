@@ -10,6 +10,7 @@ Covers bugs found during end-to-end runs:
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -235,7 +236,7 @@ class TestTransformDecryptsPayloads:
 
         key = generate_key()
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         summary = {"currencyCode": "EUR", "total": 100.0}
         positions = [{"ticker": "VUAA", "quantity": 1, "currentPrice": 100.0}]
@@ -245,7 +246,7 @@ class TestTransformDecryptsPayloads:
 
         raw = pa.table(
             {
-                "fetched_at": [datetime.now(timezone.utc)] * 2,
+                "fetched_at": [datetime.now(UTC)] * 2,
                 "broker": ["Trading 212"] * 2,
                 "source": ["/equity/account/summary", "/equity/positions"],
                 "payload": [encrypted_summary, encrypted_positions],

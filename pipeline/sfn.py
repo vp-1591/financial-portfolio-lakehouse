@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
@@ -159,7 +159,7 @@ def execution_name(prefix: str) -> str:
     Step Functions requires unique execution names per state machine; the
     microsecond precision avoids same-second collisions for manual runs.
     """
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
     return f"{prefix}-{stamp}"
 
 
@@ -387,7 +387,7 @@ def fetch_failure_details(
             )
             messages = [e["message"] for e in resp.get("events", [])]
             sections.append(format_log_messages(messages))
-        except Exception as exc:  # noqa: BLE001 — log fetch is best-effort diagnostics
+        except Exception as exc:
             sections.append(f"(failed to fetch logs from {log_group}: {exc})")
         sections.append("")
 

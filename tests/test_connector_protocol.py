@@ -21,7 +21,6 @@ from pipeline.secrets import reset_mode, set_mode
 from pipeline.storage import StorageConfig, use_storage
 from tests.local_backend import LocalBackend
 
-
 # ---------------------------------------------------------------------------
 # fetch_kwargs
 # ---------------------------------------------------------------------------

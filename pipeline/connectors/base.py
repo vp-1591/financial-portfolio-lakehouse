@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 from typing import Protocol, runtime_checkable
 
-import pyarrow as pa
 import polars as pl
+import pyarrow as pa
 
 from pipeline.normalized.consolidate import Holding
 

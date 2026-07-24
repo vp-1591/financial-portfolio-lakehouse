@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pyarrow as pa
@@ -42,7 +42,7 @@ def fetch_snapshot_via_flex(
 
     xml_bytes = ET.tostring(root, encoding="unicode").encode("utf-8")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload_hash = hashlib.sha256(xml_bytes).hexdigest()
 
     return pa.table(
@@ -85,7 +85,7 @@ def fetch_cdc_via_flex(
 
     xml_bytes = ET.tostring(root, encoding="unicode").encode("utf-8")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload_hash = hashlib.sha256(xml_bytes).hexdigest()
 
     return pa.table(

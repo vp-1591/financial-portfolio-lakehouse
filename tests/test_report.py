@@ -8,7 +8,7 @@ and that missing gold tables cause a non-zero exit.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -24,11 +24,11 @@ from pipeline.normalized.consolidate import (
 )
 from pipeline.normalized.extract import extract_holdings
 from pipeline.run import cmd_report
-from tests.local_backend import LocalBackend
 from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
 from tests.fixtures.xtb import xtb_normalized_snapshot
+from tests.local_backend import LocalBackend
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +115,7 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
     Value columns (cash_amount, target_value) are Fernet-encrypted as pa.binary().
     """
     config = get_storage()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Minimal dividend_income
     from pipeline.analytics.models import dividend_income_schema
@@ -332,7 +332,7 @@ class TestCmdReport:
         from pipeline.analytics.models import data_quality_schema
 
         config = get_storage()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         dq_fail = pa.table(
             {
                 "checked_at": [now],
@@ -369,7 +369,7 @@ class TestCmdReport:
         from pipeline.analytics.models import data_quality_schema
 
         config = get_storage()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Write only a DQ table with FAILs for all gold tables
         dq_fail = pa.table(
             {

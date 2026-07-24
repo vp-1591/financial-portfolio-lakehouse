@@ -6,7 +6,7 @@ import hashlib
 import uuid
 import zipfile
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -24,7 +24,6 @@ from pipeline.connectors.xtb.parser import (
 from pipeline.connectors.xtb.transform import transform_cdc, transform_snapshot
 from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.raw.models import RAW_SCHEMA
-
 
 # --- XLS test helpers (preserved from tests/test_xtb_net_worth.py) ---
 
@@ -296,7 +295,7 @@ class TestTransformSnapshot:
         """
         key = self._fernet_key
         encrypted_payload = encrypt(xlsx_bytes, key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         return pa.table(
             {
@@ -351,7 +350,7 @@ class TestTransformCDC:
         return generate_key()
 
     def test_transform_cdc_produces_operation_rows(self, fernet_key: bytes) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         xlsx_bytes = _build_xlsx_bytes(include_cash_ops=True)
         encrypted_payload = encrypt(xlsx_bytes, fernet_key)
 
@@ -479,7 +478,7 @@ class TestFetchFromS3:
         monkeypatch.setattr("pipeline.s3.read_s3_bytes", mock_read_s3_bytes)
 
         # EventBridge delivers keys with %20 for spaces
-        payload, filename = _read_file_bytes(
+        payload, _filename = _read_file_bytes(
             "s3://bucket/staging/xtb/report%20with%20spaces.xlsx"
         )
         assert payload == xlsx_bytes
@@ -501,7 +500,7 @@ class TestFetchFromS3:
         monkeypatch.setattr("pipeline.s3.read_s3_bytes", mock_read_s3_bytes)
 
         # A key with no percent-encoding should pass through unchanged
-        payload, filename = _read_file_bytes("s3://bucket/staging/xtb/report.xlsx")
+        _payload, _filename = _read_file_bytes("s3://bucket/staging/xtb/report.xlsx")
         assert captured_uris[0] == "s3://bucket/staging/xtb/report.xlsx"
 
     def test_read_file_bytes_s3_multiple_percent_encodings(
@@ -518,5 +517,7 @@ class TestFetchFromS3:
 
         monkeypatch.setattr("pipeline.s3.read_s3_bytes", mock_read_s3_bytes)
 
-        payload, filename = _read_file_bytes("s3://bucket/staging/xtb/my%20report.xlsx")
+        _payload, _filename = _read_file_bytes(
+            "s3://bucket/staging/xtb/my%20report.xlsx"
+        )
         assert captured_uris[0] == "s3://bucket/staging/xtb/my report.xlsx"

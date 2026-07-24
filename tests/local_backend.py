@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class LocalBackend:
             rescue_dir = (
                 self.data_dir
                 / ".rescue"
-                / f"{table_dir.name}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+                / f"{table_dir.name}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
             )
             rescue_dir.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(table_dir), str(rescue_dir))

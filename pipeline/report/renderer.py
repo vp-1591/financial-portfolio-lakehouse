@@ -12,11 +12,11 @@ import html
 import logging
 import sys
 import webbrowser
-import polars as pl
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import plotly.io as pio
+import polars as pl
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from pipeline.report.charts import (
@@ -334,7 +334,7 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
     template = env.get_template("report.html")
 
     html = template.render(
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        generated_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
         summary_cards=summary_cards,
         summary_table_html=summary_table_html,
         equity_cash_card_html=equity_cash_card_html,

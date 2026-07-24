@@ -18,11 +18,11 @@ from pipeline.normalized.consolidate import (
     consolidate_holdings,
 )
 from pipeline.normalized.extract import extract_holdings
-from tests.local_backend import LocalBackend
 from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
 from tests.fixtures.xtb import xtb_normalized_snapshot
+from tests.local_backend import LocalBackend
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +65,7 @@ class TestExtractHoldings:
     def test_extract_ibkr_holdings(self, tmp_path: Path):
         fernet_key = generate_key()
         table = ibkr_normalized_snapshot(fernet_key=fernet_key)
-        path = str((tmp_path / "data" / "normalized" / "ibkr_snapshot"))
+        path = str(tmp_path / "data" / "normalized" / "ibkr_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
         holdings = extract_holdings("ibkr", path, fernet_key)
@@ -76,7 +76,7 @@ class TestExtractHoldings:
     def test_extract_trading212_holdings(self, tmp_path: Path):
         fernet_key = generate_key()
         table = t212_normalized_snapshot(fernet_key=fernet_key)
-        path = str((tmp_path / "data" / "normalized" / "trading212_snapshot"))
+        path = str(tmp_path / "data" / "normalized" / "trading212_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
         holdings = extract_holdings("trading212", path, fernet_key)
@@ -85,7 +85,7 @@ class TestExtractHoldings:
     def test_extract_xtb_holdings(self, tmp_path: Path):
         fernet_key = generate_key()
         table = xtb_normalized_snapshot(fernet_key=fernet_key)
-        path = str((tmp_path / "data" / "normalized" / "xtb_snapshot"))
+        path = str(tmp_path / "data" / "normalized" / "xtb_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
         holdings = extract_holdings("xtb", path, fernet_key)

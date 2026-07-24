@@ -21,8 +21,8 @@ import pytest
 
 from pipeline.secrets import reset_mode, set_mode
 from pipeline.storage import (
-    S3Backend,
     S3_DEFAULT_PREFIX,
+    S3Backend,
     StorageConfig,
     get_storage,
     resolve_storage,

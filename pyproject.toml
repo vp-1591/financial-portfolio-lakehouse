@@ -37,3 +37,9 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+
+[tool.ruff.lint]
+ignore = ["BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["TRY002", "B017", "S110"]

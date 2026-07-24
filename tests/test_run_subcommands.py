@@ -18,13 +18,12 @@ from pipeline.crypto import generate_key
 from pipeline.run import (
     FetchResult,
     cmd_full,
-    cmd_run_consolidate_analytics,
     cmd_run_connector,
+    cmd_run_consolidate_analytics,
     fetch_connector,
     transform_connector,
 )
 from pipeline.secrets import reset_mode
-
 
 # ---------------------------------------------------------------------------
 # Argparse dispatch
@@ -496,15 +495,15 @@ class TestCmdFullSfnTrigger:
     """cmd_full --mode staging|prod starts a Step Functions execution."""
 
     def _base_args(self, **overrides) -> argparse.Namespace:
-        defaults = dict(
-            xtb_file=None,
-            with_xtb=False,
-            wait=False,
-            target_currency="EUR",
-            fx_rate=[],
-            isin=[],
-            isin_map_file=[],
-        )
+        defaults = {
+            "xtb_file": None,
+            "with_xtb": False,
+            "wait": False,
+            "target_currency": "EUR",
+            "fx_rate": [],
+            "isin": [],
+            "isin_map_file": [],
+        }
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import UTC
 from pathlib import Path
 
 import pyarrow as pa
@@ -14,9 +15,8 @@ from deltalake import write_deltalake
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 from pipeline.run import cmd_query
-from tests.local_backend import LocalBackend
 from pipeline.storage import StorageConfig, use_storage
-
+from tests.local_backend import LocalBackend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -25,9 +25,9 @@ from pipeline.storage import StorageConfig, use_storage
 
 def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
     """Write a small normalized IBKR Delta table for query tests."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     table = pa.table(
         {
             "fetched_at": [now, now, now],

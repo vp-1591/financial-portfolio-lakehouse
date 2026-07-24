@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from pipeline.crypto import generate_key
-from tests.local_backend import LocalBackend
 from pipeline.storage import StorageConfig, use_storage
+from tests.local_backend import LocalBackend
 
 # All pipeline-related environment variables that tests must isolate from.
 # Cleared before each test so local .env files and shell env vars don't leak.
@@ -54,8 +54,8 @@ def _isolate_pipeline_env(monkeypatch, tmp_path):
     # Tests that need .env loading set PROJECT_ROOT to their own tmp_path.
     monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
     # Reset storage singleton so resolve_storage() re-reads env vars
-    import pipeline.storage
     import pipeline.secrets
+    import pipeline.storage
 
     pipeline.storage._config = None
     pipeline.secrets.reset_mode()

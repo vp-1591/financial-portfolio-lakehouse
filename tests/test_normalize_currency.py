@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 
 import pyarrow as pa
 import pytest
@@ -17,9 +18,9 @@ def _make_cdc_table(
     fernet_key: bytes,
 ) -> pa.Table:
     """Build a CDC events table from event dicts."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
     for event in events:
         record = {
@@ -316,9 +317,9 @@ class TestNormalizeCurrency:
         """Rows with null cash_amount get null target_value and target_fx_rate."""
         fernet_key = generate_key()
 
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         records = [
             {
                 "fetched_at": now,

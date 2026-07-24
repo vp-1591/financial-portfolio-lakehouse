@@ -49,7 +49,7 @@ def load_key(path: Path | None = None) -> bytes:
     # resolve_secret returned None — in staging mode, falling through
     # to the file-based key would use the production key, violating isolation.
     if is_demo():
-        raise EnvironmentError(
+        raise OSError(
             "ENCRYPTION_KEY is not set in staging mode.  The encryption "
             "key must be provided via the ENCRYPTION_KEY environment "
             "variable — there is no fallback to the file-based key."

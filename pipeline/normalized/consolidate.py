@@ -11,15 +11,14 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterable
+from datetime import UTC, datetime
 
 import pyarrow as pa
 from deltalake import write_deltalake
 
 from pipeline.normalized.models import consolidated_holdings_schema
-
 
 FRANKFURTER_BASE_URL = "https://api.frankfurter.app"
 YAHOO_FINANCE_BASE_URL = "https://query1.finance.yahoo.com"
@@ -275,7 +274,7 @@ def consolidate_holdings(
     storage_opts = get_storage().storage_options
     get_storage().backend.ensure_parent(table_path)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     normalized_isin_overrides = {
         normalize_isin_lookup_key(ticker): isin
         for ticker, isin in (isin_overrides or {}).items()

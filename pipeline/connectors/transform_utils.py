@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
@@ -172,10 +173,10 @@ def iter_raw_payloads(
 
 def build_normalized_table(
     records: list[dict[str, Any]],
-    schema: "pa.Schema",
+    schema: pa.Schema,
     fernet_key: bytes,
     encrypt_columns: list[str] | None = None,
-) -> "pa.Table":
+) -> pa.Table:
     """Build a normalized PyArrow table from row dicts, encrypting specified columns.
 
     Replaces the manual list-append pattern (initialize N empty lists, loop

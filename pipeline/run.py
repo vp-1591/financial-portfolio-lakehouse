@@ -32,7 +32,8 @@ from enum import IntEnum
 from pathlib import Path
 
 from pipeline.analytics.quality import run_validation
-from pipeline.connectors.registry import all as all_connectors, get
+from pipeline.connectors.registry import all as all_connectors
+from pipeline.connectors.registry import get
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
 from pipeline.secrets import (

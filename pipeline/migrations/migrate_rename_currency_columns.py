@@ -21,18 +21,18 @@ import argparse
 import boto3
 from deltalake import write_deltalake
 
+from pipeline.analytics.models import (
+    cash_flow_summary_schema,
+    dividend_income_schema,
+    interest_income_schema,
+    portfolio_holdings_schema,
+)
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     consolidated_holdings_schema,
     ibkr_snapshot_normalized_schema,
     trading212_snapshot_normalized_schema,
     xtb_snapshot_normalized_schema,
-)
-from pipeline.analytics.models import (
-    cash_flow_summary_schema,
-    dividend_income_schema,
-    interest_income_schema,
-    portfolio_holdings_schema,
 )
 from pipeline.storage import get_storage
 

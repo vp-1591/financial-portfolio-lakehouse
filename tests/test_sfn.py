@@ -7,13 +7,12 @@ Pure functions are tested directly; boto3 wrappers are tested with
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import pipeline.sfn as sfn
-
+from pipeline import sfn
 
 # ---------------------------------------------------------------------------
 # Pure functions — family names, commands, execution input
@@ -289,17 +288,16 @@ class TestWaitForExecution:
     def test_timeout_raises(self) -> None:
         sfn_client = MagicMock()
         sfn_client.describe_execution.return_value = {"status": "RUNNING"}
-        with patch("pipeline.sfn.time.sleep"):
-            with pytest.raises(TimeoutError):
-                sfn.wait_for_execution(
-                    sfn_client, "arn:exec", timeout_seconds=60, interval_seconds=30
-                )
+        with patch("pipeline.sfn.time.sleep"), pytest.raises(TimeoutError):
+            sfn.wait_for_execution(
+                sfn_client, "arn:exec", timeout_seconds=60, interval_seconds=30
+            )
 
 
 class TestFetchFailureDetails:
     def test_queries_history_and_each_log_group(self) -> None:
         sfn_client = MagicMock()
-        start = datetime(2026, 7, 23, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 7, 23, 10, 0, 0, tzinfo=UTC)
         sfn_client.get_execution_history.return_value = {
             "events": [
                 {
@@ -350,7 +348,7 @@ class TestFetchFailureDetails:
         sfn_client = MagicMock()
         sfn_client.get_execution_history.return_value = {"events": []}
         sfn_client.describe_execution.return_value = {
-            "startDate": datetime(2026, 7, 23, 10, 0, 0, tzinfo=timezone.utc)
+            "startDate": datetime(2026, 7, 23, 10, 0, 0, tzinfo=UTC)
         }
         logs_client = MagicMock()
         logs_client.filter_log_events.side_effect = RuntimeError("boom")

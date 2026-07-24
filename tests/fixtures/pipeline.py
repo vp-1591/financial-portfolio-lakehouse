@@ -11,8 +11,8 @@ from pathlib import Path
 from deltalake import write_deltalake
 
 from pipeline.crypto import generate_key
-from tests.local_backend import LocalBackend
 from pipeline.storage import StorageConfig, use_storage
+from tests.local_backend import LocalBackend
 
 
 def setup_pipeline_env(

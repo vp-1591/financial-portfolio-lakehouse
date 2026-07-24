@@ -1,8 +1,8 @@
 """Tests for table discovery, alias resolution, connection management, and decryption."""
 
 import duckdb
-import pyarrow as pa
 import polars as pl
+import pyarrow as pa
 import pytest
 from deltalake import write_deltalake
 
@@ -18,9 +18,8 @@ from pipeline.query import (
     parse_alias,
     refresh,
 )
-from tests.local_backend import LocalBackend
 from pipeline.storage import S3Backend, StorageConfig, use_storage
-
+from tests.local_backend import LocalBackend
 
 # ---------------------------------------------------------------------------
 # parse_alias
@@ -177,7 +176,7 @@ class TestListTables:
         for alias in list_tables():
             parsed = parse_alias(alias)
             assert parsed is not None, f"{alias!r} could not be parsed"
-            name, layer = parsed
+            _name, layer = parsed
             assert layer in LAYERS
 
     def test_no_duplicate_aliases(self):
