@@ -531,17 +531,17 @@ def _trigger_sfn_execution(args: argparse.Namespace, mode: str) -> int:
         execution_name,
         fetch_failure_details,
         resolve_all_arns,
+        resolve_state_machine_arn,
         start_execution,
-        state_machine_arn,
         wait_for_execution,
     )
 
-    arn = state_machine_arn(mode)
-    if not arn:
-        return 1
-
     region = session.region_name or "eu-west-1"
     sfn_client, ecs_client, logs_client = build_clients(region)
+
+    arn = resolve_state_machine_arn(sfn_client, mode)
+    if not arn:
+        return 1
     target_currency = getattr(args, "target_currency", "EUR")
     connector_arns, consolidate_arn = resolve_all_arns(
         ecs_client, mode, DEFAULT_CONNECTORS

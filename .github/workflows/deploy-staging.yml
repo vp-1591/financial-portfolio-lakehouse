@@ -58,7 +58,5 @@ jobs:
           pip install -e .[pipeline]
 
       - name: Run staging pipeline
-        env:
-          STAGING_STATE_MACHINE_ARN: ${{ secrets.STAGING_STATE_MACHINE_ARN }}
         run: |
           python -m pipeline.run full --mode staging --wait

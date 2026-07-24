@@ -22,7 +22,7 @@ Clients are built with boto3's default credential chain (the base
 ``configure-aws-credentials`` GitHub Action), not via
 :func:`pipeline.secrets.resolve_aws_credentials`.  The credential
 isolation between environments is handled at the SSM / ECS level; the SFN
-trigger only needs IAM
+trigger only needs IAM ``states:ListStateMachines`` /
 ``states:StartExecution`` / ``ecs:DescribeTaskDefinition`` /
 ``logs:FilterLogEvents`` permissions, which the same access key provides in
 either environment.
@@ -31,7 +31,6 @@ either environment.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -43,6 +42,18 @@ import boto3
 # and CloudWatch log group names.  Staging mode runs against the demo
 # infrastructure (env label "demo"); prod mode against prod.
 MODE_TO_ENV_LABEL: dict[str, str] = {"staging": "demo", "prod": "prod"}
+
+# ``--mode`` value → Step Functions state machine name.  The ARN is resolved
+# at runtime via ``list_state_machines`` so no env var or hardcoded ARN is
+# needed — the names come from Terraform
+# (``terraform/demo/main.tf``: ``state_machine_name =
+# "portfolio-pipeline-orchestrator-demo"``,
+# ``terraform/prod/main.tf``: ``state_machine_name =
+# "portfolio-pipeline-orchestrator"``).
+STATE_MACHINE_NAMES: dict[str, str] = {
+    "staging": "portfolio-pipeline-orchestrator-demo",
+    "prod": "portfolio-pipeline-orchestrator",
+}
 
 # Connectors run by ``full --mode staging|prod``.  XTB is excluded — it
 # requires an uploaded file and is triggered by the EventBridge S3 file
@@ -152,25 +163,31 @@ def execution_name(prefix: str) -> str:
     return f"{prefix}-{stamp}"
 
 
-def state_machine_arn(mode: str) -> str | None:
-    """Resolve the state machine ARN for a mode from the environment.
+def resolve_state_machine_arn(sfn_client: Any, mode: str) -> str | None:
+    """Resolve the state machine ARN for a mode via the SFN API.
 
-    Reads ``STAGING_STATE_MACHINE_ARN`` (staging) or
-    ``PROD_STATE_MACHINE_ARN`` (prod).  Returns ``None`` and prints an
-    actionable error if the variable is unset.
+    Looks up the state machine by its well-known name (see
+    :data:`STATE_MACHINE_NAMES`) using ``list_state_machines``.  Returns
+    ``None`` and prints an actionable error if the state machine is not found.
     """
-    env_var = (
-        "STAGING_STATE_MACHINE_ARN" if mode == "staging" else "PROD_STATE_MACHINE_ARN"
+    name = STATE_MACHINE_NAMES.get(mode)
+    if name is None:
+        print(f"Unsupported mode for SFN trigger: {mode!r}", file=sys.stderr)
+        return None
+
+    paginator = sfn_client.get_paginator("list_state_machines")
+    for page in paginator.paginate():
+        for sm in page.get("stateMachines", []):
+            if sm["name"] == name:
+                return sm["stateMachineArn"]
+
+    print(
+        f"State machine {name!r} not found in AWS. "
+        f"Ensure the {mode} infrastructure is deployed "
+        f"(terraform/{_env_label(mode)}/main.tf).",
+        file=sys.stderr,
     )
-    arn = os.environ.get(env_var)
-    if not arn:
-        source = "terraform/demo" if mode == "staging" else "terraform/prod"
-        print(
-            f"{env_var} is not set. Set it from the {source} "
-            "`state_machine_arn` Terraform output in your .env or CI secrets.",
-            file=sys.stderr,
-        )
-    return arn
+    return None
 
 
 # ---------------------------------------------------------------------------

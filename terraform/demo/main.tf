@@ -577,6 +577,15 @@ data "aws_iam_policy_document" "pipeline_demo_cicd" {
   }
 
   statement {
+    sid    = "SFNListStateMachines"
+    effect = "Allow"
+    actions = [
+      "states:ListStateMachines",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid    = "SFNStartExecution"
     effect = "Allow"
     actions = [

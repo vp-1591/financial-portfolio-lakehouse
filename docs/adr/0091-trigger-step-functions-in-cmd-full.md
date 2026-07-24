@@ -50,7 +50,7 @@ execution contexts, with the caller needing only AWS credentials with `states:St
    `full --mode staging|prod`. This avoids requiring the local machine to know the demo S3 bucket
    name just to trigger SFN. `set_mode()` still runs.
 
-4. **State machine ARN via env var.** `STAGING_STATE_MACHINE_ARN` / `PROD_STATE_MACHINE_ARN` env
+4. **State machine ARN resolved via boto3.** `resolve_state_machine_arn(sfn_client, mode)` discovers the ARN at runtime using `list_state_machines` and the well-known state machine name, eliminating env vars. *(Superseded: the original decision used `STAGING_STATE_MACHINE_ARN` / `PROD_STATE_MACHINE_ARN` env vars; ADR 0093 replaced this with boto3 lookup.)*
    vars hold the ARN (from the `state_machine_arn` Terraform output). Not hardcoded. Missing ARN →
    actionable error naming the Terraform source.
 

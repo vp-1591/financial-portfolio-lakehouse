@@ -106,25 +106,64 @@ class TestConsoleUrlAndName:
         assert len(stamp) == 21
 
 
-class TestStateMachineArn:
-    def test_staging_reads_staging_env_var(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
-        assert sfn.state_machine_arn("staging") == "arn:staging-sfn"
+class TestResolveStateMachineArn:
+    def test_staging_resolves_by_name(self) -> None:
+        sfn_client = MagicMock()
+        sfn_client.get_paginator.return_value.paginate.return_value = [
+            {
+                "stateMachines": [
+                    {
+                        "name": "portfolio-pipeline-orchestrator-demo",
+                        "stateMachineArn": "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator-demo",
+                    },
+                ]
+            }
+        ]
+        arn = sfn.resolve_state_machine_arn(sfn_client, "staging")
+        assert (
+            arn
+            == "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator-demo"
+        )
 
-    def test_prod_reads_prod_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("PROD_STATE_MACHINE_ARN", "arn:prod-sfn")
-        assert sfn.state_machine_arn("prod") == "arn:prod-sfn"
+    def test_prod_resolves_by_name(self) -> None:
+        sfn_client = MagicMock()
+        sfn_client.get_paginator.return_value.paginate.return_value = [
+            {
+                "stateMachines": [
+                    {
+                        "name": "portfolio-pipeline-orchestrator",
+                        "stateMachineArn": "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator",
+                    },
+                ]
+            }
+        ]
+        arn = sfn.resolve_state_machine_arn(sfn_client, "prod")
+        assert (
+            arn
+            == "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator"
+        )
 
-    def test_missing_returns_none_and_prints_error(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    def test_not_found_returns_none_and_prints_error(
+        self, capsys: pytest.CaptureFixture
     ) -> None:
-        monkeypatch.delenv("STAGING_STATE_MACHINE_ARN", raising=False)
-        assert sfn.state_machine_arn("staging") is None
+        sfn_client = MagicMock()
+        sfn_client.get_paginator.return_value.paginate.return_value = [
+            {"stateMachines": []}
+        ]
+        arn = sfn.resolve_state_machine_arn(sfn_client, "staging")
+        assert arn is None
         err = capsys.readouterr().err
-        assert "STAGING_STATE_MACHINE_ARN" in err
-        assert "terraform/demo" in err
+        assert "portfolio-pipeline-orchestrator-demo" in err
+        assert "not found" in err
+
+    def test_unsupported_mode_returns_none_and_prints_error(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        sfn_client = MagicMock()
+        arn = sfn.resolve_state_machine_arn(sfn_client, "docker")
+        assert arn is None
+        err = capsys.readouterr().err
+        assert "Unsupported mode" in err
 
 
 # ---------------------------------------------------------------------------

@@ -539,6 +539,7 @@ class TestCmdFullSfnTrigger:
         self,
         monkeypatch,
         *,
+        sfn_arn: str | None = "arn:staging-sfn",
         wait_status: str | None = None,
         wait_raises: Exception | None = None,
         details: str = "DETAILS",
@@ -550,6 +551,11 @@ class TestCmdFullSfnTrigger:
             sfn_mod,
             "build_clients",
             lambda region: (MagicMock(), MagicMock(), MagicMock()),
+        )
+        monkeypatch.setattr(
+            sfn_mod,
+            "resolve_state_machine_arn",
+            lambda *a, **k: sfn_arn,
         )
         monkeypatch.setattr(
             sfn_mod,
@@ -579,9 +585,8 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
         self._stub_session(monkeypatch)
-        start = self._stub_sfn(monkeypatch)
+        start = self._stub_sfn(monkeypatch, sfn_arn="arn:staging-sfn")
 
         rc = cmd_full(self._base_args())
         assert rc == 0
@@ -598,9 +603,8 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("prod")
-        monkeypatch.setenv("PROD_STATE_MACHINE_ARN", "arn:prod-sfn")
         self._stub_session(monkeypatch)
-        start = self._stub_sfn(monkeypatch)
+        start = self._stub_sfn(monkeypatch, sfn_arn="arn:prod-sfn")
 
         rc = cmd_full(self._base_args())
         assert rc == 0
@@ -611,7 +615,6 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
         self._stub_session(monkeypatch)
         start = self._stub_sfn(monkeypatch)
 
@@ -625,7 +628,6 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
         self._stub_session(monkeypatch)
         start = self._stub_sfn(monkeypatch)
 
@@ -640,7 +642,6 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
         self._stub_session(monkeypatch, has_creds=False)
         start = self._stub_sfn(monkeypatch)
 
@@ -650,20 +651,19 @@ class TestCmdFullSfnTrigger:
         assert "AWS credentials not found" in capsys.readouterr().err
         reset_mode()
 
-    def test_state_machine_arn_missing_errors(
+    def test_state_machine_not_found_errors(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.delenv("STAGING_STATE_MACHINE_ARN", raising=False)
         self._stub_session(monkeypatch)
-        start = self._stub_sfn(monkeypatch)
+        start = self._stub_sfn(monkeypatch, sfn_arn=None)
 
         rc = cmd_full(self._base_args())
         assert rc == 1
         start.assert_not_called()
-        assert "STAGING_STATE_MACHINE_ARN" in capsys.readouterr().err
+        # Error message is printed by resolve_state_machine_arn (tested in test_sfn.py).
         reset_mode()
 
     def test_wait_succeeded_returns_zero(
@@ -672,7 +672,6 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
         self._stub_session(monkeypatch)
         self._stub_sfn(monkeypatch, wait_status="SUCCEEDED")
 
@@ -687,7 +686,6 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
         self._stub_session(monkeypatch)
         self._stub_sfn(monkeypatch, wait_status="FAILED", details="TASK FAILED DETAILS")
 
@@ -704,7 +702,6 @@ class TestCmdFullSfnTrigger:
         from pipeline.secrets import set_mode
 
         set_mode("staging")
-        monkeypatch.setenv("STAGING_STATE_MACHINE_ARN", "arn:staging-sfn")
         self._stub_session(monkeypatch)
         self._stub_sfn(monkeypatch, wait_raises=TimeoutError("timed out"))
 

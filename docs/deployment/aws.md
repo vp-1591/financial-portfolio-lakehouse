@@ -179,11 +179,11 @@ aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"
 
 Once the pipeline is deployed (image pushed, secrets seeded), trigger a
 Step Functions execution from the CLI with `pipeline run full --mode staging|prod`.
-It requires only AWS credentials that permit `states:StartExecution` on the
-orchestrator state machine — broker secrets are injected into ECS containers
-by SSM at runtime, so no `IBKR_FLEX_TOKEN` / `T212_API_KEY` are needed locally.
-Set `STAGING_STATE_MACHINE_ARN` or `PROD_STATE_MACHINE_ARN` (from the
-`state_machine_arn` Terraform output) in your environment first.
+It requires only AWS credentials that permit `states:ListStateMachines` and
+`states:StartExecution` on the orchestrator state machine — broker secrets are
+injected into ECS containers by SSM at runtime, so no `IBKR_FLEX_TOKEN` /
+`T212_API_KEY` are needed locally. The state machine ARN is resolved
+automatically from the well-known name via the SFN API — no env var needed.
 
 ```bash
 # Trigger the demo (staging) execution and return immediately
