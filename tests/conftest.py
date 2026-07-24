@@ -8,45 +8,29 @@ from pathlib import Path
 import pytest
 
 from pipeline.crypto import generate_key
-from pipeline.storage import LocalBackend, StorageConfig, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, use_storage
 
 # All pipeline-related environment variables that tests must isolate from.
 # Cleared before each test so local .env files and shell env vars don't leak.
+# Note: DEMO and STORAGE_TYPE are removed (replaced by --mode flag).
 _PIPELINE_ENV_VARS = [
-    "DEMO",
-    "STORAGE_TYPE",
     "S3_BUCKET",
-    "S3_BUCKET_DEMO",
     "S3_PREFIX",
-    "S3_PREFIX_DEMO",
     "PIPELINE_DATA_DIR",
-    "PIPELINE_DATA_DIR_DEMO",
     "S3_ENDPOINT_URL",
     "S3_ALLOW_HTTP",
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_REGION",
-    "AWS_ACCESS_KEY_ID_DEMO",
-    "AWS_SECRET_ACCESS_KEY_DEMO",
     "IBKR_FLEX_TOKEN",
     "IBKR_FLEX_QUERY_ID",
     "IBKR_FLEX_CDC_QUERY_ID",
-    "IBKR_FLEX_TOKEN_DEMO",
-    "IBKR_FLEX_QUERY_ID_DEMO",
-    "IBKR_FLEX_CDC_QUERY_ID_DEMO",
     "T212_API_KEY",
     "T212_API_SECRET",
-    "T212_API_KEY_DEMO",
-    "T212_API_SECRET_DEMO",
     "ENCRYPTION_KEY",
-    "ENCRYPTION_KEY_DEMO",
-    "IBKR_ENABLED",
-    "T212_ENABLED",
-    "XTB_ENABLED",
     "IBKR_FLEX_BASE_URL",
-    "IBKR_FLEX_BASE_URL_DEMO",
     "T212_BASE_URL",
-    "T212_BASE_URL_DEMO",
     "XTB_REPORT_PATH",
 ]
 
@@ -71,16 +55,35 @@ def _isolate_pipeline_env(monkeypatch, tmp_path):
     monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
     # Reset storage singleton so resolve_storage() re-reads env vars
     import pipeline.storage
+    import pipeline.secrets
 
     pipeline.storage._config = None
+    pipeline.secrets.reset_mode()
     yield
     pipeline.storage._config = None
+    pipeline.secrets.reset_mode()
 
 
 @pytest.fixture()
 def fernet_key() -> bytes:
     """Return a freshly generated Fernet key for test use."""
     return generate_key()
+
+
+@pytest.fixture()
+def docker_mode():
+    """Set execution mode to 'docker' for the duration of a test.
+
+    Most tests run in docker mode (MinIO/local S3).  The autouse
+    _isolate_pipeline_env fixture resets the mode to None before and
+    after each test, so this fixture is only needed for tests that
+    exercise code that calls get_mode() / is_demo() / resolve_storage().
+    """
+    import pipeline.secrets
+
+    pipeline.secrets.set_mode("docker")
+    yield
+    pipeline.secrets.reset_mode()
 
 
 @pytest.fixture()

@@ -14,7 +14,8 @@ from deltalake import write_deltalake
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.models import ibkr_snapshot_normalized_schema
 from pipeline.run import cmd_query
-from pipeline.storage import LocalBackend, StorageConfig, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, use_storage
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,8 @@ def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
 
 def _setup_env(tmp_path: Path) -> tuple[Path, bytes]:
     """Create data dir structure, write IBKR data, set up storage and env."""
+    from pipeline.secrets import set_mode
+
     key = generate_key()
     data = tmp_path / "data"
     for subdir in [
@@ -85,6 +88,7 @@ def _setup_env(tmp_path: Path) -> tuple[Path, bytes]:
         backend=LocalBackend(data),
     )
     use_storage(config)
+    set_mode("docker")
 
     _write_ibkr_snapshot(data, key)
 
@@ -111,12 +115,17 @@ class TestQueryCLI:
     def setup_method(self) -> None:
         """Reset the query module cache between tests."""
         from pipeline.query import clear_table_cache
+        from pipeline.secrets import set_mode
 
         clear_table_cache()
+        set_mode("docker")
 
     def teardown_method(self) -> None:
         """Clean up env var."""
+        from pipeline.secrets import reset_mode
+
         os.environ.pop("ENCRYPTION_KEY", None)
+        reset_mode()
 
     def test_basic_query(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -166,10 +175,11 @@ class TestQueryCLI:
         # Just verify the command succeeds and labels are present
         assert "VWCE" in captured.out
 
-    def test_invalid_sql(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_invalid_sql(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Invalid SQL returns exit code 1 and prints error to stderr."""
-        # Don't need storage for an invalid query test, but we do need
-        # the query module importable
+        _setup_env(tmp_path)
         args = _make_args("SELECT FROM INVALID!!!")
         result = cmd_query(args)
 

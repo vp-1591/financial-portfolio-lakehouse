@@ -19,19 +19,9 @@ inline documentation.
 
 - **Broker secrets** — `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`,
   `IBKR_FLEX_CDC_QUERY_ID` (optional, falls back to `IBKR_FLEX_QUERY_ID`),
-  `T212_API_KEY`, `T212_API_SECRET`, and their `_ENABLED` toggles
+  `T212_API_KEY`, `T212_API_SECRET`
 - **Encryption** — `ENCRYPTION_KEY` (Fernet key, generated via `keygen` command)
-- **Storage** — `STORAGE_TYPE`, `S3_BUCKET`, AWS credentials, S3 endpoint
-- **Demo mode** — `DEMO` toggle and `_DEMO`-suffixed variables for each secret
-
-### Connector toggles
-
-All connectors are **enabled by default**. Set a toggle to `0`, `false`, or
-`no` to disable it:
-
-- `IBKR_ENABLED` — IBKR Flex Web Service
-- `T212_ENABLED` — Trading 212 API
-- `XTB_ENABLED` — XTB Excel report upload
+- **Storage** — `S3_BUCKET`, AWS credentials, S3 endpoint
 
 ## Broker Setup
 
@@ -60,7 +50,7 @@ Trading 212 provides a REST API for retrieving account data, positions, and
 instruments. Requires an API key and secret.
 
 Required environment variables: `T212_API_KEY`, `T212_API_SECRET`,
-`T212_BASE_URL` (auto-derived from `DEMO` setting).
+`T212_BASE_URL` (optional, defaults to the production API URL).
 
 For API key permissions, see [API Key Permissions](trading212/api-key-permissions.md).
 
@@ -87,7 +77,7 @@ store) running in a separate container. Data persists in the `minio-data`
 Docker volume. MinIO console at http://localhost:9001 (login: `minioadmin` /
 `minioadmin`).
 
-Set `STORAGE_TYPE=minio` and configure `S3_ENDPOINT_URL` and `S3_ALLOW_HTTP=true`
+Configure `S3_ENDPOINT_URL` and `S3_ALLOW_HTTP=true`
 in your `.env` file.
 
 ### AWS S3
@@ -107,9 +97,16 @@ In local mode, the `keygen` command generates a Fernet key and writes it to
 `ENCRYPTION_KEY` as an environment variable — **the encryption key is never
 stored in S3.**
 
-## Demo Mode
+## Mode Selection
 
-Set `DEMO=true` to run in demo mode. This uses `_DEMO`-suffixed environment
-variables (e.g. `IBKR_FLEX_TOKEN_DEMO`, `ENCRYPTION_KEY_DEMO`) and a separate
-storage prefix. There is no fallback between demo and production variables —
-each mode reads only its own set.
+The `--mode` flag controls how the pipeline resolves secrets and storage:
+
+```
+--mode docker    # Local Docker Compose (MinIO, demo-friendly defaults)
+--mode staging   # Staging environment (AWS staging secrets, staging bucket)
+--mode prod      # Production environment (AWS production secrets, production bucket)
+```
+
+When `--mode` is omitted, the pipeline uses local filesystem storage and reads
+secrets directly from environment variables (or `.env`). No `STORAGE_TYPE` or
+`DEMO` environment variables are needed — the mode flag handles everything.

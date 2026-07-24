@@ -11,13 +11,13 @@ instruments. Requires an API key and secret.
 |----------|---------|
 | `T212_API_KEY` | API key |
 | `T212_API_SECRET` | API secret |
-| `T212_BASE_URL` | Base URL (auto-derived from `DEMO` setting) |
-| `T212_ENABLED` | Enable/disable connector (default: enabled) |
+| `T212_BASE_URL` | Base URL (auto-derived from `--mode`) |
 
-### Demo mode
+### Staging mode
 
-When `DEMO=true`, the connector uses `T212_API_KEY_DEMO` and
-`T212_API_SECRET_DEMO` instead. The base URL is automatically set to the
+In `--mode staging`, the connector uses `T212_API_KEY` and
+`T212_API_SECRET` (injected from `/portfolio/demo/` SSM parameters in ECS,
+or set in `.env` locally). The base URL is automatically set to the
 demo endpoint.
 
 ## API key permissions

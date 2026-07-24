@@ -74,7 +74,7 @@ terraform apply
    [SSM secrets reference](#ssm-secrets-reference) below).
 2. **Push Docker image** to ECR so task definitions have something to run.
 3. **Store outputs** in GitHub Secrets: `access_key_id`, `s3_bucket`, `s3_prefix`
-   (and `_DEMO` variants for demo).
+   (use `_STAGING` variants for the demo environment).
 
 ### SSM secrets reference
 
@@ -90,22 +90,22 @@ Replace `<kms-key-id>` with the output of `terraform output kms_key_arn` from
 
 | SSM parameter name | Env var in container | Description |
 |---|---|---|
-| `/portfolio/demo/IBKR_FLEX_TOKEN_DEMO` | `IBKR_FLEX_TOKEN_DEMO` | IBKR Flex Token |
-| `/portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO` | `IBKR_FLEX_QUERY_ID_DEMO` | IBKR Flex Query ID |
-| `/portfolio/demo/T212_API_KEY_DEMO` | `T212_API_KEY_DEMO` | Trading 212 API Key |
-| `/portfolio/demo/T212_API_SECRET_DEMO` | `T212_API_SECRET_DEMO` | Trading 212 API Secret |
-| `/portfolio/demo/ENCRYPTION_KEY_DEMO` | `ENCRYPTION_KEY_DEMO` | Fernet encryption key for Delta table values |
+| `/portfolio/demo/IBKR_FLEX_TOKEN` | `IBKR_FLEX_TOKEN` | IBKR Flex Token |
+| `/portfolio/demo/IBKR_FLEX_QUERY_ID` | `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID |
+| `/portfolio/demo/T212_API_KEY` | `T212_API_KEY` | Trading 212 API Key |
+| `/portfolio/demo/T212_API_SECRET` | `T212_API_SECRET` | Trading 212 API Secret |
+| `/portfolio/demo/ENCRYPTION_KEY` | `ENCRYPTION_KEY` | Fernet encryption key for Delta table values |
 
 **Bash / Git Bash:**
 
 ```bash
 KMS_KEY_ID=$(terraform -chdir=terraform/demo output -raw kms_key_arn)
 
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN_DEMO   --value "TOKEN"    --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO --value "QUERY_ID" --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_KEY_DEMO      --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET_DEMO   --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 ```
 
 **PowerShell:**
@@ -113,11 +113,11 @@ aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FER
 ```powershell
 $KMS_KEY_ID = (terraform -chdir=terraform/demo output -raw kms_key_arn)
 
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN_DEMO   --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID_DEMO --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_KEY_DEMO      --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET_DEMO   --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY_DEMO    --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
 ```
 
 #### Production environment
@@ -162,7 +162,7 @@ aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"
 > data becomes unreadable. Verify the key before the first cloud run.
 
 > **Note:** AWS credential SSM parameters (`AWS_ACCESS_KEY_ID`,
-> `AWS_SECRET_ACCESS_KEY` and their `_DEMO` variants) are **not** needed. ECS
+> `AWS_SECRET_ACCESS_KEY`) are **not** needed in SSM. ECS
 > tasks use IAM role credentials instead (see
 > [ADR 0055](../adr/0055-iam-role-credential-fallback.md)).
 
@@ -170,27 +170,33 @@ aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"
 
 | Trigger | Action |
 |---------|--------|
-| Push to `main` | Build & push Docker image → start demo Step Functions execution |
+| Push to `main` | Build & push Docker image → `pipeline run full --mode staging --wait` (triggers the demo Step Functions execution and waits for it) |
 | Tag push `v*` | Build & push Docker image with version tag + `production-latest` |
-| Manual dispatch | Run pipeline directly via GitHub Actions (supports demo toggle) |
+| Daily schedule | EventBridge triggers the prod Step Functions execution automatically |
+| S3 file arrival | EventBridge triggers the orchestrator when an XTB file lands in staging |
 
 ## Manual pipeline trigger
 
-Once the pipeline is deployed (image pushed, secrets seeded), use
-`scripts/run_prod_pipeline.py` to trigger the production Step Functions
-orchestrator from the CLI. It requires AWS credentials that permit
-`states:StartExecution` on the orchestrator state machine.
+Once the pipeline is deployed (image pushed, secrets seeded), trigger a
+Step Functions execution from the CLI with `pipeline run full --mode staging|prod`.
+It requires only AWS credentials that permit `states:ListStateMachines` and
+`states:StartExecution` on the orchestrator state machine — broker secrets are
+injected into ECS containers by SSM at runtime, so no `IBKR_FLEX_TOKEN` /
+`T212_API_KEY` are needed locally. The state machine ARN is resolved
+automatically from the well-known name via the SFN API — no env var needed.
 
 ```bash
-# Run daily connectors (IBKR + Trading 212)
-python scripts/run_prod_pipeline.py
+# Trigger the demo (staging) execution and return immediately
+python -m pipeline.run full --mode staging
 
-# Include XTB
-python scripts/run_prod_pipeline.py --with-xtb
+# Trigger and wait for completion (prints failure details on a non-successful run)
+python -m pipeline.run full --mode staging --wait
 
-# Include XTB with a specific file
-python scripts/run_prod_pipeline.py --with-xtb --xtb-file s3://investment-portfolio-pipeline/staging/xtb/file.csv
-
-# Dry-run: print the input JSON without starting an execution
-python scripts/run_prod_pipeline.py --dry-run
+# Trigger the production execution
+python -m pipeline.run full --mode prod --wait
 ```
+
+`--with-xtb` / `--xtb-file` are not supported in staging/prod `full` — XTB is
+driven by the EventBridge S3 file-arrival trigger. Upload a file with
+`pipeline run upload-xtb <file> --mode staging` and the orchestrator runs the
+XTB connector automatically.

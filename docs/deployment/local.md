@@ -19,7 +19,7 @@ pip install -e ".[pipeline]"
 ```bash
 docker compose build
 docker compose up minio -d
-docker compose run --rm pipeline full
+docker compose run --rm pipeline full --mode docker
 docker compose run --rm pipeline query "SELECT * FROM portfolio_holdings_analytics"
 ```
 
@@ -31,7 +31,7 @@ Data persists in the `minio-data` Docker volume. Secrets come from `.env`
 
 **Local:**
 ```powershell
-.venv\Scripts\python -m pipeline.run full
+.venv\Scripts\python -m pipeline.run full --mode docker
 ```
 
 **Cloud (S3):**
@@ -40,7 +40,7 @@ $env:S3_BUCKET = "your-bucket"
 $env:AWS_ACCESS_KEY_ID = "..."
 $env:AWS_SECRET_ACCESS_KEY = "..."
 $env:ENCRYPTION_KEY = "..."
-.venv\Scripts\python -m pipeline.run full
+.venv\Scripts\python -m pipeline.run full --mode docker
 ```
 
 **GitHub Actions (manual dispatch):**

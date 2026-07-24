@@ -24,7 +24,8 @@ from pipeline.normalized.consolidate import (
 )
 from pipeline.normalized.extract import extract_holdings
 from pipeline.run import cmd_report
-from pipeline.storage import LocalBackend, StorageConfig, get_storage, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
 from tests.fixtures.xtb import xtb_normalized_snapshot
@@ -33,6 +34,8 @@ from tests.fixtures.xtb import xtb_normalized_snapshot
 @pytest.fixture(autouse=True)
 def _setup_storage(tmp_path: Path) -> None:
     """Inject a tmp_path-based StorageConfig for all report tests."""
+    from pipeline.secrets import set_mode
+
     data = tmp_path / "data"
     for subdir in [
         "raw/ibkr_snapshot",
@@ -66,6 +69,7 @@ def _setup_storage(tmp_path: Path) -> None:
         backend=LocalBackend(data),
     )
     use_storage(config)
+    set_mode("docker")
 
 
 def _build_all_gold_tables(fernet_key: bytes) -> None:

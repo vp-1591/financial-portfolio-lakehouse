@@ -269,7 +269,9 @@ class TestDirectoryCreation:
     create them before writing.
     """
 
-    def test_ingest_raw_creates_parent_dirs(self, tmp_path: Path) -> None:
+    def test_ingest_raw_creates_parent_dirs(
+        self, tmp_path: Path, tmp_data_dir, docker_mode
+    ) -> None:
 
         from pipeline.raw.ingest import ingest_raw
 
@@ -293,7 +295,9 @@ class TestDirectoryCreation:
         assert count == 1
         assert Path(table_path).exists()
 
-    def test_consolidate_creates_parent_dirs(self, tmp_path: Path) -> None:
+    def test_consolidate_creates_parent_dirs(
+        self, tmp_path: Path, tmp_data_dir, docker_mode
+    ) -> None:
         from pipeline.normalized.consolidate import (
             CurrencyConverter,
             Holding,

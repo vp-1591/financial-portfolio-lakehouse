@@ -32,7 +32,8 @@ from pipeline.normalized.models import (
     consolidated_holdings_schema,
     ibkr_snapshot_normalized_schema,
 )
-from pipeline.storage import LocalBackend, StorageConfig, get_storage, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, get_storage, use_storage
 
 
 # ---------------------------------------------------------------------------

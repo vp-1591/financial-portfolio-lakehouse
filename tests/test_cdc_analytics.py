@@ -22,7 +22,8 @@ from pipeline.analytics.models import (
 from pipeline.connectors.transform_utils import build_normalized_table
 from pipeline.crypto import decrypt_float, generate_key
 from pipeline.normalized.models import cdc_events_normalized_schema
-from pipeline.storage import LocalBackend, StorageConfig, use_storage
+from tests.local_backend import LocalBackend
+from pipeline.storage import StorageConfig, use_storage
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
-"""Tests for run-connector and run-consolidate-analytics subcommands.
+"""Tests for run-connector, run-consolidate-analytics, and cmd_full subcommands.
 
 Verifies the extracted ``fetch_connector``/``transform_connector`` helpers,
 the ``cmd_run_connector``/``cmd_run_consolidate_analytics`` commands, and
-regression of existing ``cmd_fetch``/``cmd_transform``/``cmd_full`` paths.
+the ``cmd_full`` docker-mode orchestrator (parallel connectors + consolidate).
 """
 
 from __future__ import annotations
@@ -11,18 +11,19 @@ import argparse
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from pipeline.connectors.registry import get
 from pipeline.crypto import generate_key
 from pipeline.run import (
-    cmd_fetch,
+    FetchResult,
     cmd_full,
     cmd_run_consolidate_analytics,
     cmd_run_connector,
-    cmd_transform,
     fetch_connector,
     transform_connector,
 )
+from pipeline.secrets import reset_mode
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +107,7 @@ class TestFetchConnectorIsolation:
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
-            assert rc == 0
+            assert rc == FetchResult.SUCCESS
             mock_kwargs.assert_called_once_with(args)
             mock_snapshot.assert_called_once()
 
@@ -114,7 +115,7 @@ class TestFetchConnectorIsolation:
     def test_skips_connector_when_kwargs_empty(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
-        """fetch_connector returns 0 and skips when fetch_kwargs returns {}."""
+        """fetch_connector returns SKIPPED and skips when fetch_kwargs returns {}."""
         connector = get("ibkr")
         args = argparse.Namespace()
 
@@ -124,14 +125,14 @@ class TestFetchConnectorIsolation:
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
-            assert rc == 0
+            assert rc == FetchResult.SKIPPED
             mock_snapshot.assert_not_called()
 
     @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
     def test_returns_nonzero_on_snapshot_error(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
-        """fetch_connector returns 1 when snapshot fetch raises an exception."""
+        """fetch_connector returns ERROR when snapshot fetch raises an exception."""
         connector = get("ibkr")
         args = argparse.Namespace()
 
@@ -154,7 +155,7 @@ class TestFetchConnectorIsolation:
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
-            assert rc == 1
+            assert rc == FetchResult.ERROR
 
 
 class TestTransformConnectorIsolation:
@@ -174,24 +175,16 @@ class TestTransformConnectorIsolation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("docker_mode")
 class TestCmdRunConnector:
     """cmd_run_connector dispatches to fetch_connector+transform_connector."""
 
-    def test_disabled_connector_returns_zero(self, monkeypatch) -> None:
-        """Disabled connector logs and returns 0 (runtime gate)."""
-        monkeypatch.setenv("IBKR_ENABLED", "0")
-        args = argparse.Namespace(connector="ibkr")
-        rc = cmd_run_connector(args)
-        assert rc == 0
-
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=0)
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_enabled_connector_calls_fetch_then_transform(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -209,21 +202,38 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=1)
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.ERROR)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_fetch_failure_skips_transform(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
         mock_validate: MagicMock,
     ) -> None:
-        """If fetch_connector returns non-zero, transform and validate are skipped."""
+        """If fetch_connector returns ERROR, transform and validate are skipped."""
         args = argparse.Namespace(connector="ibkr")
         rc = cmd_run_connector(args)
         assert rc == 1
+        mock_transform.assert_not_called()
+        mock_validate.assert_not_called()
+
+    @patch("pipeline.run.run_validation")
+    @patch("pipeline.run.transform_connector")
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SKIPPED)
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_skipped_connector_returns_zero(
+        self,
+        mock_key: MagicMock,
+        mock_fetch: MagicMock,
+        mock_transform: MagicMock,
+        mock_validate: MagicMock,
+    ) -> None:
+        """If fetch_connector returns SKIPPED, cmd_run_connector returns 0 without
+        calling transform or validation — there's no data to process."""
+        args = argparse.Namespace(connector="ibkr")
+        rc = cmd_run_connector(args)
+        assert rc == 0
         mock_transform.assert_not_called()
         mock_validate.assert_not_called()
 
@@ -231,10 +241,8 @@ class TestCmdRunConnector:
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=0)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_validation_failure_returns_nonzero(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -247,7 +255,6 @@ class TestCmdRunConnector:
 
     def test_xtb_without_file_returns_1(self, monkeypatch) -> None:
         """XTB without --xtb-file in dedicated subcommand returns 1."""
-        monkeypatch.setenv("XTB_ENABLED", "1")
         args = argparse.Namespace(connector="xtb", xtb_file=None)
         rc = cmd_run_connector(args)
         assert rc == 1
@@ -256,10 +263,8 @@ class TestCmdRunConnector:
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=0)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_xtb_with_file_calls_fetch(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -274,6 +279,23 @@ class TestCmdRunConnector:
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# cmd_fetch — no-credentials error path
+# ---------------------------------------------------------------------------
+
+
+class TestFetchConnectorXtbSkip:
+    """fetch_connector returns SKIPPED for XTB without --xtb-file."""
+
+    def test_xtb_returns_skipped_when_no_file(self, tmp_data_dir: Path) -> None:
+        """XTB connector returns FetchResult.SKIPPED when no --xtb-file is provided."""
+        connector = get("xtb")
+        args = argparse.Namespace(xtb_file=None)
+        fernet_key = generate_key()
+        rc = fetch_connector(connector, args, fernet_key)
+        assert rc == FetchResult.SKIPPED
 
 
 # ---------------------------------------------------------------------------
@@ -404,87 +426,27 @@ class TestCmdRunConsolidateAnalytics:
 
 
 # ---------------------------------------------------------------------------
-# cmd_full / cmd_fetch / cmd_transform regression
+# cmd_full docker-mode orchestrator
 # ---------------------------------------------------------------------------
 
 
-class TestCmdFetchRegression:
-    """cmd_fetch still iterates all() and uses enabled_env_var."""
+class TestCmdFullDockerMode:
+    """cmd_full in docker mode runs connectors in parallel then consolidate-analytics."""
 
-    @patch("pipeline.run.fetch_connector", return_value=0)
-    @patch("pipeline.run.load_key", return_value=b"test-key")
-    def test_cmd_fetch_iterates_all_connectors(
-        self, mock_key: MagicMock, mock_fetch: MagicMock
-    ) -> None:
-        """cmd_fetch calls fetch_connector for each enabled connector."""
-        # Use only the real connectors (the FakeConnector from test_connector_registry
-        # doesn't have enabled_env_var, so we mock all() to exclude it).
-        real_connectors = [get("ibkr"), get("trading212"), get("xtb")]
-        args = argparse.Namespace(xtb_file=None)
-        with (
-            patch("pipeline.run.is_enabled", return_value=True),
-            patch("pipeline.run.all", return_value=real_connectors),
-        ):
-            rc = cmd_fetch(args)
-        assert rc == 0
-        assert mock_fetch.call_count == 3
-
-    @patch("pipeline.run.fetch_connector", return_value=0)
-    @patch("pipeline.run.load_key", return_value=b"test-key")
-    def test_cmd_fetch_skips_disabled_connectors(
-        self, mock_key: MagicMock, mock_fetch: MagicMock
-    ) -> None:
-        """cmd_fetch skips connectors whose enabled_env_var is false."""
-        real_connectors = [get("ibkr"), get("trading212"), get("xtb")]
-        args = argparse.Namespace(xtb_file=None)
-
-        def is_enabled_side_effect(env_var: str) -> bool:
-            return env_var != "XTB_ENABLED"
-
-        with (
-            patch("pipeline.run.is_enabled", side_effect=is_enabled_side_effect),
-            patch("pipeline.run.all", return_value=real_connectors),
-        ):
-            rc = cmd_fetch(args)
-        assert rc == 0
-        # Should be called for ibkr and trading212, but not xtb
-        assert mock_fetch.call_count == 2
-
-
-class TestCmdTransformRegression:
-    """cmd_transform still iterates all()."""
-
-    @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.load_key", return_value=b"test-key")
-    def test_cmd_transform_iterates_all_connectors(
-        self, mock_key: MagicMock, mock_transform: MagicMock
-    ) -> None:
-        real_connectors = [get("ibkr"), get("trading212"), get("xtb")]
-        args = argparse.Namespace()
-        with patch("pipeline.run.all", return_value=real_connectors):
-            rc = cmd_transform(args)
-        assert rc == 0
-        assert mock_transform.call_count == 3
-
-
-class TestCmdFullRegression:
-    """cmd_full chains fetch → transform → consolidate → analytics."""
-
-    @patch("pipeline.run._normalize_cdc", return_value=0)
-    @patch("pipeline.run._consolidate_cdc", return_value=0)
-    @patch("pipeline.run.cmd_analytics", return_value=0)
-    @patch("pipeline.run.cmd_consolidate", return_value=0)
-    @patch("pipeline.run.cmd_transform", return_value=0)
-    @patch("pipeline.run.cmd_fetch", return_value=0)
-    def test_cmd_full_chains_all_steps(
+    @patch("pipeline.run.cmd_run_consolidate_analytics", return_value=0)
+    @patch("pipeline.run._run_connectors_parallel", return_value=0)
+    @patch("pipeline.run.inject_secrets")
+    def test_docker_mode_calls_connectors_then_consolidate(
         self,
-        mock_fetch: MagicMock,
-        mock_transform: MagicMock,
+        mock_inject: MagicMock,
+        mock_parallel: MagicMock,
         mock_consolidate: MagicMock,
-        mock_analytics: MagicMock,
-        mock_consolidate_cdc: MagicMock,
-        mock_normalize_cdc: MagicMock,
+        monkeypatch,
     ) -> None:
+        """cmd_full --mode docker calls _run_connectors_parallel then cmd_run_consolidate_analytics."""
+        from pipeline.secrets import set_mode
+
+        set_mode("docker")
         args = argparse.Namespace(
             xtb_file=None,
             target_currency="EUR",
@@ -494,26 +456,24 @@ class TestCmdFullRegression:
         )
         rc = cmd_full(args)
         assert rc == 0
-        mock_fetch.assert_called_once()
-        mock_transform.assert_called_once()
-        mock_consolidate.assert_called_once()
-        mock_analytics.assert_called_once()
+        mock_parallel.assert_called_once_with(args)
+        mock_consolidate.assert_called_once_with(args)
+        reset_mode()
 
-    @patch("pipeline.run._normalize_cdc", return_value=0)
-    @patch("pipeline.run._consolidate_cdc", return_value=0)
-    @patch("pipeline.run.cmd_analytics", return_value=0)
-    @patch("pipeline.run.cmd_consolidate", return_value=0)
-    @patch("pipeline.run.cmd_transform", return_value=0)
-    @patch("pipeline.run.cmd_fetch", return_value=1)
-    def test_cmd_full_stops_on_fetch_failure(
+    @patch("pipeline.run.cmd_run_consolidate_analytics")
+    @patch("pipeline.run._run_connectors_parallel", return_value=1)
+    @patch("pipeline.run.inject_secrets")
+    def test_docker_mode_connector_failure_skips_consolidate(
         self,
-        mock_fetch: MagicMock,
-        mock_transform: MagicMock,
+        mock_inject: MagicMock,
+        mock_parallel: MagicMock,
         mock_consolidate: MagicMock,
-        mock_analytics: MagicMock,
-        mock_consolidate_cdc: MagicMock,
-        mock_normalize_cdc: MagicMock,
+        monkeypatch,
     ) -> None:
+        """If _run_connectors_parallel returns non-zero, consolidate is not called."""
+        from pipeline.secrets import set_mode
+
+        set_mode("docker")
         args = argparse.Namespace(
             xtb_file=None,
             target_currency="EUR",
@@ -523,6 +483,260 @@ class TestCmdFullRegression:
         )
         rc = cmd_full(args)
         assert rc == 1
-        mock_transform.assert_not_called()
         mock_consolidate.assert_not_called()
-        mock_analytics.assert_not_called()
+        reset_mode()
+
+
+# ---------------------------------------------------------------------------
+# cmd_full staging/prod — Step Functions trigger
+# ---------------------------------------------------------------------------
+
+
+class TestCmdFullSfnTrigger:
+    """cmd_full --mode staging|prod starts a Step Functions execution."""
+
+    def _base_args(self, **overrides) -> argparse.Namespace:
+        defaults = dict(
+            xtb_file=None,
+            with_xtb=False,
+            wait=False,
+            target_currency="EUR",
+            fx_rate=[],
+            isin=[],
+            isin_map_file=[],
+        )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def _stub_session(self, monkeypatch, has_creds: bool = True) -> MagicMock:
+        import boto3
+
+        sess = MagicMock()
+        sess.get_credentials.return_value = MagicMock() if has_creds else None
+        sess.region_name = "eu-west-1"
+        monkeypatch.setattr(boto3, "Session", lambda: sess)
+        return sess
+
+    def _stub_sfn(
+        self,
+        monkeypatch,
+        *,
+        sfn_arn: str | None = "arn:staging-sfn",
+        wait_status: str | None = None,
+        wait_raises: Exception | None = None,
+        details: str = "DETAILS",
+    ) -> MagicMock:
+        import pipeline.sfn as sfn_mod
+
+        start = MagicMock(return_value="arn:exec")
+        monkeypatch.setattr(
+            sfn_mod,
+            "build_clients",
+            lambda region: (MagicMock(), MagicMock(), MagicMock()),
+        )
+        monkeypatch.setattr(
+            sfn_mod,
+            "resolve_state_machine_arn",
+            lambda *a, **k: sfn_arn,
+        )
+        monkeypatch.setattr(
+            sfn_mod,
+            "resolve_all_arns",
+            lambda *a, **k: (
+                {"ibkr": "arn:ibkr", "trading212": "arn:t212"},
+                "arn:cons",
+            ),
+        )
+        monkeypatch.setattr(sfn_mod, "start_execution", start)
+        monkeypatch.setattr(sfn_mod, "fetch_failure_details", lambda *a, **k: details)
+        if wait_raises is not None:
+            monkeypatch.setattr(
+                sfn_mod,
+                "wait_for_execution",
+                lambda *a, **k: (_ for _ in ()).throw(wait_raises),
+            )
+        else:
+            monkeypatch.setattr(
+                sfn_mod, "wait_for_execution", lambda *a, **k: wait_status
+            )
+        return start
+
+    def test_staging_starts_execution(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch, sfn_arn="arn:staging-sfn")
+
+        rc = cmd_full(self._base_args())
+        assert rc == 0
+        start.assert_called_once()
+        assert start.call_args.args[1] == "arn:staging-sfn"
+        out = capsys.readouterr().out
+        assert "arn:exec" in out
+        assert "Monitor:" in out
+        reset_mode()
+
+    def test_prod_starts_execution(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("prod")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch, sfn_arn="arn:prod-sfn")
+
+        rc = cmd_full(self._base_args())
+        assert rc == 0
+        assert start.call_args.args[1] == "arn:prod-sfn"
+        reset_mode()
+
+    def test_with_xtb_errors(self, monkeypatch, capsys: pytest.CaptureFixture) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args(with_xtb=True))
+        assert rc == 1
+        start.assert_not_called()
+        assert "upload-xtb" in capsys.readouterr().err
+        reset_mode()
+
+    def test_xtb_file_errors(self, monkeypatch, capsys: pytest.CaptureFixture) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args(xtb_file=["s3://bucket/file.csv"]))
+        assert rc == 1
+        start.assert_not_called()
+        reset_mode()
+
+    def test_aws_creds_missing_errors(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch, has_creds=False)
+        start = self._stub_sfn(monkeypatch)
+
+        rc = cmd_full(self._base_args())
+        assert rc == 1
+        start.assert_not_called()
+        assert "AWS credentials not found" in capsys.readouterr().err
+        reset_mode()
+
+    def test_state_machine_not_found_errors(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch)
+        start = self._stub_sfn(monkeypatch, sfn_arn=None)
+
+        rc = cmd_full(self._base_args())
+        assert rc == 1
+        start.assert_not_called()
+        # Error message is printed by resolve_state_machine_arn (tested in test_sfn.py).
+        reset_mode()
+
+    def test_wait_succeeded_returns_zero(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch)
+        self._stub_sfn(monkeypatch, wait_status="SUCCEEDED")
+
+        rc = cmd_full(self._base_args(wait=True))
+        assert rc == 0
+        assert "succeeded" in capsys.readouterr().out.lower()
+        reset_mode()
+
+    def test_wait_failed_prints_details(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch)
+        self._stub_sfn(monkeypatch, wait_status="FAILED", details="TASK FAILED DETAILS")
+
+        rc = cmd_full(self._base_args(wait=True))
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "FAILED" in captured.err
+        assert "TASK FAILED DETAILS" in captured.err
+        reset_mode()
+
+    def test_wait_timeout_returns_one(
+        self, monkeypatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("staging")
+        self._stub_session(monkeypatch)
+        self._stub_sfn(monkeypatch, wait_raises=TimeoutError("timed out"))
+
+        rc = cmd_full(self._base_args(wait=True))
+        assert rc == 1
+        assert "timed out" in capsys.readouterr().err
+        reset_mode()
+
+
+class TestRunConnectorsParallel:
+    """_run_connectors_parallel runs all connectors via ThreadPoolExecutor."""
+
+    @patch("pipeline.run.cmd_run_connector", return_value=0)
+    @patch("pipeline.run.all_connectors")
+    def test_all_connectors_succeed(self, mock_all, mock_rc) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("docker")
+        mock_all.return_value = [get("ibkr"), get("trading212")]
+        args = argparse.Namespace(
+            target_currency="EUR",
+            fx_rate=[],
+            isin=[],
+            isin_map_file=[],
+            xtb_file=None,
+            mode="docker",
+        )
+        from pipeline.run import _run_connectors_parallel
+
+        rc = _run_connectors_parallel(args)
+        assert rc == 0
+        assert mock_rc.call_count == 2
+        reset_mode()
+
+    @patch("pipeline.run.cmd_run_connector", return_value=1)
+    @patch("pipeline.run.all_connectors")
+    def test_connector_failure_returns_nonzero(self, mock_all, mock_rc, capsys) -> None:
+        from pipeline.secrets import set_mode
+
+        set_mode("docker")
+        mock_all.return_value = [get("ibkr")]
+        args = argparse.Namespace(
+            target_currency="EUR",
+            fx_rate=[],
+            isin=[],
+            isin_map_file=[],
+            xtb_file=None,
+            mode="docker",
+        )
+        from pipeline.run import _run_connectors_parallel
+
+        rc = _run_connectors_parallel(args)
+        assert rc == 1
+        stderr = capsys.readouterr().err
+        assert "fail-fast" in stderr
+        reset_mode()

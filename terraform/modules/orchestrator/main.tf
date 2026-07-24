@@ -39,6 +39,11 @@ terraform {
 # (set in the ecs-task module) so the orchestrator can use a static name.
 
 locals {
+  # --mode flag passed through to connector / consolidate commands.  The demo
+  # environment runs in "staging" mode (demo S3 bucket, base-name secrets from /portfolio/demo/ SSM); prod
+  # runs in "prod" mode.  Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md
+  mode_flag = var.demo ? "staging" : "prod"
+
   sfn_definition = jsonencode({
     Comment = "Portfolio pipeline orchestrator — Map over connectors then consolidate-allocate"
     StartAt = "RunConnectors"
@@ -105,8 +110,8 @@ locals {
           Overrides = {
             ContainerOverrides = [
               {
-                Name    = "pipeline"
-                Command = ["run-consolidate-analytics", "--target-currency", "EUR"]
+                Name           = "pipeline"
+                "Command.$"    = "$.consolidate_command"
               }
             ]
           }
@@ -197,15 +202,15 @@ resource "aws_cloudwatch_event_target" "xtb_file_arrival" {
           name = name
           task_def_arn = lookup(var.task_def_arns, name, "")
           command = name == "xtb" ? [
-            "run-connector", name, "--xtb-file",
+            "run-connector", name, "--mode", local.mode_flag, "--xtb-file",
             "s3://${var.xtb_staging_bucket_name}/<xtb_file>"
           ] : [
-            "run-connector", name, "--target-currency", "EUR"
+            "run-connector", name, "--mode", local.mode_flag, "--target-currency", "EUR"
           ]
         }
       ])},
       "consolidate_allocate_task_def_arn": "${var.consolidate_allocate_task_def_arn}",
-      "demo": ${var.demo}
+      "consolidate_command": ["run-consolidate-analytics", "--mode", "${local.mode_flag}", "--target-currency", "EUR"]
     }
     TEMPLATE
   }
@@ -242,12 +247,14 @@ resource "aws_cloudwatch_event_target" "daily_schedule" {
         name         = name
         task_def_arn = lookup(var.task_def_arns, name, "")
         command = [
-          "run-connector", name, "--target-currency", "EUR"
+          "run-connector", name, "--mode", local.mode_flag, "--target-currency", "EUR"
         ]
       }
     ]
     consolidate_allocate_task_def_arn = var.consolidate_allocate_task_def_arn
-    demo                               = var.demo
+    consolidate_command = [
+      "run-consolidate-analytics", "--mode", local.mode_flag, "--target-currency", "EUR"
+    ]
   })
 }
 

@@ -4,7 +4,7 @@
 
 After fixing the demo bucket naming (ADR 0042, hyphen instead of underscore), the demo pipeline still failed with **403 AccessDenied** on `s3:PutObject`. Two root causes:
 
-1. **Empty-string env vars bypass defaults**: `os.environ.get("S3_PREFIX_DEMO", "pipeline_demo")` returns `""` when the env var is set to an empty string (e.g., by GitHub Actions `${{ vars.S3_PREFIX_DEMO }}` when the variable is undefined). This caused the S3 prefix to be empty, making the pipeline write to `raw/...` instead of `pipeline_demo/raw/...`, which didn't match the IAM policy's `pipeline_demo/*` path pattern.
+1. **Empty-string env vars bypass defaults**: `os.environ.get("S3_PREFIX", "pipeline_demo")` returns `""` when the env var is set to an empty string (e.g., by GitHub Actions `${{ vars.S3_PREFIX }}` when the variable is undefined). This caused the S3 prefix to be empty, making the pipeline write to `raw/...` instead of `pipeline_demo/raw/...`, which didn't match the IAM policy's `pipeline_demo/*` path pattern.
 
 2. **IAM policy too restrictive**: The Terraform IAM policy for the `pipeline-demo` user only granted `s3:PutObject` on `${bucket_arn}/${var.s3_prefix}/*`. Since the demo bucket is dedicated (not shared with production), the prefix restriction was unnecessary.
 

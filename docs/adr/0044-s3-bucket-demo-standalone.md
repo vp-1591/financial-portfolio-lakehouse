@@ -1,5 +1,7 @@
 # ADR 0044: S3_BUCKET_DEMO Standalone — Demo Cloud Storage Without S3_BUCKET
 
+> **Superseded by [ADR 0092](./0092-remove-demo-env-var-suffix.md)** — `S3_BUCKET_DEMO` is removed. Staging mode reads `S3_BUCKET` directly; the demo ECS task sets it to the demo bucket name.
+
 ## Context
 
 When running the demo notebook (`exploration/query-s3-demo.ipynb`) with only `DEMO=true` and `S3_BUCKET_DEMO=investment-portfolio-pipeline-demo` set (no `S3_BUCKET`), `list_tables()` returns an empty list. The user can see tables in S3 from the demo pipeline, but `list_tables()` discovers no Delta tables.

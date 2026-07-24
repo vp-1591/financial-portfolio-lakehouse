@@ -1,5 +1,7 @@
 # 0039: STORAGE_TYPE Env Var and resolve_secret Credential Isolation
 
+> **Superseded by [ADR 0092](./0092-remove-demo-env-var-suffix.md)** — `STORAGE_TYPE` was removed by ADR 0090. The `resolve_secret()` `_DEMO` suffix swap and `REQUIRED_SECRETS_S3_DEMO` are removed; secrets are always read under base names.
+
 ## Context
 
 PR #16 introduced DEMO mode with `_DEMO`-suffixed secrets and isolated storage. Code review identified two bugs:
