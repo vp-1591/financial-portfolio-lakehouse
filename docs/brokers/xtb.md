@@ -13,10 +13,6 @@ argument.
 
 ## Environment Variables
 
-| Variable | Purpose |
-|----------|---------|
-| `XTB_ENABLED` | Enable/disable connector (default: enabled) |
-
 No API key or secret is required for XTB.
 
 ## Usage

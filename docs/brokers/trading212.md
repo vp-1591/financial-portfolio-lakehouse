@@ -11,8 +11,7 @@ instruments. Requires an API key and secret.
 |----------|---------|
 | `T212_API_KEY` | API key |
 | `T212_API_SECRET` | API secret |
-| `T212_BASE_URL` | Base URL (auto-derived from `DEMO` setting) |
-| `T212_ENABLED` | Enable/disable connector (default: enabled) |
+| `T212_BASE_URL` | Base URL (auto-derived from `--mode`) |
 
 ### Staging mode
 

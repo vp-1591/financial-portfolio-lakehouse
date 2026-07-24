@@ -17,14 +17,9 @@ except ``keygen``.  It determines storage backend and credential resolution:
 - **staging** — demo S3 bucket, secrets under base names from SSM
 - **prod** — production S3 bucket, production secrets
 
-Connector enable/disable is controlled by environment variables:
-
-- ``IBKR_ENABLED`` — set to ``0``, ``false``, or ``no`` to disable IBKR
-- ``T212_ENABLED`` — set to ``0``, ``false``, or ``no`` to disable Trading 212
-- ``XTB_ENABLED`` — set to ``0``, ``false``, or ``no`` to disable XTB
-
-All connectors are **enabled by default**.  Secrets come from environment
-variables (set by GitHub Actions via GitHub Secrets, or locally via ``.env``).
+Secrets come from environment variables (set by GitHub Actions via GitHub
+Secrets, or locally via ``.env``).  Connectors are always enabled when
+invoked explicitly (e.g. ``run-connector ibkr``) or as part of ``full``.
 """
 
 from __future__ import annotations
@@ -43,7 +38,6 @@ from pipeline.keygen import main as keygen_main
 from pipeline.secrets import (
     get_mode,
     inject_secrets,
-    is_enabled,
     load_env,
     set_mode,
 )
@@ -587,14 +581,14 @@ def _trigger_sfn_execution(args: argparse.Namespace, mode: str) -> int:
 
 
 def _run_connectors_parallel(args: argparse.Namespace) -> int:
-    """Run enabled connectors in parallel via :func:`cmd_run_connector`.
+    """Run all connectors in parallel via :func:`cmd_run_connector`.
 
     Mirrors the Step Functions Map state: each connector runs
     fetch+transform+validate in its own thread, with fail-fast on first
-    error.  Returns 0 if all connectors succeed (or are disabled).
+    error.  Returns 0 if all connectors succeed.
     """
-    enabled = [c for c in all_connectors() if is_enabled(c.enabled_env_var)]
-    if not enabled:
+    connectors_list = all_connectors()
+    if not connectors_list:
         logger.info("All connectors are disabled — nothing to fetch.")
         return 0
 
@@ -608,10 +602,10 @@ def _run_connectors_parallel(args: argparse.Namespace) -> int:
     )
 
     errors: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(enabled)) as pool:
+    with ThreadPoolExecutor(max_workers=len(connectors_list)) as pool:
         future_to_name = {
             pool.submit(cmd_run_connector, _ns_for(base_ns, c.name)): c.name
-            for c in enabled
+            for c in connectors_list
         }
         for fut in as_completed(future_to_name):
             name = future_to_name[fut]
@@ -698,14 +692,6 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     """
     inject_secrets()
     connector = get(args.connector)
-
-    if not is_enabled(connector.enabled_env_var):
-        logger.info(
-            "Skipping %s: %s is false",
-            connector.display_name,
-            connector.enabled_env_var,
-        )
-        return 0
 
     # XTB requires --xtb-file in dedicated subcommand mode.
     if connector.name == "xtb" and not getattr(args, "xtb_file", None):
@@ -832,10 +818,9 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         description="Investment portfolio data pipeline",
-        epilog="Connectors are enabled by default. Set IBKR_ENABLED=0, "
-        "T212_ENABLED=0, or XTB_ENABLED=0 to disable. "
-        "Secrets come from environment variables "
-        "(GitHub Secrets in CI, .env file locally).",
+        epilog="Secrets come from environment variables "
+        "(GitHub Secrets in CI, .env file locally). "
+        "Connectors are always enabled when invoked explicitly.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

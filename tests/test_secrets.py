@@ -12,7 +12,6 @@ from pipeline.secrets import (
     get_secret,
     inject_secrets,
     is_demo,
-    is_enabled,
     load_env,
     parse_bool,
     reset_mode,
@@ -185,40 +184,6 @@ class TestGetEnv:
         """Empty string env var with no default returns None."""
         monkeypatch.setenv("NONEXISTENT_CONFIG_XYZ", "")
         assert get_env("NONEXISTENT_CONFIG_XYZ") is None
-
-
-class TestIsEnabled:
-    """Test is_enabled() reads boolean env vars."""
-
-    def test_enabled_by_default(self, monkeypatch):
-        """Connectors are enabled when the env var is not set."""
-        monkeypatch.delenv("IBKR_ENABLED", raising=False)
-        assert is_enabled("IBKR_ENABLED") is True
-
-    def test_explicitly_enabled(self, monkeypatch):
-        monkeypatch.setenv("IBKR_ENABLED", "true")
-        assert is_enabled("IBKR_ENABLED") is True
-
-    def test_explicitly_disabled_zero(self, monkeypatch):
-        monkeypatch.setenv("IBKR_ENABLED", "0")
-        assert is_enabled("IBKR_ENABLED") is False
-
-    def test_explicitly_disabled_false(self, monkeypatch):
-        monkeypatch.setenv("T212_ENABLED", "false")
-        assert is_enabled("T212_ENABLED") is False
-
-    def test_explicitly_disabled_no(self, monkeypatch):
-        monkeypatch.setenv("XTB_ENABLED", "no")
-        assert is_enabled("XTB_ENABLED") is False
-
-    def test_case_insensitive(self, monkeypatch):
-        monkeypatch.setenv("IBKR_ENABLED", "False")
-        assert is_enabled("IBKR_ENABLED") is False
-
-    def test_empty_string_is_enabled(self, monkeypatch):
-        """Empty string (var set but empty) means enabled."""
-        monkeypatch.setenv("IBKR_ENABLED", "")
-        assert is_enabled("IBKR_ENABLED") is True
 
 
 class TestParseBool:

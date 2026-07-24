@@ -179,21 +179,12 @@ class TestTransformConnectorIsolation:
 class TestCmdRunConnector:
     """cmd_run_connector dispatches to fetch_connector+transform_connector."""
 
-    def test_disabled_connector_returns_zero(self, monkeypatch) -> None:
-        """Disabled connector logs and returns 0 (runtime gate)."""
-        monkeypatch.setenv("IBKR_ENABLED", "0")
-        args = argparse.Namespace(connector="ibkr")
-        rc = cmd_run_connector(args)
-        assert rc == 0
-
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_enabled_connector_calls_fetch_then_transform(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -213,10 +204,8 @@ class TestCmdRunConnector:
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=FetchResult.ERROR)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_fetch_failure_skips_transform(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -233,10 +222,8 @@ class TestCmdRunConnector:
     @patch("pipeline.run.transform_connector")
     @patch("pipeline.run.fetch_connector", return_value=FetchResult.SKIPPED)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_skipped_connector_returns_zero(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -254,10 +241,8 @@ class TestCmdRunConnector:
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=0)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_validation_failure_returns_nonzero(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -270,7 +255,6 @@ class TestCmdRunConnector:
 
     def test_xtb_without_file_returns_1(self, monkeypatch) -> None:
         """XTB without --xtb-file in dedicated subcommand returns 1."""
-        monkeypatch.setenv("XTB_ENABLED", "1")
         args = argparse.Namespace(connector="xtb", xtb_file=None)
         rc = cmd_run_connector(args)
         assert rc == 1
@@ -279,10 +263,8 @@ class TestCmdRunConnector:
     @patch("pipeline.run.transform_connector", return_value=0)
     @patch("pipeline.run.fetch_connector", return_value=0)
     @patch("pipeline.run.load_key", return_value=b"test-key")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_xtb_with_file_calls_fetch(
         self,
-        mock_enabled: MagicMock,
         mock_key: MagicMock,
         mock_fetch: MagicMock,
         mock_transform: MagicMock,
@@ -712,12 +694,11 @@ class TestCmdFullSfnTrigger:
 
 
 class TestRunConnectorsParallel:
-    """_run_connectors_parallel runs enabled connectors via ThreadPoolExecutor."""
+    """_run_connectors_parallel runs all connectors via ThreadPoolExecutor."""
 
     @patch("pipeline.run.cmd_run_connector", return_value=0)
     @patch("pipeline.run.all_connectors")
-    @patch("pipeline.run.is_enabled", return_value=True)
-    def test_all_connectors_succeed(self, mock_enabled, mock_all, mock_rc) -> None:
+    def test_all_connectors_succeed(self, mock_all, mock_rc) -> None:
         from pipeline.secrets import set_mode
 
         set_mode("docker")
@@ -739,9 +720,8 @@ class TestRunConnectorsParallel:
 
     @patch("pipeline.run.cmd_run_connector", return_value=1)
     @patch("pipeline.run.all_connectors")
-    @patch("pipeline.run.is_enabled", return_value=True)
     def test_connector_failure_returns_nonzero(
-        self, mock_enabled, mock_all, mock_rc, capsys
+        self, mock_all, mock_rc, capsys
     ) -> None:
         from pipeline.secrets import set_mode
 
@@ -761,25 +741,4 @@ class TestRunConnectorsParallel:
         assert rc == 1
         stderr = capsys.readouterr().err
         assert "fail-fast" in stderr
-        reset_mode()
-
-    @patch("pipeline.run.all_connectors")
-    @patch("pipeline.run.is_enabled", return_value=False)
-    def test_all_disabled_returns_zero(self, mock_enabled, mock_all) -> None:
-        from pipeline.secrets import set_mode
-
-        set_mode("docker")
-        mock_all.return_value = [get("ibkr"), get("trading212")]
-        args = argparse.Namespace(
-            target_currency="EUR",
-            fx_rate=[],
-            isin=[],
-            isin_map_file=[],
-            xtb_file=None,
-            mode="docker",
-        )
-        from pipeline.run import _run_connectors_parallel
-
-        rc = _run_connectors_parallel(args)
-        assert rc == 0
         reset_mode()

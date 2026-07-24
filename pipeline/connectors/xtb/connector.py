@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 class XtbConnector:
     name = "xtb"
     display_name = "XTB"
-    enabled_env_var = "XTB_ENABLED"
     cdc_supported = False
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:

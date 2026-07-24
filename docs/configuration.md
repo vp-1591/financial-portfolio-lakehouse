@@ -19,18 +19,9 @@ inline documentation.
 
 - **Broker secrets** — `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`,
   `IBKR_FLEX_CDC_QUERY_ID` (optional, falls back to `IBKR_FLEX_QUERY_ID`),
-  `T212_API_KEY`, `T212_API_SECRET`, and their `_ENABLED` toggles
+  `T212_API_KEY`, `T212_API_SECRET`
 - **Encryption** — `ENCRYPTION_KEY` (Fernet key, generated via `keygen` command)
 - **Storage** — `S3_BUCKET`, AWS credentials, S3 endpoint
-
-### Connector toggles
-
-All connectors are **enabled by default**. Set a toggle to `0`, `false`, or
-`no` to disable it:
-
-- `IBKR_ENABLED` — IBKR Flex Web Service
-- `T212_ENABLED` — Trading 212 API
-- `XTB_ENABLED` — XTB Excel report upload
 
 ## Broker Setup
 

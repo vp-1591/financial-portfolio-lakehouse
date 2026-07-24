@@ -30,14 +30,10 @@ There is **no cross-mode fallback** — missing credentials are logged
 as warnings and :func:`resolve_secret` returns ``None``, allowing callers
 to gracefully skip connectors or operations that require the missing secret.
 
-Connector toggles (``IBKR_ENABLED``, ``T212_ENABLED``, ``XTB_ENABLED``)
-default to **enabled**.  Set them to ``0``, ``false``, or ``no`` to disable
-a connector.
-
 Usage::
 
     from pipeline.secrets import (
-        inject_secrets, get_secret, get_env, is_enabled,
+        inject_secrets, get_secret, get_env,
         load_env, parse_bool, is_demo, resolve_secret,
         set_mode, get_mode,
     )
@@ -47,8 +43,6 @@ Usage::
     # ... or ...
     inject_secrets()           # load .env AND validate (logs warnings for missing secrets)
     token = resolve_secret("IBKR_FLEX_TOKEN")  # secret lookup (env var)
-    if is_enabled("IBKR_ENABLED"):              # True unless set to 0/false/no
-        ...
     if is_demo():                                # True when --mode staging
         ...
 """
@@ -214,16 +208,6 @@ def get_env(name: str, default: str | None = None) -> str | None:
         return value
     return default
 
-
-def is_enabled(name: str) -> bool:
-    """Check if a connector or feature is enabled via an env var.
-
-    Returns ``True`` unless the env var is explicitly set to one of
-    ``0``, ``false``, or ``no`` (case-insensitive).  This means
-    connectors are **enabled by default**.
-    """
-    value = os.environ.get(name, "").lower()
-    return value not in ("0", "false", "no")
 
 
 def parse_bool(name: str, default: bool = False) -> bool:

@@ -104,6 +104,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0091 | Trigger Step Functions in cmd_full for staging/prod | 2026-07-23 | active | — |
 | 0092 | Remove _DEMO env var suffix pattern | 2026-07-23 | active | — |
 | 0093 | Resolve State Machine ARN via boto3 Instead of Env Var | 2026-07-24 | active | — |
+| 0094 | Remove Connector *_ENABLED Environment Variable Toggles | 2026-07-24 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

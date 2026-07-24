@@ -4,7 +4,6 @@ Verifies that each connector correctly implements:
 - ``fetch_kwargs()`` — builds connector-specific snapshot kwargs
 - ``fetch_cdc_kwargs()`` — returns CDC kwargs (same as snapshot for T212, empty otherwise)
 - ``required_secrets()`` — lists expected secret env-var names
-- ``enabled_env_var`` — declares the correct *_ENABLED variable name
 - ``extract_holdings()`` — extracts Holding objects from a normalized DataFrame
 """
 
@@ -214,24 +213,6 @@ class TestRequiredSecrets:
     def test_xtb_required_secrets(self) -> None:
         # XTB reads from uploaded files, not API secrets
         assert get("xtb").required_secrets() == []
-
-
-# ---------------------------------------------------------------------------
-# enabled_env_var
-# ---------------------------------------------------------------------------
-
-
-class TestEnabledEnvVar:
-    """Each connector declares the correct *_ENABLED env var name."""
-
-    def test_ibkr_enabled_env_var(self) -> None:
-        assert get("ibkr").enabled_env_var == "IBKR_ENABLED"
-
-    def test_t212_enabled_env_var(self) -> None:
-        assert get("trading212").enabled_env_var == "T212_ENABLED"
-
-    def test_xtb_enabled_env_var(self) -> None:
-        assert get("xtb").enabled_env_var == "XTB_ENABLED"
 
 
 # ---------------------------------------------------------------------------
