@@ -24,7 +24,7 @@ For snapshot positions without `walletImpact`, `position_currency()` falls back 
 
 Add a class-level `MINOR_CURRENCY_UNITS` dictionary mapping minor currency codes to their major unit and conversion factor (e.g., `GBX → (GBP, 100)`). When `fetch_rate()` encounters a minor currency unit, it fetches the major unit's rate and divides by the factor.
 
-Unknown minor currency codes that aren't in `MINOR_CURRENCY_UNITS` and aren't recognized by the API providers fall through to the existing `PortfolioConnectorError` — both Frankfurter and Yahoo reject unknown codes, producing a loud failure with a clear message including the currency code. This prevents silent wrong-rate bugs like the GBX issue.
+Unknown minor currency codes that aren't in `MINOR_CURRENCY_UNITS` and aren't recognized by the API providers fall through to the existing `PortfolioConnectorError`. Frankfurter rejects unknown codes with a 400 error. Yahoo may silently normalise codes (e.g., `GBX→GBP`), but `fetch_yahoo_rate` now validates that the symbol Yahoo echoes back matches the requested symbol — if it differs, a `PortfolioConnectorError` is raised. This ensures a guaranteed loud failure rather than a silent wrong rate.
 
 ## Constraints
 
@@ -42,7 +42,7 @@ Unknown minor currency codes that aren't in `MINOR_CURRENCY_UNITS` and aren't re
 
 ## Validation
 
-- New unit tests: `test_gbx_converts_via_gbp_divided_by_100`, `test_gbp_unaffected_by_gbx_mapping`, `test_gbx_rate_cached_after_first_convert` in `TestCurrencyConverter`.
+- New unit tests: `test_gbx_converts_via_gbp_divided_by_100`, `test_gbp_unaffected_by_gbx_mapping`, `test_gbx_rate_cached_after_first_convert`, `test_yahoo_rejects_normalised_symbol`, `test_yahoo_accepts_matching_symbol`, `test_yahoo_accepts_response_without_symbol` in `TestCurrencyConverter`.
 - New unit test: `test_snapshot_security_ccy_uses_wallet_currency` in `TestTransformSnapshot` — verifies PLN wallet with EUR/GBX/GBP instruments produces `security_ccy = "PLN"` for all equity positions.
 - New unit test: `test_gbx_converted_via_gbp_divided_by_100` in `TestNormalizeCurrency` — verifies GBX→EUR rate is GBP→EUR / 100.
 - Updated `security_ccy` assertion in `test_transform_preserves_isin` — verifies wallet currency is used.

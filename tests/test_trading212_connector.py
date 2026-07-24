@@ -386,6 +386,8 @@ class TestTransformSnapshot:
             f"Expected all cash security_ccy to be PLN, got {cash_ccys}"
         )
 
+
+class TestClientPagination:
     """Tests for Trading212Client._fetch_paginated()."""
 
     def test_fetch_paginated_returns_bare_list(self) -> None:

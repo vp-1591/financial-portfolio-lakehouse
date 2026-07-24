@@ -33,6 +33,9 @@ include = ["pipeline*"]
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
+markers = [
+    "integration: tests that call live external APIs (may fail due to network)",
+]
 
 [tool.ruff]
 target-version = "py311"

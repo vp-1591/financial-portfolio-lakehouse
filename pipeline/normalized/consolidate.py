@@ -53,8 +53,9 @@ class CurrencyConverter:
     # GBX (British pence) = GBP / 100.  When the converter encounters a
     # minor unit, it fetches the major-unit rate and divides by the factor.
     # Unknown minor currencies are not mapped here — they fall through to
-    # the API providers, which either reject them (loud failure) or return
-    # a wrong rate that should be caught in review.
+    # the API providers, which reject them (Frankfurter) or are caught
+    # by Yahoo symbol validation (which detects normalisation like
+    # GBX→GBP and raises PortfolioConnectorError).
     MINOR_CURRENCY_UNITS: ClassVar[dict[str, tuple[str, int]]] = {
         "GBX": ("GBP", 100),
     }
@@ -169,6 +170,17 @@ class CurrencyConverter:
             rate = float(meta["regularMarketPrice"])
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise PortfolioConnectorError(f"unexpected response: {data}") from exc
+
+        # Yahoo may silently normalise minor/unknown currency codes to
+        # their major counterpart (e.g. GBX → GBP), returning the wrong
+        # rate.  Detect this by checking the symbol Yahoo echoes back.
+        returned_symbol = meta.get("symbol", "")
+        if returned_symbol and returned_symbol != symbol:
+            raise PortfolioConnectorError(
+                f"Yahoo normalised {symbol} to {returned_symbol}; "
+                f"the rate would be wrong for {source_currency}. "
+                f"Pass --fx-rate {source_currency}=RATE to provide it."
+            )
 
         if rate == 0:
             raise PortfolioConnectorError(

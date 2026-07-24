@@ -36,6 +36,7 @@ Remove the `*_ENABLED` environment variable toggles and all supporting code:
 - Fewer env vars to document and configure.
 - `.env.example` is shorter and less confusing.
 - The `is_enabled()` function and `enabled_env_var` protocol attribute are gone — less code to maintain.
+- `resolve_aws_credentials()` is now cached via `functools.cache`. This eliminates duplicate "Resolved AWS credentials" warnings when the function is called multiple times in one process. The trade-off is that credentials are resolved once per process — environment variable changes after the first call are ignored. This is acceptable because the pipeline runs as short-lived CLI invocations where credentials don't change mid-run. Tests call `resolve_aws_credentials.cache_clear()` in `setup_method()` to reset between test cases.
 
 ## Validation
 
