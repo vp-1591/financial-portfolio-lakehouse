@@ -27,11 +27,40 @@ Run a single test file or specific test:
 
 - When changing portfolio math, broker data normalization, or dashboard output, add or update focused tests that cover the changed behavior and any reported regression.
 
-## Useful commands
+## Verify before guessing
+
+Grep the source before importing — the actual function name may differ from
+intuition:
 
 ```bash
-.venv/Scripts/python -m pipeline.run query "SELECT * FROM portfolio_holdings" --decrypt --mode staging
-.venv/Scripts/python -m pipeline.run report --mode staging --open
+grep -rn "def load_" pipeline/crypto.py    # confirms load_key, not load_fernet_key
+```
+
+
+## Querying data
+
+**Always use `pipeline.run query`, never construct `DeltaTable()` manually.** The
+CLI handles S3 credentials, region config, encryption keys, and DuckDB setup.
+Manual construction produces opaque S3/region/crypto errors.
+
+Start with `SELECT *` to discover table and column names — don't guess them:
+
+```bash
+PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run query \
+  "SELECT * FROM <table> LIMIT 5" --decrypt --mode staging
+```
+
+1. If DuckDB says "table does not exist", its error message suggests close names.
+2. Once the table loads, read column headers from the output — names like `label`
+   or `security_value` are often wrong.
+3. Then narrow down with specific columns.
+
+Always prefix with `PYTHONIOENCODING=utf-8` on Windows (terminal default is
+cp1252; non-ASCII ISINs/currency symbols crash without it).
+
+```bash
+PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run query "..." --decrypt --mode staging
+PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run report --mode staging --open
 ```
 
 @~/.claude/shared/adr-workflow.md

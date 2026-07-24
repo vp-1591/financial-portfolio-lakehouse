@@ -35,3 +35,6 @@ _bmad/*
 
 # review agent output
 .claude/_review-artifacts
+
+# temporary investigation results and artifacts
+tmp/
