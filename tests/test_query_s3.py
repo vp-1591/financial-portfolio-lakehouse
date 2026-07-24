@@ -7,11 +7,15 @@ import duckdb
 import pytest
 
 from pipeline.query import _configure_s3
-from pipeline.secrets import set_mode
+from pipeline.secrets import resolve_aws_credentials, set_mode
 
 
 class TestConfigureS3:
     """Verify _configure_s3 uses DuckDB SECRET mechanism."""
+
+    def setup_method(self):
+        """Clear the functools.cache between tests so each sees fresh env vars."""
+        resolve_aws_credentials.cache_clear()
 
     def test_creates_s3_secret(self):
         """_configure_s3 should create a DuckDB S3 secret when credentials are present."""

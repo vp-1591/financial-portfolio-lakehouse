@@ -52,6 +52,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import overload
 
@@ -376,6 +377,7 @@ class AwsCredentials:
         return parts
 
 
+@cache
 def resolve_aws_credentials() -> AwsCredentials:
     """Resolve AWS credentials from environment variables.
 
@@ -388,6 +390,10 @@ def resolve_aws_credentials() -> AwsCredentials:
     ``AWS_REGION``, ``S3_ENDPOINT_URL``, and ``S3_ALLOW_HTTP`` are
     configuration (not secrets) and are read directly from the
     environment.
+
+    Results are cached (``functools.cache``) so that multiple call sites
+    during connection setup (``_configure_s3``, ``_discover_tables_s3``)
+    do not produce duplicate warnings for missing credentials.
     """
     key_id = resolve_secret("AWS_ACCESS_KEY_ID") or None
     secret_key = resolve_secret("AWS_SECRET_ACCESS_KEY") or None
