@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import http.client
+import urllib.error
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from pipeline.normalized.consolidate import (
@@ -9,6 +13,7 @@ from pipeline.normalized.consolidate import (
     Holding,
     PortfolioConnectorError,
     PortfolioRow,
+    TransientHttpError,
     aggregate_percentages,
     format_identifier,
     normalize_trading212_ticker,
@@ -145,6 +150,159 @@ class TestCurrencyConverter:
         # GBX rate should be cached: 1.17 / 100 = 0.0117
         assert "GBX" in converter._rates
         assert converter._rates["GBX"] == pytest.approx(0.0117)
+
+
+class TestRequestJsonRetry:
+    """Unit tests for tenacity retry logic in CurrencyConverter.request_json."""
+
+    def _make_converter(self, **kwargs):  # type: ignore[no-untyped-def]
+        """Create a CurrencyConverter with manual_rates to avoid real HTTP calls."""
+        return CurrencyConverter("EUR", manual_rates={"USD": 0.9}, **kwargs)
+
+    @staticmethod
+    def _http_error(code: int, reason: str) -> urllib.error.HTTPError:
+        """Create an HTTPError with a properly-typed hdrs argument."""
+        return urllib.error.HTTPError(
+            "https://example.com",
+            code,
+            reason,
+            http.client.HTTPMessage(),  # type: ignore[arg-type]
+            None,
+        )
+
+    def _mock_ok_response(self, data: dict | None = None) -> MagicMock:
+        """Create a mock urllib response that returns JSON data."""
+        import json
+
+        response = MagicMock()
+        response.read.return_value = json.dumps(
+            data or {"rates": {"EUR": 1.0}}
+        ).encode()
+        response.__enter__ = MagicMock(return_value=response)
+        response.__exit__ = MagicMock(return_value=False)
+        return response
+
+    def test_success_on_first_attempt(self) -> None:
+        """No retry needed when the first request succeeds."""
+        converter = self._make_converter()
+        with patch("urllib.request.urlopen", return_value=self._mock_ok_response()):
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+
+    def test_retries_on_timeout_error(self) -> None:
+        """TimeoutError triggers retry; succeeds on second attempt."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        ok_response = self._mock_ok_response()
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[TimeoutError("timed out"), ok_response],
+        ) as mock_urlopen:
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+        assert mock_urlopen.call_count == 2
+
+    def test_retries_on_url_error(self) -> None:
+        """URLError (network error) triggers retry; succeeds on second attempt."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        ok_response = self._mock_ok_response()
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[urllib.error.URLError("Connection refused"), ok_response],
+        ) as mock_urlopen:
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+        assert mock_urlopen.call_count == 2
+
+    def test_retries_on_5xx_error(self) -> None:
+        """5xx HTTP errors trigger retry; succeeds on second attempt."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        ok_response = self._mock_ok_response()
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[
+                self._http_error(503, "Service Unavailable"),
+                ok_response,
+            ],
+        ) as mock_urlopen:
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+        assert mock_urlopen.call_count == 2
+
+    def test_no_retry_on_4xx_error(self) -> None:
+        """4xx HTTP errors are NOT retried; raises immediately."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=[
+                    self._http_error(400, "Bad Request"),
+                ],
+            ) as mock_urlopen,
+            pytest.raises(PortfolioConnectorError, match="HTTP 400"),
+        ):
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
+
+    def test_no_retry_on_json_decode_error(self) -> None:
+        """JSONDecodeError is NOT retried; raises immediately."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        bad_response = MagicMock()
+        bad_response.read.return_value = b"not json"
+        bad_response.__enter__ = MagicMock(return_value=bad_response)
+        bad_response.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("urllib.request.urlopen", return_value=bad_response) as mock_urlopen,
+            pytest.raises(PortfolioConnectorError, match="non-JSON response"),
+        ):
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
+
+    def test_no_retry_on_non_dict_response(self) -> None:
+        """Non-dict JSON response is NOT retried; raises immediately."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        list_response = MagicMock()
+        list_response.read.return_value = b"[1, 2, 3]"
+        list_response.__enter__ = MagicMock(return_value=list_response)
+        list_response.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("urllib.request.urlopen", return_value=list_response) as mock_urlopen,
+            pytest.raises(PortfolioConnectorError, match="unexpected response"),
+        ):
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
+
+    def test_raises_after_all_retries_exhausted(self) -> None:
+        """Raises TransientHttpError after all retries are exhausted."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=TimeoutError("timed out"),
+            ) as mock_urlopen,
+            pytest.raises(TransientHttpError, match="timed out"),
+        ):
+            converter.request_json("https://example.com/api")
+        # 1 initial + 2 retries = 3 total attempts
+        assert mock_urlopen.call_count == 3
+
+    def test_zero_retries_no_retry(self) -> None:
+        """With retries=0, no retry occurs on transient errors."""
+        converter = self._make_converter(retries=0)
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=TimeoutError("timed out"),
+            ) as mock_urlopen,
+            pytest.raises(TransientHttpError, match="timed out"),
+        ):
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
+
+    def test_default_retry_parameters(self) -> None:
+        """Default constructor provides retries=2 and retry_delay=1.0."""
+        converter = CurrencyConverter("EUR")
+        assert converter.retries == 2
+        assert converter.retry_delay == 1.0
 
 
 @integration

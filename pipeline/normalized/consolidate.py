@@ -18,6 +18,7 @@ from typing import ClassVar
 
 import pyarrow as pa
 from deltalake import write_deltalake
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from pipeline.normalized.models import consolidated_holdings_schema
 
@@ -63,6 +64,8 @@ class CurrencyConverter:
         manual_rates: dict[str, float] | None = None,
         base_url: str = FRANKFURTER_BASE_URL,
         timeout: float = 20.0,
+        retries: int = 2,
+        retry_delay: float = 1.0,
     ) -> None:
         self.target_currency = target_currency.upper()
         self.manual_rates = {
@@ -70,6 +73,8 @@ class CurrencyConverter:
         }
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.retries = retries
+        self.retry_delay = retry_delay
         self._rates: dict[str, float] = {self.target_currency: 1.0}
         self._rates.update(self.manual_rates)
 
@@ -112,6 +117,12 @@ class CurrencyConverter:
         )
 
     def request_json(self, url: str) -> dict[str, object]:
+        """Fetch a URL and return the parsed JSON response.
+
+        Retries on transient errors (timeouts, network failures, 5xx server
+        errors) using tenacity.  Client errors (4xx) and response-format
+        errors (non-JSON, non-dict) are not retried.
+        """
         request = urllib.request.Request(
             url,
             headers={
@@ -119,21 +130,39 @@ class CurrencyConverter:
                 "User-Agent": DEFAULT_USER_AGENT,
             },
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            raise PortfolioConnectorError(f"HTTP {exc.code} {exc.reason}") from exc
-        except urllib.error.URLError as exc:
-            raise PortfolioConnectorError(str(exc.reason)) from exc
 
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise PortfolioConnectorError(f"non-JSON response: {raw[:200]}") from exc
-        if not isinstance(parsed, dict):
-            raise PortfolioConnectorError(f"unexpected response: {raw[:200]}")
-        return parsed
+        # Decision: docs/adr/0098-add-retry-logic-to-currency-converter-request-json.md
+        @retry(
+            retry=retry_if_exception_type(TransientHttpError),
+            stop=stop_after_attempt(1 + self.retries),
+            wait=wait_fixed(self.retry_delay),
+            reraise=True,
+        )
+        def _do_request() -> dict[str, object]:
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    raw = response.read().decode("utf-8")
+            except urllib.error.HTTPError as exc:
+                # 5xx server errors are transient; 4xx client errors are permanent.
+                if exc.code >= 500:
+                    raise TransientHttpError(f"HTTP {exc.code} {exc.reason}") from exc
+                raise PortfolioConnectorError(f"HTTP {exc.code} {exc.reason}") from exc
+            except urllib.error.URLError as exc:
+                raise TransientHttpError(str(exc.reason)) from exc
+            except TimeoutError as exc:
+                raise TransientHttpError("The read operation timed out") from exc
+
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise PortfolioConnectorError(
+                    f"non-JSON response: {raw[:200]}"
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise PortfolioConnectorError(f"unexpected response: {raw[:200]}")
+            return parsed
+
+        return _do_request()
 
     def fetch_frankfurter_rate(self, source_currency: str) -> float:
         query = urllib.parse.urlencode(
@@ -155,6 +184,10 @@ class CurrencyConverter:
 
 class PortfolioConnectorError(RuntimeError):
     pass
+
+
+class TransientHttpError(PortfolioConnectorError):
+    """HTTP/network error that may succeed on retry (timeout, 5xx, DNS failure)."""
 
 
 def format_identifier(kind: str, value: str) -> str:

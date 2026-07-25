@@ -108,6 +108,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0095 | Fix T212 Snapshot Currency Mismatch and GBX Rate Bug | 2026-07-24 | superseded | 0097 |
 | 0096 | Outlier Detection: Use Smallest Bar Instead of Median | 2026-07-25 | active | — |
 | 0097 | Remove Yahoo Finance as FX Rate Provider | 2026-07-25 | active | — |
+| 0098 | Add Retry Logic to CurrencyConverter.request_json | 2026-07-25 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
