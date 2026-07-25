@@ -87,7 +87,8 @@ class CurrencyConverter:
 
     def fetch_rate(self, source_currency: str) -> float:
         # Handle minor currency units (e.g., GBX -> GBP / 100)
-        # Decision: docs/adr/0095-fix-t212-snapshot-ccy-gbx-rate.md
+        # Decision: docs/adr/0097-remove-yahoo-finance-fx-provider.md
+        # (GBX handling via MINOR_CURRENCY_UNITS originally from ADR 0095)
         if source_currency in self.MINOR_CURRENCY_UNITS:
             major_currency, factor = self.MINOR_CURRENCY_UNITS[source_currency]
             major_rate = self._rates.get(major_currency)
