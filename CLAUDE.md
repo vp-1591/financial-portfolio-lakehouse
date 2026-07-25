@@ -13,7 +13,7 @@ Always use the project venv — never the system Python (`C:\Python314`). On Win
 Before committing, run all three checks. After linting, re-run tests to ensure auto-fixes didn't break anything:
 
 ```bash
-ruff check --fix . && ruff format .
+.venv/Scripts/python -m ruff check --fix . && ruff format .
 .venv/Scripts/python -m pyright pipeline/ tests/
 .venv/Scripts/python -m pytest tests/ -q -rf
 ```
