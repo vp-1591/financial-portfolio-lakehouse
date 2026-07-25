@@ -14,7 +14,7 @@ from pipeline.normalized.consolidate import (
     normalize_trading212_ticker,
 )
 
-# Mark tests that call live external APIs (Yahoo Finance, Frankfurter).
+# Mark tests that call live external APIs (Frankfurter).
 # Run with:  pytest -m integration  (to run only integration tests)
 # Run with:  pytest -m "not integration"  (to skip them)
 integration = pytest.mark.integration
@@ -146,72 +146,6 @@ class TestCurrencyConverter:
         assert "GBX" in converter._rates
         assert converter._rates["GBX"] == pytest.approx(0.0117)
 
-    def test_yahoo_rejects_normalised_symbol(self) -> None:
-        """Yahoo normalising GBX→GBP in its response must raise an error.
-
-        When Yahoo silently changes the requested symbol (e.g. GBXEUR=X
-        to GBPEUR=X), the returned rate would be 100× wrong.  The converter
-        must detect this mismatch and raise PortfolioConnectorError.
-        """
-        converter = CurrencyConverter("EUR")
-        converter.request_json = lambda url: {  # type: ignore[method-assign]
-            "chart": {
-                "result": [
-                    {
-                        "meta": {
-                            "symbol": "GBPEUR=X",  # Yahoo normalised GBX→GBP
-                            "regularMarketPrice": 1.17,
-                        }
-                    }
-                ]
-            }
-        }
-
-        with pytest.raises(
-            PortfolioConnectorError, match="Yahoo normalised GBXEUR=X to GBPEUR=X"
-        ):
-            converter.fetch_yahoo_rate("GBX")
-
-    def test_yahoo_accepts_matching_symbol(self) -> None:
-        """When Yahoo echoes back the same symbol, the rate is returned."""
-        converter = CurrencyConverter("EUR")
-        converter.request_json = lambda url: {  # type: ignore[method-assign]
-            "chart": {
-                "result": [
-                    {
-                        "meta": {
-                            "symbol": "USDEUR=X",
-                            "regularMarketPrice": 0.92,
-                        }
-                    }
-                ]
-            }
-        }
-
-        assert converter.fetch_yahoo_rate("USD") == pytest.approx(0.92)
-
-    def test_yahoo_accepts_response_without_symbol(self) -> None:
-        """When Yahoo omits the symbol from meta, the rate is still returned.
-
-        Some Yahoo Finance responses may not include a 'symbol' key.
-        In that case we cannot validate and fall through to returning the
-        rate, matching the pre-validation behaviour.
-        """
-        converter = CurrencyConverter("EUR")
-        converter.request_json = lambda url: {  # type: ignore[method-assign]
-            "chart": {
-                "result": [
-                    {
-                        "meta": {
-                            "regularMarketPrice": 0.92,
-                        }
-                    }
-                ]
-            }
-        }
-
-        assert converter.fetch_yahoo_rate("USD") == pytest.approx(0.92)
-
 
 @integration
 class TestCurrencyConverterIntegration:
@@ -220,18 +154,6 @@ class TestCurrencyConverterIntegration:
     These hit real external services and may fail due to network issues
     or API downtime.  Run with:  pytest -m integration
     """
-
-    def test_yahoo_returns_matching_symbol_for_valid_currency(self) -> None:
-        """Live Yahoo Finance response includes a 'symbol' that matches the request.
-
-        This validates that the symbol-validation logic works against real
-        responses — not just mocked ones.
-        """
-        converter = CurrencyConverter("EUR")
-        # USD→EUR is a major pair that Yahoo Finance always serves.
-        rate = converter.fetch_yahoo_rate("USD")
-        # The rate should be a positive number (USD/EUR is typically ~0.9–1.1)
-        assert rate > 0, f"Expected positive rate, got {rate}"
 
     def test_frankfurter_returns_valid_rate(self) -> None:
         """Live Frankfurter API returns a valid rate for a major currency pair."""
@@ -257,9 +179,8 @@ class TestCurrencyConverterIntegration:
     def test_unknown_currency_raises_error(self) -> None:
         """An unknown currency code not in MINOR_CURRENCY_UNITS must raise.
 
-        Uses "XYZ" (not a real ISO 4217 code).  Frankfurter should reject it
-        with a 400, and if Yahoo tries to normalise it, the symbol validation
-        should catch the mismatch.  Either way, no silent wrong rate.
+        Uses "XYZ" (not a real ISO 4217 code).  Frankfurter rejects it
+        with a 400 error.  No silent wrong rate is possible.
         """
         converter = CurrencyConverter("EUR")
         with pytest.raises(PortfolioConnectorError):

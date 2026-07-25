@@ -49,7 +49,7 @@ The `Holding` dataclass retains its field names (`currency`, `security_currency`
 - **Positive**: Every column name has a single, unambiguous meaning. `target_value` is always in `target_ccy` (EUR). `security_value`/`cash_amount` are always in `security_ccy`.
 - **Positive**: IBKR snapshots no longer lose native-currency values. T212 dividends/transactions get FX conversion via `normalize_currency()`.
 - **Negative**: All Delta tables must be rebuilt from raw data after this change — old tables are incompatible.
-- **Negative**: `normalize_currency()` requires API access (Frankfurter/Yahoo Finance) for currencies not covered by `--fx-rate` overrides, making the pipeline dependent on external services for the normalize step.
+- **Negative**: `normalize_currency()` requires API access (Frankfurter) for currencies not covered by `--fx-rate` overrides, making the pipeline dependent on external services for the normalize step.
 
 ## Validation
 

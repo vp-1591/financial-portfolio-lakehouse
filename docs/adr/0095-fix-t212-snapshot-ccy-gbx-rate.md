@@ -1,5 +1,7 @@
 # Fix T212 Snapshot Currency Mismatch and GBX Rate Bug
 
+> **Superseded by [ADR 0097](./0097-remove-yahoo-finance-fx-provider.md)** — Yahoo Finance fallback and symbol validation removed. GBX handling via `MINOR_CURRENCY_UNITS` and snapshot `security_ccy` fix remain unchanged.
+
 ## Context
 
 Two bugs in the Trading 212 pipeline inflate the reported portfolio value by approximately 3.3× (19,061 EUR instead of 5,776 EUR):

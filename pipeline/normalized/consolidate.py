@@ -22,7 +22,6 @@ from deltalake import write_deltalake
 from pipeline.normalized.models import consolidated_holdings_schema
 
 FRANKFURTER_BASE_URL = "https://api.frankfurter.app"
-YAHOO_FINANCE_BASE_URL = "https://query1.finance.yahoo.com"
 DEFAULT_USER_AGENT = "Mozilla/5.0 financial-portfolio-lakehouse/2.0"
 
 
@@ -53,9 +52,7 @@ class CurrencyConverter:
     # GBX (British pence) = GBP / 100.  When the converter encounters a
     # minor unit, it fetches the major-unit rate and divides by the factor.
     # Unknown minor currencies are not mapped here — they fall through to
-    # the API providers, which reject them (Frankfurter) or are caught
-    # by Yahoo symbol validation (which detects normalisation like
-    # GBX→GBP and raises PortfolioConnectorError).
+    # Frankfurter, which rejects them with a 400 error.
     MINOR_CURRENCY_UNITS: ClassVar[dict[str, tuple[str, int]]] = {
         "GBX": ("GBP", 100),
     }
@@ -65,7 +62,6 @@ class CurrencyConverter:
         target_currency: str,
         manual_rates: dict[str, float] | None = None,
         base_url: str = FRANKFURTER_BASE_URL,
-        yahoo_base_url: str = YAHOO_FINANCE_BASE_URL,
         timeout: float = 20.0,
     ) -> None:
         self.target_currency = target_currency.upper()
@@ -73,7 +69,6 @@ class CurrencyConverter:
             currency.upper(): rate for currency, rate in (manual_rates or {}).items()
         }
         self.base_url = base_url.rstrip("/")
-        self.yahoo_base_url = yahoo_base_url.rstrip("/")
         self.timeout = timeout
         self._rates: dict[str, float] = {self.target_currency: 1.0}
         self._rates.update(self.manual_rates)
@@ -103,10 +98,7 @@ class CurrencyConverter:
             return rate
 
         errors: list[str] = []
-        for provider_name, fetcher in (
-            ("Frankfurter", self.fetch_frankfurter_rate),
-            ("Yahoo", self.fetch_yahoo_rate),
-        ):
+        for provider_name, fetcher in (("Frankfurter", self.fetch_frankfurter_rate),):
             try:
                 return fetcher(source_currency)
             except PortfolioConnectorError as exc:
@@ -152,35 +144,6 @@ class CurrencyConverter:
             rate = float(data["rates"][self.target_currency])
         except (KeyError, TypeError, ValueError) as exc:
             raise PortfolioConnectorError(f"unexpected response: {data}") from exc
-
-        if rate == 0:
-            raise PortfolioConnectorError(
-                f"FX rate {source_currency}->{self.target_currency} is zero."
-            )
-        return rate
-
-    def fetch_yahoo_rate(self, source_currency: str) -> float:
-        symbol = f"{source_currency}{self.target_currency}=X"
-        encoded_symbol = urllib.parse.quote(symbol, safe="")
-        url = f"{self.yahoo_base_url}/v8/finance/chart/{encoded_symbol}?range=1d&interval=1d"
-        data = self.request_json(url)
-        try:
-            result = data["chart"]["result"][0]
-            meta = result["meta"]
-            rate = float(meta["regularMarketPrice"])
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise PortfolioConnectorError(f"unexpected response: {data}") from exc
-
-        # Yahoo may silently normalise minor/unknown currency codes to
-        # their major counterpart (e.g. GBX → GBP), returning the wrong
-        # rate.  Detect this by checking the symbol Yahoo echoes back.
-        returned_symbol = meta.get("symbol", "")
-        if returned_symbol and returned_symbol != symbol:
-            raise PortfolioConnectorError(
-                f"Yahoo normalised {symbol} to {returned_symbol}; "
-                f"the rate would be wrong for {source_currency}. "
-                f"Pass --fx-rate {source_currency}=RATE to provide it."
-            )
 
         if rate == 0:
             raise PortfolioConnectorError(
