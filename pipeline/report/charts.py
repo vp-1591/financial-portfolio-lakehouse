@@ -158,9 +158,9 @@ def passive_income_timeline(
 def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
     """Grouped bar chart: cash flow by month and event type.
 
-    When outlier event types exist (peak monthly value > 10× the median
-    peak), an interactive toggle lets the reader hide them so smaller
-    flows — interest, fees, trades — become visible.
+    When outlier event types exist (peak monthly value > 10× the smallest
+    meaningful peak), an interactive toggle lets the reader hide them so
+    smaller flows — interest, fees, trades — become visible.
     """
     if cash_flow.is_empty():
         return _empty_figure("Cash Flow Breakdown")
@@ -193,7 +193,7 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
             {"name": et, "x": months, "y": y_values, "peak_abs": peak_abs}
         )
 
-    # Identify outlier event types whose peak dwarfs the median peak
+    # Identify outlier event types whose peak dwarfs the smallest peak
     peaks = [td["peak_abs"] for td in trace_data]
     is_outlier = _classify_outliers(peaks, ratio=10)
 
@@ -289,23 +289,30 @@ def data_quality_chart(dq: pl.DataFrame) -> go.Figure | None:
 
 
 def _classify_outliers(peaks: list[float], ratio: float = 10) -> list[bool]:
-    """Flag values whose peak exceeds *ratio* × the median of the other peaks.
+    """Flag values whose peak exceeds *ratio* × the smallest meaningful other peak.
 
-    Each peak is compared to the median of all *other* peaks so that a
-    single extreme value cannot inflate the baseline.  Returns a list
-    of booleans, one per entry.  An empty input or a zero baseline
-    produces no outliers.
+    A bar is an outlier when it dwarfs the smallest active category, making
+    that category invisible on a linear Y-axis.  The baseline is the minimum
+    of the other non-zero peaks, floored at ``max_peak / ratio²`` to prevent
+    a tiny noise value (e.g. €1) from making everything an outlier.
+
+    Returns a list of booleans, one per entry.  An empty input or all-zero
+    other peaks produces no outliers.
     """
     if len(peaks) < 2:
         return [False] * len(peaks)
+    max_peak = max(peaks)
+    floor = max_peak / (ratio * ratio) if max_peak > 0 else 0
     result: list[bool] = []
     for i, peak in enumerate(peaks):
-        others = sorted(peaks[j] for j in range(len(peaks)) if j != i)
-        mid = len(others) // 2
-        baseline = (
-            others[mid] if len(others) % 2 == 1 else (others[mid - 1] + others[mid]) / 2
-        )
-        result.append(peak > ratio * baseline if baseline > 0 else False)
+        others_nonzero = [
+            peaks[j] for j in range(len(peaks)) if j != i and peaks[j] > 0
+        ]
+        if not others_nonzero:
+            result.append(False)
+            continue
+        baseline = max(min(others_nonzero), floor)
+        result.append(peak > ratio * baseline)
     return result
 
 
