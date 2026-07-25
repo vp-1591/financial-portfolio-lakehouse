@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import http.client
+import urllib.error
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from pipeline.normalized.consolidate import (
@@ -9,12 +13,13 @@ from pipeline.normalized.consolidate import (
     Holding,
     PortfolioConnectorError,
     PortfolioRow,
+    TransientHttpError,
     aggregate_percentages,
     format_identifier,
     normalize_trading212_ticker,
 )
 
-# Mark tests that call live external APIs (Yahoo Finance, Frankfurter).
+# Mark tests that call live external APIs (Frankfurter).
 # Run with:  pytest -m integration  (to run only integration tests)
 # Run with:  pytest -m "not integration"  (to skip them)
 integration = pytest.mark.integration
@@ -146,71 +151,158 @@ class TestCurrencyConverter:
         assert "GBX" in converter._rates
         assert converter._rates["GBX"] == pytest.approx(0.0117)
 
-    def test_yahoo_rejects_normalised_symbol(self) -> None:
-        """Yahoo normalising GBX→GBP in its response must raise an error.
 
-        When Yahoo silently changes the requested symbol (e.g. GBXEUR=X
-        to GBPEUR=X), the returned rate would be 100× wrong.  The converter
-        must detect this mismatch and raise PortfolioConnectorError.
-        """
-        converter = CurrencyConverter("EUR")
-        converter.request_json = lambda url: {  # type: ignore[method-assign]
-            "chart": {
-                "result": [
-                    {
-                        "meta": {
-                            "symbol": "GBPEUR=X",  # Yahoo normalised GBX→GBP
-                            "regularMarketPrice": 1.17,
-                        }
-                    }
-                ]
-            }
-        }
+class TestRequestJsonRetry:
+    """Unit tests for tenacity retry logic in CurrencyConverter.request_json."""
 
-        with pytest.raises(
-            PortfolioConnectorError, match="Yahoo normalised GBXEUR=X to GBPEUR=X"
+    def _make_converter(self, **kwargs):  # type: ignore[no-untyped-def]
+        """Create a CurrencyConverter with manual_rates to avoid real HTTP calls."""
+        return CurrencyConverter("EUR", manual_rates={"USD": 0.9}, **kwargs)
+
+    @staticmethod
+    def _http_error(code: int, reason: str) -> urllib.error.HTTPError:
+        """Create an HTTPError with a properly-typed hdrs argument."""
+        return urllib.error.HTTPError(
+            "https://example.com",
+            code,
+            reason,
+            http.client.HTTPMessage(),  # type: ignore[arg-type]
+            None,
+        )
+
+    def _mock_ok_response(self, data: dict | None = None) -> MagicMock:
+        """Create a mock urllib response that returns JSON data."""
+        import json
+
+        response = MagicMock()
+        response.read.return_value = json.dumps(
+            data or {"rates": {"EUR": 1.0}}
+        ).encode()
+        response.__enter__ = MagicMock(return_value=response)
+        response.__exit__ = MagicMock(return_value=False)
+        return response
+
+    def test_success_on_first_attempt(self) -> None:
+        """No retry needed when the first request succeeds."""
+        converter = self._make_converter()
+        with patch("urllib.request.urlopen", return_value=self._mock_ok_response()):
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+
+    def test_retries_on_timeout_error(self) -> None:
+        """TimeoutError triggers retry; succeeds on second attempt."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        ok_response = self._mock_ok_response()
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[TimeoutError("timed out"), ok_response],
+        ) as mock_urlopen:
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+        assert mock_urlopen.call_count == 2
+
+    def test_retries_on_url_error(self) -> None:
+        """URLError (network error) triggers retry; succeeds on second attempt."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        ok_response = self._mock_ok_response()
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[urllib.error.URLError("Connection refused"), ok_response],
+        ) as mock_urlopen:
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+        assert mock_urlopen.call_count == 2
+
+    def test_retries_on_5xx_error(self) -> None:
+        """5xx HTTP errors trigger retry; succeeds on second attempt."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        ok_response = self._mock_ok_response()
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[
+                self._http_error(503, "Service Unavailable"),
+                ok_response,
+            ],
+        ) as mock_urlopen:
+            result = converter.request_json("https://example.com/api")
+        assert result == {"rates": {"EUR": 1.0}}
+        assert mock_urlopen.call_count == 2
+
+    def test_no_retry_on_4xx_error(self) -> None:
+        """4xx HTTP errors are NOT retried; raises immediately."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=[
+                    self._http_error(400, "Bad Request"),
+                ],
+            ) as mock_urlopen,
+            pytest.raises(PortfolioConnectorError, match="HTTP 400"),
         ):
-            converter.fetch_yahoo_rate("GBX")
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
 
-    def test_yahoo_accepts_matching_symbol(self) -> None:
-        """When Yahoo echoes back the same symbol, the rate is returned."""
+    def test_no_retry_on_json_decode_error(self) -> None:
+        """JSONDecodeError is NOT retried; raises immediately."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        bad_response = MagicMock()
+        bad_response.read.return_value = b"not json"
+        bad_response.__enter__ = MagicMock(return_value=bad_response)
+        bad_response.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("urllib.request.urlopen", return_value=bad_response) as mock_urlopen,
+            pytest.raises(PortfolioConnectorError, match="non-JSON response"),
+        ):
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
+
+    def test_no_retry_on_non_dict_response(self) -> None:
+        """Non-dict JSON response is NOT retried; raises immediately."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        list_response = MagicMock()
+        list_response.read.return_value = b"[1, 2, 3]"
+        list_response.__enter__ = MagicMock(return_value=list_response)
+        list_response.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("urllib.request.urlopen", return_value=list_response) as mock_urlopen,
+            pytest.raises(PortfolioConnectorError, match="unexpected response"),
+        ):
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
+
+    def test_raises_after_all_retries_exhausted(self) -> None:
+        """Raises TransientHttpError after all retries are exhausted."""
+        converter = self._make_converter(retries=2, retry_delay=0.01)
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=TimeoutError("timed out"),
+            ) as mock_urlopen,
+            pytest.raises(TransientHttpError, match="timed out"),
+        ):
+            converter.request_json("https://example.com/api")
+        # 1 initial + 2 retries = 3 total attempts
+        assert mock_urlopen.call_count == 3
+
+    def test_zero_retries_no_retry(self) -> None:
+        """With retries=0, no retry occurs on transient errors."""
+        converter = self._make_converter(retries=0)
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=TimeoutError("timed out"),
+            ) as mock_urlopen,
+            pytest.raises(TransientHttpError, match="timed out"),
+        ):
+            converter.request_json("https://example.com/api")
+        assert mock_urlopen.call_count == 1
+
+    def test_default_retry_parameters(self) -> None:
+        """Default constructor provides retries=2 and retry_delay=1.0."""
         converter = CurrencyConverter("EUR")
-        converter.request_json = lambda url: {  # type: ignore[method-assign]
-            "chart": {
-                "result": [
-                    {
-                        "meta": {
-                            "symbol": "USDEUR=X",
-                            "regularMarketPrice": 0.92,
-                        }
-                    }
-                ]
-            }
-        }
-
-        assert converter.fetch_yahoo_rate("USD") == pytest.approx(0.92)
-
-    def test_yahoo_accepts_response_without_symbol(self) -> None:
-        """When Yahoo omits the symbol from meta, the rate is still returned.
-
-        Some Yahoo Finance responses may not include a 'symbol' key.
-        In that case we cannot validate and fall through to returning the
-        rate, matching the pre-validation behaviour.
-        """
-        converter = CurrencyConverter("EUR")
-        converter.request_json = lambda url: {  # type: ignore[method-assign]
-            "chart": {
-                "result": [
-                    {
-                        "meta": {
-                            "regularMarketPrice": 0.92,
-                        }
-                    }
-                ]
-            }
-        }
-
-        assert converter.fetch_yahoo_rate("USD") == pytest.approx(0.92)
+        assert converter.retries == 2
+        assert converter.retry_delay == 1.0
 
 
 @integration
@@ -220,18 +312,6 @@ class TestCurrencyConverterIntegration:
     These hit real external services and may fail due to network issues
     or API downtime.  Run with:  pytest -m integration
     """
-
-    def test_yahoo_returns_matching_symbol_for_valid_currency(self) -> None:
-        """Live Yahoo Finance response includes a 'symbol' that matches the request.
-
-        This validates that the symbol-validation logic works against real
-        responses — not just mocked ones.
-        """
-        converter = CurrencyConverter("EUR")
-        # USD→EUR is a major pair that Yahoo Finance always serves.
-        rate = converter.fetch_yahoo_rate("USD")
-        # The rate should be a positive number (USD/EUR is typically ~0.9–1.1)
-        assert rate > 0, f"Expected positive rate, got {rate}"
 
     def test_frankfurter_returns_valid_rate(self) -> None:
         """Live Frankfurter API returns a valid rate for a major currency pair."""
@@ -257,9 +337,8 @@ class TestCurrencyConverterIntegration:
     def test_unknown_currency_raises_error(self) -> None:
         """An unknown currency code not in MINOR_CURRENCY_UNITS must raise.
 
-        Uses "XYZ" (not a real ISO 4217 code).  Frankfurter should reject it
-        with a 400, and if Yahoo tries to normalise it, the symbol validation
-        should catch the mismatch.  Either way, no silent wrong rate.
+        Uses "XYZ" (not a real ISO 4217 code).  Frankfurter rejects it
+        with a 400 error.  No silent wrong rate is possible.
         """
         converter = CurrencyConverter("EUR")
         with pytest.raises(PortfolioConnectorError):

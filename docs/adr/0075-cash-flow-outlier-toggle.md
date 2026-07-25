@@ -1,5 +1,7 @@
 # 0075 — Cash Flow Breakdown Outlier Toggle
 
+> **Superseded by [ADR 0096](./0096-outlier-detection-use-smallest-bar.md)** — median-of-others fails with 3+ mixed-magnitude groups; replaced with min-of-others with floor.
+
 ## Context
 
 The cash flow breakdown chart displays monthly cash flow grouped by event

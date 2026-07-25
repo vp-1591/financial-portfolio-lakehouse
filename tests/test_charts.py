@@ -401,7 +401,7 @@ class TestCashFlowBreakdown:
         )
         fig = cash_flow_breakdown(df)
 
-        # DEPOSIT peak=1M, INTEREST=50, TRADE=200 → median=200, 1M > 10*200
+        # DEPOSIT peak=1M, INTEREST=50, TRADE=200 → floor=10K, baseline=max(50,10K)=10K, 1M > 100K
         menus = fig.layout.updatemenus
         assert menus is not None
         assert len(menus) == 1
@@ -466,25 +466,28 @@ class TestClassifyOutliers:
     """Tests for the outlier detection helper."""
 
     def test_no_outliers_when_peaks_similar(self) -> None:
-        """Peaks within 10× of the other-peaks median are not outliers."""
-        # Each peak's "others" median is comparable → no outliers
+        """Peaks within 10× of the smallest other peak are not outliers."""
+        # Each peak's min-other is comparable → no outliers
         assert _classify_outliers([100, 200, 300]) == [False, False, False]
 
     def test_flags_extreme_outlier(self) -> None:
-        """A peak > 10× the median of the other peaks is an outlier."""
-        # 1M's others = [50, 200], median = 125; 1M > 10*125 = 1250
+        """A peak > 10× the smallest meaningful other peak is an outlier."""
+        # 1M's others = [50, 200]; floor = 1M/100 = 10K; baseline = max(50, 10K) = 10K;
+        # threshold = 100K; 1M > 100K
         result = _classify_outliers([50, 200, 1_000_000])
         assert result == [False, False, True]
 
     def test_flags_outlier_with_two_values(self) -> None:
         """Even with only two event types, extreme ratio is detected."""
-        # 1M's others = [50], baseline = 50; 1M > 10*50 = 500
+        # 1M's others = [50]; floor = 10K; baseline = max(50, 10K) = 10K;
+        # threshold = 100K; 1M > 100K
         result = _classify_outliers([1_000_000, 50])
         assert result == [True, False]
 
     def test_custom_ratio(self) -> None:
         """A lower ratio flags more events as outliers."""
-        # 5000's others = [100, 500], median = 300; ratio=5 → 5*300=1500; 5K > 1500
+        # 5000's others = [100, 500]; floor = 5000/25 = 200; baseline = max(100, 200) = 200;
+        # threshold = 1000; 5000 > 1000
         result = _classify_outliers([100, 500, 5000], ratio=5)
         assert result == [False, False, True]
 
@@ -493,8 +496,8 @@ class TestClassifyOutliers:
         assert _classify_outliers([1_000_000]) == [False]
 
     def test_zero_baseline_produces_no_outliers(self) -> None:
-        """If the other peaks' median is zero, no events are flagged."""
-        # 500's others = [0, 0], baseline = 0 → skip
+        """If all other peaks are zero, no events are flagged."""
+        # 500's others_nonzero = [] → False
         assert _classify_outliers([0, 0, 500]) == [False, False, False]
 
     def test_empty_input(self) -> None:
@@ -504,6 +507,41 @@ class TestClassifyOutliers:
     def test_all_zero_peaks(self) -> None:
         """All-zero peaks produce no outliers."""
         assert _classify_outliers([0, 0, 0]) == [False, False, False]
+
+    def test_three_mixed_magnitudes(self) -> None:
+        """Mixed magnitudes (1M, 272K, 1.3K) correctly flag large outliers.
+
+        This is the scenario from the investigation report where median-of-others
+        failed: TRADE at 272K inflated the median so that DEPOSIT at 1M was not
+        detected as an outlier.  Min-of-others with floor correctly detects both
+        DEPOSIT and TRADE as outliers relative to INTEREST.
+        """
+        # floor = 1M/100 = 10K
+        # DEPOSIT(1M): baseline = max(min(272K, 1.3K), 10K) = max(1.3K, 10K) = 10K;
+        #   threshold = 100K; 1M > 100K → outlier
+        # TRADE(272K): baseline = max(min(1M, 1.3K), 10K) = max(1.3K, 10K) = 10K;
+        #   threshold = 100K; 272K > 100K → outlier
+        # INTEREST(1.3K): baseline = max(min(1M, 272K), 10K) = max(272K, 10K) = 272K;
+        #   threshold = 2.72M; 1.3K < 2.72M → not outlier
+        result = _classify_outliers([1_000_000, 272_110, 1_280])
+        assert result == [True, True, False]
+
+    def test_tiny_noise_ignored_by_floor(self) -> None:
+        """A tiny noise peak (€1) does not make every other bar an outlier.
+
+        The floor (max_peak / ratio²) prevents a €1 value from setting
+        the baseline so low that everything else exceeds the threshold.
+        """
+        # floor = 1M/100 = 10K
+        # 1M: baseline = max(min(10K, 1K, 1), 10K) = 10K; threshold = 100K; 1M > 100K → outlier
+        # 10K: baseline = max(min(1M, 1K, 1), 10K) = max(1, 10K) = 10K; threshold = 100K;
+        #   10K < 100K → not outlier
+        # 1K: baseline = max(min(1M, 10K, 1), 10K) = max(1, 10K) = 10K; threshold = 100K;
+        #   1K < 100K → not outlier
+        # 1: baseline = max(min(1M, 10K, 1K), 10K) = max(1K, 10K) = 10K; threshold = 100K;
+        #   1 < 100K → not outlier
+        result = _classify_outliers([1_000_000, 10_000, 1_000, 1])
+        assert result == [True, False, False, False]
 
 
 # ---------------------------------------------------------------------------

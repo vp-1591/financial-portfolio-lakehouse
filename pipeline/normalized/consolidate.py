@@ -18,11 +18,11 @@ from typing import ClassVar
 
 import pyarrow as pa
 from deltalake import write_deltalake
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from pipeline.normalized.models import consolidated_holdings_schema
 
 FRANKFURTER_BASE_URL = "https://api.frankfurter.app"
-YAHOO_FINANCE_BASE_URL = "https://query1.finance.yahoo.com"
 DEFAULT_USER_AGENT = "Mozilla/5.0 financial-portfolio-lakehouse/2.0"
 
 
@@ -53,9 +53,7 @@ class CurrencyConverter:
     # GBX (British pence) = GBP / 100.  When the converter encounters a
     # minor unit, it fetches the major-unit rate and divides by the factor.
     # Unknown minor currencies are not mapped here — they fall through to
-    # the API providers, which reject them (Frankfurter) or are caught
-    # by Yahoo symbol validation (which detects normalisation like
-    # GBX→GBP and raises PortfolioConnectorError).
+    # Frankfurter, which rejects them with a 400 error.
     MINOR_CURRENCY_UNITS: ClassVar[dict[str, tuple[str, int]]] = {
         "GBX": ("GBP", 100),
     }
@@ -65,16 +63,18 @@ class CurrencyConverter:
         target_currency: str,
         manual_rates: dict[str, float] | None = None,
         base_url: str = FRANKFURTER_BASE_URL,
-        yahoo_base_url: str = YAHOO_FINANCE_BASE_URL,
         timeout: float = 20.0,
+        retries: int = 2,
+        retry_delay: float = 1.0,
     ) -> None:
         self.target_currency = target_currency.upper()
         self.manual_rates = {
             currency.upper(): rate for currency, rate in (manual_rates or {}).items()
         }
         self.base_url = base_url.rstrip("/")
-        self.yahoo_base_url = yahoo_base_url.rstrip("/")
         self.timeout = timeout
+        self.retries = retries
+        self.retry_delay = retry_delay
         self._rates: dict[str, float] = {self.target_currency: 1.0}
         self._rates.update(self.manual_rates)
 
@@ -92,7 +92,8 @@ class CurrencyConverter:
 
     def fetch_rate(self, source_currency: str) -> float:
         # Handle minor currency units (e.g., GBX -> GBP / 100)
-        # Decision: docs/adr/0095-fix-t212-snapshot-ccy-gbx-rate.md
+        # Decision: docs/adr/0097-remove-yahoo-finance-fx-provider.md
+        # (GBX handling via MINOR_CURRENCY_UNITS originally from ADR 0095)
         if source_currency in self.MINOR_CURRENCY_UNITS:
             major_currency, factor = self.MINOR_CURRENCY_UNITS[source_currency]
             major_rate = self._rates.get(major_currency)
@@ -103,10 +104,7 @@ class CurrencyConverter:
             return rate
 
         errors: list[str] = []
-        for provider_name, fetcher in (
-            ("Frankfurter", self.fetch_frankfurter_rate),
-            ("Yahoo", self.fetch_yahoo_rate),
-        ):
+        for provider_name, fetcher in (("Frankfurter", self.fetch_frankfurter_rate),):
             try:
                 return fetcher(source_currency)
             except PortfolioConnectorError as exc:
@@ -119,6 +117,12 @@ class CurrencyConverter:
         )
 
     def request_json(self, url: str) -> dict[str, object]:
+        """Fetch a URL and return the parsed JSON response.
+
+        Retries on transient errors (timeouts, network failures, 5xx server
+        errors) using tenacity.  Client errors (4xx) and response-format
+        errors (non-JSON, non-dict) are not retried.
+        """
         request = urllib.request.Request(
             url,
             headers={
@@ -126,21 +130,39 @@ class CurrencyConverter:
                 "User-Agent": DEFAULT_USER_AGENT,
             },
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            raise PortfolioConnectorError(f"HTTP {exc.code} {exc.reason}") from exc
-        except urllib.error.URLError as exc:
-            raise PortfolioConnectorError(str(exc.reason)) from exc
 
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise PortfolioConnectorError(f"non-JSON response: {raw[:200]}") from exc
-        if not isinstance(parsed, dict):
-            raise PortfolioConnectorError(f"unexpected response: {raw[:200]}")
-        return parsed
+        # Decision: docs/adr/0098-add-retry-logic-to-currency-converter-request-json.md
+        @retry(
+            retry=retry_if_exception_type(TransientHttpError),
+            stop=stop_after_attempt(1 + self.retries),
+            wait=wait_fixed(self.retry_delay),
+            reraise=True,
+        )
+        def _do_request() -> dict[str, object]:
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    raw = response.read().decode("utf-8")
+            except urllib.error.HTTPError as exc:
+                # 5xx server errors are transient; 4xx client errors are permanent.
+                if exc.code >= 500:
+                    raise TransientHttpError(f"HTTP {exc.code} {exc.reason}") from exc
+                raise PortfolioConnectorError(f"HTTP {exc.code} {exc.reason}") from exc
+            except urllib.error.URLError as exc:
+                raise TransientHttpError(str(exc.reason)) from exc
+            except TimeoutError as exc:
+                raise TransientHttpError("The read operation timed out") from exc
+
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise PortfolioConnectorError(
+                    f"non-JSON response: {raw[:200]}"
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise PortfolioConnectorError(f"unexpected response: {raw[:200]}")
+            return parsed
+
+        return _do_request()
 
     def fetch_frankfurter_rate(self, source_currency: str) -> float:
         query = urllib.parse.urlencode(
@@ -159,38 +181,13 @@ class CurrencyConverter:
             )
         return rate
 
-    def fetch_yahoo_rate(self, source_currency: str) -> float:
-        symbol = f"{source_currency}{self.target_currency}=X"
-        encoded_symbol = urllib.parse.quote(symbol, safe="")
-        url = f"{self.yahoo_base_url}/v8/finance/chart/{encoded_symbol}?range=1d&interval=1d"
-        data = self.request_json(url)
-        try:
-            result = data["chart"]["result"][0]
-            meta = result["meta"]
-            rate = float(meta["regularMarketPrice"])
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise PortfolioConnectorError(f"unexpected response: {data}") from exc
-
-        # Yahoo may silently normalise minor/unknown currency codes to
-        # their major counterpart (e.g. GBX → GBP), returning the wrong
-        # rate.  Detect this by checking the symbol Yahoo echoes back.
-        returned_symbol = meta.get("symbol", "")
-        if returned_symbol and returned_symbol != symbol:
-            raise PortfolioConnectorError(
-                f"Yahoo normalised {symbol} to {returned_symbol}; "
-                f"the rate would be wrong for {source_currency}. "
-                f"Pass --fx-rate {source_currency}=RATE to provide it."
-            )
-
-        if rate == 0:
-            raise PortfolioConnectorError(
-                f"FX rate {source_currency}->{self.target_currency} is zero."
-            )
-        return rate
-
 
 class PortfolioConnectorError(RuntimeError):
     pass
+
+
+class TransientHttpError(PortfolioConnectorError):
+    """HTTP/network error that may succeed on retry (timeout, 5xx, DNS failure)."""
 
 
 def format_identifier(kind: str, value: str) -> str:

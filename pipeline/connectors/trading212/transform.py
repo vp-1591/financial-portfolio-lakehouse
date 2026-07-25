@@ -91,7 +91,8 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "name": position_name(position, instrument_names),
                 "asset_class": "EQUITY",
                 "security_value": value,
-                # Decision: docs/adr/0095-fix-t212-snapshot-ccy-gbx-rate.md
+                # Decision: docs/adr/0097-remove-yahoo-finance-fx-provider.md
+                # (snapshot security_ccy originally from ADR 0095)
                 # Use wallet currency for snapshot security_ccy because
                 # position_value() returns walletImpact.currentValue (in
                 # wallet currency). Contrast with CDC events where fxRate

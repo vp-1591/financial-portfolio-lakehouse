@@ -85,7 +85,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0072 | DQ Table Overwrite and Empty-Table Freshness | 2026-07-14 | active | — |
 | 0073 | Currency Exposure Donut Chart (Phase 1) | 2026-07-14 | active | — |
 | 0074 | Remove Overloaded Currency Column, Rename to Explicit Names | 2026-07-14 | superseded | 0077 |
-| 0075 | Cash Flow Breakdown Outlier Toggle | 2026-07-14 | active | — |
+| 0075 | Cash Flow Breakdown Outlier Toggle | 2026-07-14 | superseded | 0096 |
 | 0076 | Fix T212 walletImpact.fxRate Usage (Phase 1: Currency Unification) | 2026-07-14 | superseded | 0077 |
 | 0077 | Currency Unification Phase 2 — Schema Redesign | 2026-07-14 | active | — |
 | 0078 | Currency Unification Phase 3: Data Quality Fixes | 2026-07-14 | active | — |
@@ -105,7 +105,10 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0092 | Remove _DEMO env var suffix pattern | 2026-07-23 | active | — |
 | 0093 | Resolve State Machine ARN via boto3 Instead of Env Var | 2026-07-24 | active | — |
 | 0094 | Remove Connector *_ENABLED Environment Variable Toggles | 2026-07-24 | active | — |
-| 0095 | Fix T212 Snapshot Currency Mismatch and GBX Rate Bug | 2026-07-24 | active | — |
+| 0095 | Fix T212 Snapshot Currency Mismatch and GBX Rate Bug | 2026-07-24 | superseded | 0097 |
+| 0096 | Outlier Detection: Use Smallest Bar Instead of Median | 2026-07-25 | active | — |
+| 0097 | Remove Yahoo Finance as FX Rate Provider | 2026-07-25 | active | — |
+| 0098 | Add Retry Logic to CurrencyConverter.request_json | 2026-07-25 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
