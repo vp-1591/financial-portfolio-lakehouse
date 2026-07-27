@@ -68,7 +68,7 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run report --mode stagin
 ## Roadmap workflow
 
 Roadmaps live in `docs/roadmaps/<number>-<topic>.md` and follow the template in
-`docs/roadmaps/roadmap-template.md`. Use `/create-roadmap` to create or update one —
+`~\.claude\skills\create-roadmap\roadmap-template.md`. Use `/create-roadmap` to create or update one —
 it clarifies ambiguities before drafting.
 
 The workflow order is: `analyze → roadmap → plan → implement → ADR → review`.

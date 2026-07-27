@@ -1,0 +1,12 @@
+# Gitleaks configuration
+# Reference: https://github.com/gitleaks/gitleaks#configuration
+
+[allowlist]
+  description = "Allowlisted false positives"
+
+  # Allow the specific example/fake key in the AWS secrets skill reference doc
+  # so that real keys pasted in the same file are still flagged
+  [[allowlist.rules]]
+    id = "generic-api-key"
+    path = '''\.claude/skills/creating-secrets-using-best-practices/references/create-secrets-using-best-practices\.md'''
+    regexes = ['''sk-1234567890abcdef''']
