@@ -1,0 +1,9 @@
+# Gitleaks configuration
+# Reference: https://github.com/gitleaks/gitleaks#configuration
+
+[allowlist]
+  # AWS skill reference docs contain example/template API keys for teaching purposes
+  description = "Allowlisted false positives"
+  paths = [
+    '''\.claude/skills/creating-secrets-using-best-practices/references/create-secrets-using-best-practices\.md''',
+  ]
