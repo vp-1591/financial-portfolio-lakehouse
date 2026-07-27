@@ -526,8 +526,8 @@ module "orchestrator" {
   sfn_role_arn                     = data.aws_iam_role.sfn.arn
   xtb_staging_bucket_name         = aws_s3_bucket.pipeline.bucket
   xtb_staging_prefix              = "staging/xtb/"
-  scheduled                        = true     # daily schedule for prod
-  schedule_cron                    = "cron(0 6 * * ? *)"
+  scheduled                        = true     # monthly schedule for prod
+  schedule_cron                    = "cron(0 6 1 * ? *)"
   schedule_connectors              = ["ibkr", "trading212"]
   file_arrival_connectors          = ["ibkr", "trading212", "xtb"]
   state_machine_name               = "portfolio-pipeline-orchestrator"
