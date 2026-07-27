@@ -90,7 +90,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = "admin"
 }
 
 # Resource renames: private subnets → public subnets (ADR 0054)
