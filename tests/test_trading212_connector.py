@@ -386,8 +386,48 @@ class TestTransformSnapshot:
             f"Expected all cash security_ccy to be PLN, got {cash_ccys}"
         )
 
+    def test_transform_snapshot_with_mixed_endpoint_timestamps(
+        self, fernet_key: bytes
+    ) -> None:
+        """Snapshot transform populates rows even if endpoints have different fetched_at timestamps.
 
-class TestClientPagination:
+        Regression test: when dedup_raw skips unchanged endpoints (e.g. account summary),
+        the raw table stores rows with different fetched_at timestamps. Filter_latest_snapshot
+        must keep the latest payload per source so that summary_data is not lost.
+        """
+        import hashlib
+        from datetime import timedelta
+
+        summary = {"currencyCode": "EUR", "cash": 50.0, "total": 250.0}
+        positions = [{"ticker": "VUAA", "quantity": 2, "currentPrice": 100.0}]
+
+        now = datetime.now(UTC)
+        t_older = now - timedelta(hours=1)
+
+        raw_payloads = [
+            json.dumps(summary).encode("utf-8"),
+            json.dumps(positions).encode("utf-8"),
+        ]
+        encrypted_payloads = [encrypt(p, fernet_key) for p in raw_payloads]
+
+        raw = pa.table(
+            {
+                "fetched_at": [t_older, now],  # summary is older, positions is newer
+                "broker": ["Trading 212", "Trading 212"],
+                "source": ["/equity/account/summary", "/equity/positions"],
+                "payload": encrypted_payloads,
+                "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
+                "source_file": ["", ""],
+            },
+            schema=RAW_SCHEMA,
+        )
+
+        result = transform_snapshot(raw, fernet_key)
+        assert result.num_rows == 2
+        types = result.column("position_type").to_pylist()
+        assert "EQUITY" in types
+        assert "CASH" in types
+
     """Tests for Trading212Client._fetch_paginated()."""
 
     def test_fetch_paginated_returns_bare_list(self) -> None:

@@ -66,7 +66,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             records,
             trading212_snapshot_normalized_schema,
             fernet_key,
-            encrypt_columns=["value"],
+            encrypt_columns=_SNAPSHOT_ENCRYPT_COLUMNS,
         )
 
     currency = account_currency(summary_data)

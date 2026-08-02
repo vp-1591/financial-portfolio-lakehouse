@@ -461,7 +461,7 @@ class TestFilterLatestSnapshot:
             {
                 "fetched_at": [t1, t2],
                 "broker": ["IBKR", "T212"],
-                "source": ["flex", "/positions"],
+                "source": ["flex", "flex"],
                 "payload": [b"a", b"b"],
                 "payload_hash": ["h1", "h2"],
                 "source_file": ["file1", "file2"],
@@ -471,5 +471,36 @@ class TestFilterLatestSnapshot:
         result = filter_latest_snapshot(table)
         assert result.num_rows == 1
         assert result.column("broker")[0].as_py() == "T212"
-        assert result.column("source")[0].as_py() == "/positions"
+        assert result.column("source")[0].as_py() == "flex"
         assert result.column("source_file")[0].as_py() == "file2"
+
+    def test_different_timestamps_per_source_keeps_latest_per_source(
+        self,
+    ) -> None:
+        """For multi-endpoint snapshots (like T212), keeps the latest row for EACH source."""
+        t1 = datetime(2024, 6, 1, tzinfo=UTC)
+        t2 = datetime(2024, 6, 15, tzinfo=UTC)
+        table = pa.table(
+            {
+                "fetched_at": [t1, t1, t2],
+                "broker": ["Trading 212", "Trading 212", "Trading 212"],
+                "source": [
+                    "/equity/account/summary",
+                    "/equity/positions",
+                    "/equity/positions",
+                ],
+                "payload": [b"summary_v1", b"positions_v1", b"positions_v2"],
+                "payload_hash": ["h1", "h2", "h3"],
+                "source_file": ["", "", ""],
+            },
+            schema=RAW_SCHEMA,
+        )
+        result = filter_latest_snapshot(table)
+        # Should keep /account/summary at t1 (latest for summary) and /positions at t2 (latest for positions)
+        assert result.num_rows == 2
+        sources = result.column("source").to_pylist()
+        assert "/equity/account/summary" in sources
+        assert "/equity/positions" in sources
+        payloads = result.column("payload").to_pylist()
+        assert b"summary_v1" in payloads
+        assert b"positions_v2" in payloads

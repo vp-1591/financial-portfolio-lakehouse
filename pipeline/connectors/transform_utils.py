@@ -55,13 +55,19 @@ def parse_json(data: bytes) -> Any | None:
 
 
 def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
-    """Filter a raw table to only rows from the latest fetch.
+    """Filter a raw table to keep only the latest fetch row per source.
 
-    All rows from a single fetch share the same ``fetched_at`` timestamp
-    (set once per API call in the fetch layer).  This function keeps only
-    rows whose ``fetched_at`` equals the maximum timestamp in the table,
+    All rows from a single fetch share the same ``fetched_at`` timestamp.
+    This function keeps the latest row(s) for each distinct ``source`` value,
     effectively discarding stale snapshot batches that accumulated via
     append-mode writes.
+
+    Grouping per ``source`` is necessary for brokers like Trading 212 where
+    a snapshot is fetched from multiple API endpoints. If one endpoint's
+    payload is deduped on a subsequent fetch because its content didn't change,
+    its timestamp remains at the previous fetch time while other endpoints get
+    newer timestamps. Filtering per source preserves the latest payload for
+    every endpoint, preventing missing-endpoint errors in the snapshot transform.
 
     For CDC (change data capture) data this filter should **not** be used
     -- CDC rows are chronological events, not replaceable snapshots.
@@ -74,18 +80,24 @@ def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
     Returns
     -------
     pa.Table
-        The same table filtered to the latest ``fetched_at`` value.
+        The same table filtered to the latest ``fetched_at`` value per source.
         Returns the input unchanged if it has 0 or 1 rows.
     """
-    import pyarrow.compute as pc
-
     if raw.num_rows <= 1:
         return raw
 
-    fetched_at = raw.column("fetched_at")
-    max_ts = pc.max(fetched_at)
-    mask = pc.equal(fetched_at, max_ts)
-    return raw.filter(mask)
+    import pyarrow as pa
+
+    sources = raw.column("source").to_pylist()
+    fetched_ats = raw.column("fetched_at").to_pylist()
+
+    max_by_source: dict[str, Any] = {}
+    for s, f in zip(sources, fetched_ats):
+        if s not in max_by_source or f > max_by_source[s]:
+            max_by_source[s] = f
+
+    mask = [f == max_by_source[s] for s, f in zip(sources, fetched_ats)]
+    return raw.filter(pa.array(mask))
 
 
 def coerce_fetched_at(value: Any) -> datetime:
