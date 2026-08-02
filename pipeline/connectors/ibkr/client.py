@@ -39,6 +39,25 @@ DEFAULT_FLEX_BASE_URL = (
     "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 )
 
+# IBKR Flex Web Service v3 error codes that mean "not ready yet — try again
+# shortly" and should be retried. Messages taken verbatim from IBKR's official
+# Flex Web Service error table (flex3error.htm). Any code not in this set is
+# fatal.
+_TRANSIENT_FLEX_ERROR_CODES = frozenset(
+    {
+        "1001",  # Statement could not be generated at this time
+        "1004",  # Statement is incomplete at this time
+        "1005",  # Settlement data is not ready at this time
+        "1006",  # FIFO P/L data is not ready at this time
+        "1007",  # MTM P/L data is not ready at this time
+        "1008",  # MTM and FIFO P/L data is not ready at this time
+        "1009",  # The server is under heavy load
+        "1018",  # Too many requests (rate limit: 1/sec, 10/min per token)
+        "1019",  # Statement generation in progress
+        "1021",  # Statement could not be retrieved at this time
+    }
+)
+
 
 class IbkrError(RuntimeError):
     pass
@@ -197,12 +216,15 @@ class IbkrFlexClient:
             error_code = root.findtext("ErrorCode")
             if error_code:
                 last_error = f"code={error_code}, message={root.findtext('ErrorMessage') or root.findtext('Message') or ''}"
-                # Error codes 1018/1019 = not ready yet
-                if error_code.strip() in ("1018", "1019") and attempt < retries:
+                # Transient "not ready" codes (1001/1004-1009/1018/1019/1021)
+                # are retried; any other error code is fatal.
+                if (
+                    error_code.strip() in _TRANSIENT_FLEX_ERROR_CODES
+                    and attempt < retries
+                ):
                     time.sleep(delay)
                     continue
-                # Other error codes are fatal
-                if error_code.strip() not in ("1018", "1019"):
+                if error_code.strip() not in _TRANSIENT_FLEX_ERROR_CODES:
                     raise IbkrError(
                         f"Flex report error ({last_error}). Response: {body[:500]}"
                     )

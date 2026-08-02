@@ -332,6 +332,75 @@ class TestFetchReport:
         assert root.tag == "FlexQueryResponse"
         assert sleeps == [1.0]
 
+    @pytest.mark.parametrize(
+        ("error_code", "error_message"),
+        [
+            (
+                "1001",
+                (
+                    "Statement could not be generated at this time. "
+                    "Please try again shortly."
+                ),
+            ),
+            (
+                "1004",
+                "Statement is incomplete at this time. Please try again shortly.",
+            ),
+            (
+                "1005",
+                "Settlement data is not ready at this time. Please try again shortly.",
+            ),
+            (
+                "1006",
+                "FIFO P/L data is not ready at this time. Please try again shortly.",
+            ),
+            (
+                "1007",
+                "MTM P/L data is not ready at this time. Please try again shortly.",
+            ),
+            (
+                "1008",
+                (
+                    "MTM and FIFO P/L data is not ready at this time. "
+                    "Please try again shortly."
+                ),
+            ),
+            (
+                "1009",
+                (
+                    "The server is under heavy load. Statement could not be "
+                    "generated at this time. Please try again shortly."
+                ),
+            ),
+            (
+                "1021",
+                (
+                    "Statement could not be retrieved at this time. "
+                    "Please try again shortly."
+                ),
+            ),
+        ],
+    )
+    def test_fetch_report_transient_code_retries_then_succeeds(
+        self, monkeypatch, error_code, error_message
+    ) -> None:
+        transient_xml = (
+            "<FlexStatementResponse>"
+            "<Status>Warn</Status>"
+            f"<ErrorCode>{error_code}</ErrorCode>"
+            f"<ErrorMessage>{error_message}</ErrorMessage>"
+            "</FlexStatementResponse>"
+        )
+        responses = iter([transient_xml, self.SUCCESS_XML])
+        sleeps = self._record_sleeps(monkeypatch)
+        client = IbkrFlexClient(token="test-token", query_id="999999")
+        client._request = lambda path, params: next(responses)  # type: ignore[assignment]
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert root.tag == "FlexQueryResponse"
+        assert sleeps == [1.0]
+
     def test_fetch_report_warn_without_error_code_retries_then_succeeds(
         self, monkeypatch
     ) -> None:
@@ -364,18 +433,28 @@ class TestFetchReport:
 
         assert sleeps == []
 
-    def test_fetch_report_other_error_code_raises(self, monkeypatch) -> None:
+    @pytest.mark.parametrize(
+        ("error_code", "error_message"),
+        [
+            ("1003", "Statement is not available."),
+            ("1014", "Query is invalid."),
+            ("1020", "Invalid request or unable to validate request."),
+        ],
+    )
+    def test_fetch_report_other_error_code_raises(
+        self, monkeypatch, error_code, error_message
+    ) -> None:
         error_xml = (
             "<FlexStatementResponse>"
             "<Status>Warn</Status>"
-            "<ErrorCode>1003</ErrorCode>"
-            "<ErrorMessage>Statement is not available.</ErrorMessage>"
+            f"<ErrorCode>{error_code}</ErrorCode>"
+            f"<ErrorMessage>{error_message}</ErrorMessage>"
             "</FlexStatementResponse>"
         )
         sleeps = self._record_sleeps(monkeypatch)
         client = self._make_client(error_xml)
 
-        with pytest.raises(IbkrError, match="code=1003"):
+        with pytest.raises(IbkrError, match=f"code={error_code}"):
             client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
 
         assert sleeps == []

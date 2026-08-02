@@ -15,7 +15,7 @@ Each 1019 payload carries a fresh server timestamp, so every stored copy has a u
 Change `fetch_report` so a `Status=Warn` response is treated as "not ready" and retried, never stored as data:
 
 1. **WARN falls through to retry.** Restructure the status handling so only `Status=Success` (or a response carrying `FlexStatement` children) returns a report; `Status=FAIL` still raises `IbkrError` immediately; `Status=Warn` records the error code/message as `last_error` and falls through to the retry loop (a bare `Warn` with no ErrorCode is treated the same).
-2. **Add 1019 to the transient retry set.** The error-code block retries codes `("1018", "1019")` up to `retries` attempts; any other error code remains fatal.
+2. **Retry the full set of IBKR transient error codes.** The error-code block retries every IBKR-documented "try again shortly" code — `1001`, `1004`–`1009`, `1018` (rate limit), `1019` (generation in progress), and `1021` — up to `retries` attempts; any other error code (e.g. `1003`, `1010`–`1017`, `1020`) remains fatal.
 3. **Add `initial_delay: float = 3.0`.** IBKR commonly returns 1019 on an immediate first `GetStatement` call, so `fetch_report` sleeps once before the first poll to avoid a near-certain wasted round trip. Existing callers (`fetch.py`, `connector.py`) don't pass it and get the default — no call-site changes.
 
 Alternatives considered and rejected:
@@ -41,6 +41,6 @@ Alternatives considered and rejected:
 
 ## Validation
 
-- New `TestFetchReport` class in `tests/test_ibkr_connector.py` (10 tests) covers: success returns immediately; success with no ErrorCode; `FlexStatement` data with no Status returns; 1019 Warn retries then succeeds; 1018 Warn retries then succeeds; Warn without ErrorCode retries then succeeds; `FAIL` raises immediately (1017 "Reference code is invalid."); other permanent error codes raise (1003 "Statement is not available."); retry exhaustion raises after max retries; `initial_delay` sleeps before the first poll (asserted via a `time.sleep` recorder). All error codes and messages are taken verbatim from IBKR's official Flex Web Service Version 3 error table.
+- New `TestFetchReport` class in `tests/test_ibkr_connector.py` covers: success returns immediately; success with no ErrorCode; `FlexStatement` data with no Status returns; 1019 Warn retries then succeeds; 1018 Warn retries then succeeds; every other transient code (1001, 1004–1009, 1021) retries then succeeds (parametrized with verbatim IBKR messages); Warn without ErrorCode retries then succeeds; `FAIL` raises immediately (1017 "Reference code is invalid."); permanent error codes raise (1003, 1014, 1020, parametrized); retry exhaustion raises after max retries; `initial_delay` sleeps before the first poll (asserted via a `time.sleep` recorder). All error codes and messages are taken verbatim from IBKR's official Flex Web Service Version 3 error table.
 - Full suite: `pytest tests/ -q -rf` → 671 passed.
 - `pyright pipeline/ tests/` → 0 errors; ruff → clean.
