@@ -180,7 +180,3 @@ Run `ruff check --fix .` and `ruff format .` before committing.
 - [Broker Setup](docs/brokers/ibkr.md) — IBKR, Trading 212, XTB
 - [ADR Index](docs/adr/README.md) — 86 architecture decision records
 - [Roadmap Index](docs/roadmaps/README.md) — active and completed roadmaps
-
-## License
-
-This is a personal project. No license has been applied yet.

@@ -111,7 +111,7 @@ def cmd_query(args: argparse.Namespace) -> int:
         # its default 80-char print width.
         import polars as pl
 
-        pl.Config.set_fmt_str_lengths(1000)
+        pl.Config.set_fmt_str_lengths(100)
         pl.Config.set_tbl_rows(100)
         pl.Config.set_tbl_cols(200)
         pl.Config.set_tbl_width_chars(None)
