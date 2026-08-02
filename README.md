@@ -74,7 +74,7 @@ Sample report output generated from demo data for presentation purposes.
 docker compose build
 docker compose up minio -d
 docker compose run --rm pipeline full --mode docker
-docker compose run --rm pipeline query "SELECT * FROM portfolio_holdings_analytics" --decrypt
+docker compose run --rm pipeline query "SELECT * FROM portfolio_holdings_analytics" --decrypt --mode docker
 ```
 
 ### Run locally
@@ -91,21 +91,26 @@ pip install -e ".[pipeline]"
 
 ```bash
 # List all tables
-python -m pipeline.run query "SHOW TABLES"
+.venv/Scripts/python -m pipeline.run query "SHOW TABLES" --mode docker
 
 # Query with decryption
-python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --decrypt
+.venv/Scripts/python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --decrypt --mode docker
 
 # Export as CSV
-python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_holdings_analytics" --format csv
+.venv/Scripts/python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_holdings_analytics" --format csv --mode docker
 ```
 
 ### Generate report
 
 ```bash
-python -m pipeline.run report                          # write to data/report.html
-python -m pipeline.run report --open                  # write and open in browser
-python -m pipeline.run report --output my-report.html # custom output path
+# Write to data/report.html
+.venv/Scripts/python -m pipeline.run report --mode docker
+
+# Write and open in browser
+.venv/Scripts/python -m pipeline.run report --open --mode docker
+
+# Custom output path
+.venv/Scripts/python -m pipeline.run report --output my-report.html --mode docker
 ```
 
 For detailed instructions, see [Local Deployment](docs/deployment/local.md).

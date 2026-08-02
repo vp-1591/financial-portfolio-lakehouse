@@ -22,7 +22,7 @@ directory.
 
 **Local:**
 ```powershell
-.venv\Scripts\python -m pipeline.run full --xtb-file path/to/report.xlsx
+.venv\Scripts\python -m pipeline.run full --xtb-file path/to/report.xlsx --mode docker
 ```
 
 **Docker:**
@@ -32,7 +32,7 @@ docker compose run --rm pipeline full --mode docker --xtb-file /path/to/report.x
 
 **Single connector:**
 ```powershell
-.venv\Scripts\python -m pipeline.run run-connector xtb --xtb-file path/to/report.xlsx
+.venv\Scripts\python -m pipeline.run run-connector xtb --xtb-file path/to/report.xlsx --mode docker
 ```
 
 You can pass `--xtb-file` multiple times to process several reports in one run.
@@ -42,7 +42,7 @@ The `run-connector xtb` subcommand requires it and will error otherwise.
 
 **Cloud upload (S3 + EventBridge):**
 ```bash
-.venv\Scripts\python -m pipeline.run upload-xtb path/to/report.xlsx
+.venv\Scripts\python -m pipeline.run upload-xtb path/to/report.xlsx --mode staging
 ```
 This uploads the file to S3 and triggers the Step Functions orchestrator
 automatically. Requires S3 storage.

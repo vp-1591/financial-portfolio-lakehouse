@@ -20,7 +20,7 @@ pip install -e ".[pipeline]"
 docker compose build
 docker compose up minio -d
 docker compose run --rm pipeline full --mode docker
-docker compose run --rm pipeline query "SELECT * FROM portfolio_holdings_analytics"
+docker compose run --rm pipeline query "SELECT * FROM portfolio_holdings_analytics" --mode docker
 ```
 
 Data persists in the `minio-data` Docker volume. Secrets come from `.env`
@@ -51,19 +51,19 @@ from GitHub Secrets.
 
 ```bash
 # List all tables
-python -m pipeline.run query "SHOW TABLES"
+.venv/Scripts/python -m pipeline.run query "SHOW TABLES" --mode docker
 
 # Query gold table (values are encrypted; use --decrypt for human-readable output)
-python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --decrypt
+.venv/Scripts/python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --decrypt --mode docker
 
 # Query percentage column only (no decryption needed)
-python -m pipeline.run query "SELECT ticker, percentage, position_type FROM portfolio_holdings_analytics"
+.venv/Scripts/python -m pipeline.run query "SELECT ticker, percentage, position_type FROM portfolio_holdings_analytics" --mode docker
 
 # Decrypt encrypted columns
-python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt
+.venv/Scripts/python -m pipeline.run query "SELECT * FROM ibkr_snapshot_normalized" --decrypt --mode docker
 
 # Export as CSV or JSON
-python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_holdings_analytics" --format csv
+.venv/Scripts/python -m pipeline.run query "SELECT ticker, percentage FROM portfolio_holdings_analytics" --format csv --mode docker
 ```
 
 For the full table naming convention, see [Architecture](../architecture.md#table-naming-convention).

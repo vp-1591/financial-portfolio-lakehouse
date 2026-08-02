@@ -187,13 +187,13 @@ automatically from the well-known name via the SFN API — no env var needed.
 
 ```bash
 # Trigger the demo (staging) execution and return immediately
-python -m pipeline.run full --mode staging
+.venv/Scripts/python -m pipeline.run full --mode staging
 
 # Trigger and wait for completion (prints failure details on a non-successful run)
-python -m pipeline.run full --mode staging --wait
+.venv/Scripts/python -m pipeline.run full --mode staging --wait
 
 # Trigger the production execution
-python -m pipeline.run full --mode prod --wait
+.venv/Scripts/python -m pipeline.run full --mode prod --wait
 ```
 
 `--with-xtb` / `--xtb-file` are not supported in staging/prod `full` — XTB is
