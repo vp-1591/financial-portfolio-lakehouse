@@ -10,6 +10,7 @@ import pytest
 
 from pipeline.connectors.ibkr import transform
 from pipeline.connectors.ibkr.client import (
+    IbkrError,
     IbkrFlexClient,
     as_float,
     parse_account_info,
@@ -203,8 +204,8 @@ class TestClientParsing:
         response_xml = """\
 <FlexStatementResponse>
   <Status>Fail</Status>
-  <ErrorCode>1003</ErrorCode>
-  <ErrorMessage>Invalid token</ErrorMessage>
+  <ErrorCode>1015</ErrorCode>
+  <ErrorMessage>Token is invalid.</ErrorMessage>
 </FlexStatementResponse>
 """
         from pipeline.connectors.ibkr.client import IbkrError
@@ -216,7 +217,267 @@ class TestClientParsing:
             client.request_report()
             assert False, "Expected IbkrError"
         except IbkrError as exc:
-            assert "Invalid token" in str(exc)
+            assert "Token is invalid" in str(exc)
+
+
+class TestFetchReport:
+    """Tests for IbkrFlexClient.fetch_report polling and retry behavior."""
+
+    SUCCESS_XML = (
+        '<FlexQueryResponse queryName="test" type="AF">'
+        '<FlexStatements count="1">'
+        '<FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">'
+        "<OpenPositions>"
+        '<OpenPosition symbol="AAPL" quantity="50" positionValue="3000.0"/>'
+        "</OpenPositions>"
+        "</FlexStatement>"
+        "</FlexStatements>"
+        "</FlexQueryResponse>"
+    )
+
+    WARN_1019_XML = (
+        "<FlexStatementResponse>"
+        "<Status>Warn</Status>"
+        "<ErrorCode>1019</ErrorCode>"
+        "<ErrorMessage>Statement generation in progress. Please try again shortly."
+        "</ErrorMessage>"
+        "</FlexStatementResponse>"
+    )
+
+    @staticmethod
+    def _make_client(response_xml: str) -> IbkrFlexClient:
+        """Build a client whose _request always returns the given XML."""
+        client = IbkrFlexClient(token="test-token", query_id="999999")
+        client._request = lambda path, params: response_xml  # type: ignore[assignment]
+        return client
+
+    def _record_sleeps(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        sleeps: list[float] = []
+        monkeypatch.setattr("pipeline.connectors.ibkr.client.time.sleep", sleeps.append)
+        return sleeps
+
+    def test_fetch_report_success_returns_immediately(self, monkeypatch) -> None:
+        sleeps = self._record_sleeps(monkeypatch)
+        client = self._make_client(self.SUCCESS_XML)
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert root.tag == "FlexQueryResponse"
+        assert sleeps == []
+
+    def test_fetch_report_success_statement_no_error_code(self, monkeypatch) -> None:
+        statement_xml = (
+            "<FlexStatementResponse><Status>Success</Status></FlexStatementResponse>"
+        )
+        sleeps = self._record_sleeps(monkeypatch)
+        client = self._make_client(statement_xml)
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        # A Status=Success FlexStatementResponse is a completed report even
+        # without FlexStatement children or an ErrorCode element.
+        assert root.tag == "FlexStatementResponse"
+        assert sleeps == []
+
+    def test_fetch_report_data_without_status_returns(self, monkeypatch) -> None:
+        xml = (
+            '<FlexQueryResponse queryName="test" type="AF">'
+            '<FlexStatements count="1">'
+            '<FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">'
+            "<OpenPositions>"
+            '<OpenPosition symbol="AAPL"/>'
+            "</OpenPositions>"
+            "</FlexStatement>"
+            "</FlexStatements>"
+            "</FlexQueryResponse>"
+        )
+        sleeps = self._record_sleeps(monkeypatch)
+        client = self._make_client(xml)
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        # No Status element but FlexStatement children present → data ready.
+        assert root.tag == "FlexQueryResponse"
+        assert sleeps == []
+
+    def test_fetch_report_1019_warn_retries_then_succeeds(self, monkeypatch) -> None:
+        responses = iter([self.WARN_1019_XML, self.SUCCESS_XML])
+        sleeps = self._record_sleeps(monkeypatch)
+        client = IbkrFlexClient(token="test-token", query_id="999999")
+        client._request = lambda path, params: next(responses)  # type: ignore[assignment]
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert root.tag == "FlexQueryResponse"
+        # One retry delay between the 1019 Warn poll and the successful poll.
+        assert sleeps == [1.0]
+
+    def test_fetch_report_1018_retries_then_succeeds(self, monkeypatch) -> None:
+        error_1018_xml = (
+            "<FlexStatementResponse>"
+            "<Status>Warn</Status>"
+            "<ErrorCode>1018</ErrorCode>"
+            "<ErrorMessage>Too many requests have been made from this token. "
+            "Please try again shortly. Limited to one request per second, "
+            "10 requests per minute (per token).</ErrorMessage>"
+            "</FlexStatementResponse>"
+        )
+        responses = iter([error_1018_xml, self.SUCCESS_XML])
+        sleeps = self._record_sleeps(monkeypatch)
+        client = IbkrFlexClient(token="test-token", query_id="999999")
+        client._request = lambda path, params: next(responses)  # type: ignore[assignment]
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert root.tag == "FlexQueryResponse"
+        assert sleeps == [1.0]
+
+    @pytest.mark.parametrize(
+        ("error_code", "error_message"),
+        [
+            (
+                "1001",
+                (
+                    "Statement could not be generated at this time. "
+                    "Please try again shortly."
+                ),
+            ),
+            (
+                "1004",
+                "Statement is incomplete at this time. Please try again shortly.",
+            ),
+            (
+                "1005",
+                "Settlement data is not ready at this time. Please try again shortly.",
+            ),
+            (
+                "1006",
+                "FIFO P/L data is not ready at this time. Please try again shortly.",
+            ),
+            (
+                "1007",
+                "MTM P/L data is not ready at this time. Please try again shortly.",
+            ),
+            (
+                "1008",
+                (
+                    "MTM and FIFO P/L data is not ready at this time. "
+                    "Please try again shortly."
+                ),
+            ),
+            (
+                "1009",
+                (
+                    "The server is under heavy load. Statement could not be "
+                    "generated at this time. Please try again shortly."
+                ),
+            ),
+            (
+                "1021",
+                (
+                    "Statement could not be retrieved at this time. "
+                    "Please try again shortly."
+                ),
+            ),
+        ],
+    )
+    def test_fetch_report_transient_code_retries_then_succeeds(
+        self, monkeypatch, error_code, error_message
+    ) -> None:
+        transient_xml = (
+            "<FlexStatementResponse>"
+            "<Status>Warn</Status>"
+            f"<ErrorCode>{error_code}</ErrorCode>"
+            f"<ErrorMessage>{error_message}</ErrorMessage>"
+            "</FlexStatementResponse>"
+        )
+        responses = iter([transient_xml, self.SUCCESS_XML])
+        sleeps = self._record_sleeps(monkeypatch)
+        client = IbkrFlexClient(token="test-token", query_id="999999")
+        client._request = lambda path, params: next(responses)  # type: ignore[assignment]
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert root.tag == "FlexQueryResponse"
+        assert sleeps == [1.0]
+
+    def test_fetch_report_warn_without_error_code_retries_then_succeeds(
+        self, monkeypatch
+    ) -> None:
+        warn_no_code_xml = (
+            "<FlexStatementResponse><Status>Warn</Status></FlexStatementResponse>"
+        )
+        responses = iter([warn_no_code_xml, self.SUCCESS_XML])
+        sleeps = self._record_sleeps(monkeypatch)
+        client = IbkrFlexClient(token="test-token", query_id="999999")
+        client._request = lambda path, params: next(responses)  # type: ignore[assignment]
+
+        root = client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert root.tag == "FlexQueryResponse"
+        assert sleeps == [1.0]
+
+    def test_fetch_report_fail_raises_immediately(self, monkeypatch) -> None:
+        fail_xml = (
+            "<FlexStatementResponse>"
+            "<Status>Fail</Status>"
+            "<ErrorCode>1017</ErrorCode>"
+            "<ErrorMessage>Reference code is invalid.</ErrorMessage>"
+            "</FlexStatementResponse>"
+        )
+        sleeps = self._record_sleeps(monkeypatch)
+        client = self._make_client(fail_xml)
+
+        with pytest.raises(IbkrError, match="generation failed.*1017"):
+            client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert sleeps == []
+
+    @pytest.mark.parametrize(
+        ("error_code", "error_message"),
+        [
+            ("1003", "Statement is not available."),
+            ("1014", "Query is invalid."),
+            ("1020", "Invalid request or unable to validate request."),
+        ],
+    )
+    def test_fetch_report_other_error_code_raises(
+        self, monkeypatch, error_code, error_message
+    ) -> None:
+        error_xml = (
+            "<FlexStatementResponse>"
+            "<Status>Warn</Status>"
+            f"<ErrorCode>{error_code}</ErrorCode>"
+            f"<ErrorMessage>{error_message}</ErrorMessage>"
+            "</FlexStatementResponse>"
+        )
+        sleeps = self._record_sleeps(monkeypatch)
+        client = self._make_client(error_xml)
+
+        with pytest.raises(IbkrError, match=f"code={error_code}"):
+            client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert sleeps == []
+
+    def test_fetch_report_retry_exhaustion_raises(self, monkeypatch) -> None:
+        sleeps = self._record_sleeps(monkeypatch)
+        client = self._make_client(self.WARN_1019_XML)
+
+        with pytest.raises(IbkrError, match="not ready after 3 retries"):
+            client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
+
+        assert sleeps == [1.0, 1.0]
+
+    def test_fetch_report_initial_delay_sleeps_before_first_poll(
+        self, monkeypatch
+    ) -> None:
+        sleeps = self._record_sleeps(monkeypatch)
+        client = self._make_client(self.SUCCESS_XML)
+
+        root = client.fetch_report("refcode", retries=3, delay=2.0, initial_delay=5.0)
+
+        assert root.tag == "FlexQueryResponse"
+        assert sleeps == [5.0]
 
 
 class TestFlexTransformSnapshot:

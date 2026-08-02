@@ -39,6 +39,25 @@ DEFAULT_FLEX_BASE_URL = (
     "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 )
 
+# IBKR Flex Web Service v3 error codes that mean "not ready yet — try again
+# shortly" and should be retried. Messages taken verbatim from IBKR's official
+# Flex Web Service error table (flex3error.htm). Any code not in this set is
+# fatal.
+_TRANSIENT_FLEX_ERROR_CODES = frozenset(
+    {
+        "1001",  # Statement could not be generated at this time
+        "1004",  # Statement is incomplete at this time
+        "1005",  # Settlement data is not ready at this time
+        "1006",  # FIFO P/L data is not ready at this time
+        "1007",  # MTM P/L data is not ready at this time
+        "1008",  # MTM and FIFO P/L data is not ready at this time
+        "1009",  # The server is under heavy load
+        "1018",  # Too many requests (rate limit: 1/sec, 10/min per token)
+        "1019",  # Statement generation in progress
+        "1021",  # Statement could not be retrieved at this time
+    }
+)
+
 
 class IbkrError(RuntimeError):
     pass
@@ -120,29 +139,44 @@ class IbkrFlexClient:
         reference_code: str,
         retries: int = 6,
         delay: float = 3.0,
+        initial_delay: float = 3.0,
     ) -> ET.Element:
         """Poll for a Flex report until it is ready.
 
         Reports take a few seconds to generate. This method retries up to
         *retries* times, waiting *delay* seconds between attempts.
 
+        ``Status=Warn`` responses are transient "still generating" signals
+        (e.g. error code 1019) and are retried, not returned as data — only
+        ``Status=Success`` or a response carrying ``FlexStatement`` children
+        counts as a completed report.
+
+        Args:
+            initial_delay: seconds to wait before the first poll attempt.
+                IBKR commonly returns error 1019 on an immediate first
+                GetStatement call, so an initial delay avoids a wasted
+                round trip. Defaults to 3.0 seconds.
+
         Returns the root XML element of the FlexQueryResponse.
         """
         params = {"t": self.token, "q": reference_code, "v": "3"}
         last_error: str = ""
 
+        if initial_delay > 0:
+            time.sleep(initial_delay)
+
         for attempt in range(1, retries + 1):
             body = self._request("GetStatement", params)
             root = ET.fromstring(body)
 
-            # Successful report: root tag is FlexQueryResponse or
-            # FlexStatementResponse with Status=Success/Warn
+            # Real report: root tag is FlexQueryResponse or
+            # FlexStatementResponse with Status=Success
             tag = root.tag.lower() if root.tag else ""
             if "flexqueryresponse" in tag or "flexstatementresponse" in tag:
                 status_elem = root.find("Status")
                 if status_elem is not None and status_elem.text:
                     status_text = status_elem.text.strip().upper()
-                    if status_text in ("SUCCESS", "WARN"):
+                    if status_text == "SUCCESS":
                         return root
                     if status_text == "FAIL":
                         error_msg = (
@@ -155,8 +189,23 @@ class IbkrFlexClient:
                             f"Flex report generation failed (code={error_code}): "
                             f"{error_msg}".strip()
                         )
-                    # Status might be "Processing" — treat as not ready
-                    last_error = f"status={status_text}"
+                    if status_text == "WARN":
+                        # Decision: docs/adr/0099-retry-on-ibkr-flex-transient-error-1019.md
+                        # WARN with an ErrorCode (e.g. 1019 "statement
+                        # generation in progress") is a transient "not ready"
+                        # signal, not a successful report. Fall through to the
+                        # retry logic below.
+                        error_code = (root.findtext("ErrorCode") or "").strip()
+                        if error_code:
+                            last_error = (
+                                f"status=Warn, code={error_code}, message="
+                                f"{root.findtext('ErrorMessage') or root.findtext('Message') or ''}"
+                            )
+                        else:
+                            last_error = "status=Warn (no ErrorCode)"
+                    else:
+                        # Unrecognized status — treat as not ready
+                        last_error = f"status={status_text}"
                 else:
                     # If there are FlexStatements children, the data is ready
                     if root.find(".//FlexStatement") is not None:
@@ -167,12 +216,15 @@ class IbkrFlexClient:
             error_code = root.findtext("ErrorCode")
             if error_code:
                 last_error = f"code={error_code}, message={root.findtext('ErrorMessage') or root.findtext('Message') or ''}"
-                # Error code 1018 = not ready yet
-                if error_code.strip() == "1018" and attempt < retries:
+                # Transient "not ready" codes (1001/1004-1009/1018/1019/1021)
+                # are retried; any other error code is fatal.
+                if (
+                    error_code.strip() in _TRANSIENT_FLEX_ERROR_CODES
+                    and attempt < retries
+                ):
                     time.sleep(delay)
                     continue
-                # Other error codes are fatal
-                if error_code.strip() != "1018":
+                if error_code.strip() not in _TRANSIENT_FLEX_ERROR_CODES:
                     raise IbkrError(
                         f"Flex report error ({last_error}). Response: {body[:500]}"
                     )

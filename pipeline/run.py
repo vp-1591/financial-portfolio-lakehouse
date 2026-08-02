@@ -107,6 +107,14 @@ def cmd_query(args: argparse.Namespace) -> int:
         result = decrypt_df(result)
 
     if args.format == "table":
+        # Show all columns — Polars hides middle columns when a row exceeds
+        # its default 80-char print width.
+        import polars as pl
+
+        pl.Config.set_fmt_str_lengths(1000)
+        pl.Config.set_tbl_rows(100)
+        pl.Config.set_tbl_cols(200)
+        pl.Config.set_tbl_width_chars(None)
         print(result)
     elif args.format == "csv":
         print(result.write_csv())
