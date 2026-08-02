@@ -204,8 +204,8 @@ class TestClientParsing:
         response_xml = """\
 <FlexStatementResponse>
   <Status>Fail</Status>
-  <ErrorCode>1003</ErrorCode>
-  <ErrorMessage>Invalid token</ErrorMessage>
+  <ErrorCode>1015</ErrorCode>
+  <ErrorMessage>Token is invalid.</ErrorMessage>
 </FlexStatementResponse>
 """
         from pipeline.connectors.ibkr.client import IbkrError
@@ -217,7 +217,7 @@ class TestClientParsing:
             client.request_report()
             assert False, "Expected IbkrError"
         except IbkrError as exc:
-            assert "Invalid token" in str(exc)
+            assert "Token is invalid" in str(exc)
 
 
 class TestFetchReport:
@@ -315,8 +315,11 @@ class TestFetchReport:
     def test_fetch_report_1018_retries_then_succeeds(self, monkeypatch) -> None:
         error_1018_xml = (
             "<FlexStatementResponse>"
+            "<Status>Warn</Status>"
             "<ErrorCode>1018</ErrorCode>"
-            "<ErrorMessage>Please try again shortly.</ErrorMessage>"
+            "<ErrorMessage>Too many requests have been made from this token. "
+            "Please try again shortly. Limited to one request per second, "
+            "10 requests per minute (per token).</ErrorMessage>"
             "</FlexStatementResponse>"
         )
         responses = iter([error_1018_xml, self.SUCCESS_XML])
@@ -329,11 +332,13 @@ class TestFetchReport:
         assert root.tag == "FlexQueryResponse"
         assert sleeps == [1.0]
 
-    def test_fetch_report_processing_retries_then_succeeds(self, monkeypatch) -> None:
-        processing_xml = (
-            "<FlexStatementResponse><Status>Processing</Status></FlexStatementResponse>"
+    def test_fetch_report_warn_without_error_code_retries_then_succeeds(
+        self, monkeypatch
+    ) -> None:
+        warn_no_code_xml = (
+            "<FlexStatementResponse><Status>Warn</Status></FlexStatementResponse>"
         )
-        responses = iter([processing_xml, self.SUCCESS_XML])
+        responses = iter([warn_no_code_xml, self.SUCCESS_XML])
         sleeps = self._record_sleeps(monkeypatch)
         client = IbkrFlexClient(token="test-token", query_id="999999")
         client._request = lambda path, params: next(responses)  # type: ignore[assignment]
@@ -347,14 +352,14 @@ class TestFetchReport:
         fail_xml = (
             "<FlexStatementResponse>"
             "<Status>Fail</Status>"
-            "<ErrorCode>1003</ErrorCode>"
-            "<ErrorMessage>Invalid token</ErrorMessage>"
+            "<ErrorCode>1017</ErrorCode>"
+            "<ErrorMessage>Reference code is invalid.</ErrorMessage>"
             "</FlexStatementResponse>"
         )
         sleeps = self._record_sleeps(monkeypatch)
         client = self._make_client(fail_xml)
 
-        with pytest.raises(IbkrError, match="generation failed.*1003"):
+        with pytest.raises(IbkrError, match="generation failed.*1017"):
             client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
 
         assert sleeps == []
@@ -362,14 +367,15 @@ class TestFetchReport:
     def test_fetch_report_other_error_code_raises(self, monkeypatch) -> None:
         error_xml = (
             "<FlexStatementResponse>"
-            "<ErrorCode>1234</ErrorCode>"
-            "<ErrorMessage>Unknown error</ErrorMessage>"
+            "<Status>Warn</Status>"
+            "<ErrorCode>1003</ErrorCode>"
+            "<ErrorMessage>Statement is not available.</ErrorMessage>"
             "</FlexStatementResponse>"
         )
         sleeps = self._record_sleeps(monkeypatch)
         client = self._make_client(error_xml)
 
-        with pytest.raises(IbkrError, match="code=1234"):
+        with pytest.raises(IbkrError, match="code=1003"):
             client.fetch_report("refcode", retries=3, delay=1.0, initial_delay=0)
 
         assert sleeps == []

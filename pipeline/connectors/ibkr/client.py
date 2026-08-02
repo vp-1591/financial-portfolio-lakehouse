@@ -185,7 +185,7 @@ class IbkrFlexClient:
                         else:
                             last_error = "status=Warn (no ErrorCode)"
                     else:
-                        # Status might be "Processing" — treat as not ready
+                        # Unrecognized status — treat as not ready
                         last_error = f"status={status_text}"
                 else:
                     # If there are FlexStatements children, the data is ready

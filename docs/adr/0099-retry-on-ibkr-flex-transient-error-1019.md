@@ -41,6 +41,6 @@ Alternatives considered and rejected:
 
 ## Validation
 
-- New `TestFetchReport` class in `tests/test_ibkr_connector.py` (10 tests) covers: success returns immediately; success with no ErrorCode; `FlexStatement` data with no Status returns; 1019 Warn retries then succeeds; 1018 retries then succeeds; `Status=Processing` retries then succeeds; `FAIL` raises immediately; other error codes raise; retry exhaustion raises after max retries; `initial_delay` sleeps before the first poll (asserted via a `time.sleep` recorder).
+- New `TestFetchReport` class in `tests/test_ibkr_connector.py` (10 tests) covers: success returns immediately; success with no ErrorCode; `FlexStatement` data with no Status returns; 1019 Warn retries then succeeds; 1018 Warn retries then succeeds; Warn without ErrorCode retries then succeeds; `FAIL` raises immediately (1017 "Reference code is invalid."); other permanent error codes raise (1003 "Statement is not available."); retry exhaustion raises after max retries; `initial_delay` sleeps before the first poll (asserted via a `time.sleep` recorder). All error codes and messages are taken verbatim from IBKR's official Flex Web Service Version 3 error table.
 - Full suite: `pytest tests/ -q -rf` → 671 passed.
 - `pyright pipeline/ tests/` → 0 errors; ruff → clean.
