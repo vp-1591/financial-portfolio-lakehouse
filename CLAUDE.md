@@ -65,14 +65,6 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run report --mode stagin
 
 @~/.claude/shared/adr-workflow.md
 
-## Roadmap workflow
-
-Roadmaps live in `docs/roadmaps/<number>-<topic>.md` and follow the template in
-`~\.claude\skills\create-roadmap\roadmap-template.md`. Use `/create-roadmap` to create or update one —
-it clarifies ambiguities before drafting.
-
-The workflow order is: `analyze → roadmap → plan → implement → ADR → review`.
-
 ## Schema migrations
 
 When a table schema changes (column types, added/removed columns), create a migration script under `pipeline/migrations/` that rewrites the existing Delta table to match the new schema. This ensures the deploy can succeed against pre-existing tables so that quality checks don't flag mismatches between the expected and actual schema.
