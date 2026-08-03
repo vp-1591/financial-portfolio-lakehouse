@@ -75,6 +75,12 @@ class TestResolveStorage:
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         config = resolve_storage()
         assert config.backend.bucket == "test-bucket"
+        # Exact path assertion (A5 C6): the prefix must appear in every path
+        # so a bug dropping the prefix from the docker base is detected.
+        assert config.data_dir == "s3://test-bucket/pipeline"
+        assert config.raw_dir == "s3://test-bucket/pipeline/raw"
+        assert config.normalized_dir == "s3://test-bucket/pipeline/normalized"
+        assert config.analytics_dir == "s3://test-bucket/pipeline/analytics"
         use_storage(config)  # just verify it doesn't crash
         reset_mode()
 
@@ -102,6 +108,12 @@ class TestResolveStorage:
         config = resolve_storage()
         assert config.backend.bucket == "prod-bucket"
         assert config.backend.prefix == "pipeline"
+        # Exact path assertion (A5 C6): the prod prefix must appear in every
+        # path so a bug dropping the prefix from the prod base is detected.
+        assert config.data_dir == "s3://prod-bucket/pipeline"
+        assert config.raw_dir == "s3://prod-bucket/pipeline/raw"
+        assert config.normalized_dir == "s3://prod-bucket/pipeline/normalized"
+        assert config.analytics_dir == "s3://prod-bucket/pipeline/analytics"
         reset_mode()
 
     def test_docker_mode_missing_bucket_raises(self, monkeypatch) -> None:

@@ -33,19 +33,58 @@ from pipeline.secrets import reset_mode
 class TestArgparseDispatch:
     """run-connector and run-consolidate-analytics are present in the commands dict."""
 
-    def test_run_connector_in_commands_dict(self) -> None:
+    def test_main_dispatches_keygen(self, monkeypatch) -> None:
+        """main() parses the 'keygen' subcommand and dispatches to cmd_keygen.
 
-        # Parse with the real parser to verify subcommand is registered.
-        # We only check the commands dict here, since running main() would
-        # require storage setup.
+        Exercises the full argparse parse -> commands[args.command](args) path
+        (round1-persistence §2b demonstration 1). A dispatch-break mutation
+        (key removed from the commands dict) would raise KeyError instead of
+        returning 99, failing this test.
+        """
+        import sys
+
         from pipeline import run as run_module
 
-        assert "run-connector" in run_module.main.__code__.co_consts
-        # Verify cmd_run_connector is callable
-        assert callable(cmd_run_connector)
+        called: dict[str, bool] = {}
 
-    def test_run_consolidate_analytics_in_commands_dict(self) -> None:
-        assert callable(cmd_run_consolidate_analytics)
+        def fake_keygen(args: argparse.Namespace) -> int:
+            called["invoked"] = True
+            return 99
+
+        monkeypatch.setattr(run_module, "cmd_keygen", fake_keygen)
+        monkeypatch.setattr(sys, "argv", ["pipeline.run", "keygen"])
+        rc = run_module.main()
+        assert rc == 99
+        assert called.get("invoked") is True
+
+    def test_main_dispatches_run_connector(self, monkeypatch) -> None:
+        """main() parses 'run-connector' and dispatches to cmd_run_connector.
+
+        Fails on the dispatch-break mutation where the 'run-connector' key is
+        removed from the commands dict (main() raises KeyError) — the existing
+        bytecode/callable checks pass under that mutation; this real dispatch
+        invocation does not.
+        """
+        import sys
+
+        from pipeline import run as run_module
+        from pipeline import storage as storage_mod
+
+        called: dict[str, bool] = {}
+
+        def fake_run_connector(args: argparse.Namespace) -> int:
+            called["invoked"] = True
+            return 99
+
+        monkeypatch.setattr(run_module, "cmd_run_connector", fake_run_connector)
+        # Avoid touching real storage / S3 resolution for this dispatch test.
+        monkeypatch.setattr(storage_mod, "resolve_storage", lambda: None)
+        monkeypatch.setattr(
+            sys, "argv", ["pipeline.run", "run-connector", "ibkr", "--mode", "docker"]
+        )
+        rc = run_module.main()
+        assert rc == 99
+        assert called.get("invoked") is True
 
     def test_run_connector_ibkr_resolves(self) -> None:
         """run-connector ibkr resolves via get("ibkr")."""

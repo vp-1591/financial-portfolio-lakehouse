@@ -264,7 +264,15 @@ class TestCmdReport:
         assert 'id="data-quality"' in html
 
     def test_report_embeds_plotly_js_once(self, fernet_key: bytes, tmp_path: Path):
-        """Plotly.js bundle is inlined exactly once with multiple charts."""
+        """Plotly.js BUNDLE is inlined exactly once, not per-figure.
+
+        C8: count a bundle-specific marker (``var Plotly`` — the library
+        definition, which appears exactly once per inlined bundle and never
+        in a render-call script), NOT ``Plotly.newPlot`` render calls (which
+        appear once per chart regardless of bundling).  If the renderer is
+        changed to inline the bundle per figure, ``var Plotly`` count rises
+        to N and this test fails.
+        """
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
@@ -273,9 +281,19 @@ class TestCmdReport:
         cmd_report(args)
 
         html = Path(output).read_text(encoding="utf-8")
-        # Plotly charts are rendered via Plotly.newPlot calls
-        plotly_chart_count = html.count("Plotly.newPlot")
-        assert plotly_chart_count >= 1, "At least one Plotly chart should be present"
+        # At least one chart is rendered
+        assert html.count("Plotly.newPlot") >= 1, (
+            "At least one Plotly chart should be present"
+        )
+        # The plotly.js bundle is inlined exactly once (first figure only).
+        # ``var Plotly`` is the library definition — it appears once per
+        # inlined bundle and never in a render-call script.  Per-figure
+        # inlining would produce one ``var Plotly`` per chart.
+        bundle_count = html.count("var Plotly")
+        assert bundle_count == 1, (
+            f"Plotly.js bundle inlined {bundle_count} times, expected 1. "
+            "Per-figure inlining duplicates the ~3.5 MB bundle."
+        )
 
     def test_partial_data_still_renders(self, fernet_key: bytes, tmp_path: Path):
         """Report renders even if dividend_income is missing."""

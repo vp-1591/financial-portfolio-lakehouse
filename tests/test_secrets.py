@@ -6,6 +6,7 @@ import pytest
 
 from pipeline.secrets import (
     REQUIRED_SECRETS,
+    REQUIRED_SECRETS_S3,
     AwsCredentials,
     get_env,
     get_mode,
@@ -53,7 +54,17 @@ class TestInjectSecrets:
         secrets = inject_secrets()
         for name in REQUIRED_SECRETS:
             assert name not in secrets
-        assert any(name in msg for msg in caplog.messages for name in REQUIRED_SECRETS)
+        # EACH required secret must be warned — not just one of N.
+        warned_names = {
+            name
+            for name in REQUIRED_SECRETS
+            if any(name in msg for msg in caplog.messages)
+        }
+        assert warned_names == set(REQUIRED_SECRETS), (
+            f"Expected warnings for all required secrets, "
+            f"missing: {set(REQUIRED_SECRETS) - warned_names}, "
+            f"got: {warned_names}"
+        )
 
     def test_inject_loads_dotenv(self, tmp_path, monkeypatch):
         """inject_secrets loads variables from .env file."""
@@ -333,10 +344,11 @@ class TestInjectSecretsS3Validation:
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
 
         inject_secrets()
-        assert any(
-            "AWS_ACCESS_KEY_ID" in msg and "cloud storage" in msg
-            for msg in caplog.messages
-        ), f"Expected S3 warning, got: {caplog.messages}"
+        # EACH S3 secret (including AWS_SECRET_ACCESS_KEY) must be warned.
+        for name in REQUIRED_SECRETS_S3:
+            assert any(
+                name in msg and "cloud storage" in msg for msg in caplog.messages
+            ), f"Expected S3 warning for {name}, got: {caplog.messages}"
 
     def test_s3_secrets_validated_for_staging(self, monkeypatch, caplog):
         """In staging mode, missing AWS creds generate a warning."""
@@ -347,10 +359,11 @@ class TestInjectSecretsS3Validation:
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
 
         inject_secrets()
-        assert any(
-            "AWS_ACCESS_KEY_ID" in msg and "cloud storage" in msg
-            for msg in caplog.messages
-        ), f"Expected S3 warning, got: {caplog.messages}"
+        # EACH S3 secret (including AWS_SECRET_ACCESS_KEY) must be warned.
+        for name in REQUIRED_SECRETS_S3:
+            assert any(
+                name in msg and "cloud storage" in msg for msg in caplog.messages
+            ), f"Expected S3 warning for {name}, got: {caplog.messages}"
 
     def test_s3_secrets_not_required_for_docker(self, monkeypatch, caplog):
         """In docker mode, missing AWS creds do NOT generate S3 warnings."""
@@ -671,9 +684,9 @@ class TestAwsCredentialsDataclass:
             allow_http=True,
         )
         parts = creds.to_duckdb_secret_parts()
-        assert any("ENDPOINT" in p for p in parts)
-        assert any("USE_SSL false" in p for p in parts)
-        assert any("URL_STYLE path" in p for p in parts)
+        assert "ENDPOINT 'minio:9000'" in parts
+        assert "USE_SSL false" in parts
+        assert "URL_STYLE path" in parts
 
     def test_to_duckdb_secret_parts_escapes_quotes(self):
         """Single quotes in credentials are escaped to prevent SQL injection."""

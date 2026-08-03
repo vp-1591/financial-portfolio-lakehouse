@@ -131,7 +131,12 @@ def transform_snapshot(
             acct_id = str(pos.get("accountId", ""))
             value = as_float(pos.get("positionValue"))
             if value == 0:
-                quantity = as_float(pos.get("quantity"))
+                # Real Flex OpenPosition elements use ``position`` (not
+                # ``quantity``) for the share count. Fall back to
+                # ``position * markPrice`` when ``positionValue`` is zero so
+                # non-zero holdings with a zero reported positionValue are not
+                # silently dropped.
+                quantity = as_float(pos.get("position"))
                 mark_price = as_float(pos.get("markPrice"))
                 value = quantity * mark_price
             if value == 0:
@@ -145,7 +150,7 @@ def transform_snapshot(
             security_ccy = currency if currency else "USD"
 
             label = _flex_position_label(pos)
-            asset_class = str(pos.get("assetClass", "") or "STK").upper()
+            asset_class = str(pos.get("assetCategory", "") or "STK").upper()
             isin = str(pos.get("isin", "") or "").strip().upper()
             description = str(
                 pos.get("description", "") or pos.get("symbol", "") or label
@@ -173,9 +178,10 @@ def transform_snapshot(
                 ending_cash = as_float(summary.get("endingCash"))
                 if ending_cash != 0:
                     acct_id = str(summary.get("accountId", ""))
+                    # base_currency_by_account already reflects the override
+                    # applied above (lines 111-113), so no inline override is
+                    # needed here.
                     base_ccy = base_currency_by_account.get(acct_id, "USD")
-                    if base_currency_override:
-                        base_ccy = base_currency_override.upper()
                     cash_entries = [
                         {
                             "accountId": acct_id,
@@ -576,8 +582,12 @@ def _process_ibkr_trade(
 ) -> dict[str, Any]:
     """Map a Trade element to the broker-neutral CDC schema."""
     acct_id = str(trade.get("accountId", ""))
+    # Decision: docs/adr/0101-fix-ibkr-flex-attribute-names-for-cdc-event-id-dedup.md
+    # Real Flex Trade elements use ``ibExecID``/``tradeID`` (capital ID),
+    # not ``ibExecutionId``/``tradeId``. Fall back to a deterministic hash
+    # only when the canonical broker IDs are genuinely absent.
     event_id = str(
-        trade.get("ibExecutionId", "") or trade.get("tradeId", "") or ""
+        trade.get("ibExecID", "") or trade.get("tradeID", "") or ""
     ) or _deterministic_event_id(
         "Trade",
         acct_id,
@@ -670,7 +680,8 @@ def _process_ibkr_cash_transaction(
     """Map a CashTransaction element to the broker-neutral CDC schema."""
     acct_id = str(ct.get("accountId", ""))
     amount = as_float(ct.get("amount"))
-    event_id = str(ct.get("transactionId", "") or "") or _deterministic_event_id(
+    # Real Flex CashTransaction elements use ``transactionID`` (capital ID).
+    event_id = str(ct.get("transactionID", "") or "") or _deterministic_event_id(
         "CashTransaction",
         acct_id,
         str(ct.get("dateTime", "")),
@@ -716,7 +727,8 @@ def _process_ibkr_transfer(
 ) -> dict[str, Any]:
     """Map a Transfer element to the broker-neutral CDC schema."""
     acct_id = str(transfer.get("accountId", ""))
-    event_id = str(transfer.get("transactionId", "") or "") or _deterministic_event_id(
+    # Real Flex Transfer elements use ``transactionID`` (capital ID).
+    event_id = str(transfer.get("transactionID", "") or "") or _deterministic_event_id(
         "Transfer",
         acct_id,
         str(transfer.get("dateTime", "")),

@@ -56,6 +56,24 @@ class TestResolveStorage:
         assert isinstance(config.backend, S3Backend)
         assert config.data_dir.startswith("s3://")
         assert "test-bucket" in config.data_dir
+        # Exact path assertion (A5 C6): the prefix must appear in every path,
+        # not just the bucket. A bug dropping the prefix from the docker base
+        # would misroute writes to s3://bucket/raw instead of s3://bucket/pipeline/raw.
+        assert config.data_dir == "s3://test-bucket/pipeline"
+        assert config.raw_dir == "s3://test-bucket/pipeline/raw"
+        assert config.normalized_dir == "s3://test-bucket/pipeline/normalized"
+        assert config.analytics_dir == "s3://test-bucket/pipeline/analytics"
+
+    def test_docker_mode_paths_include_prefix(self, monkeypatch):
+        """Docker mode paths include the prefix (mirror staging path test)."""
+        monkeypatch.setenv("S3_BUCKET", "pipeline-staging")
+        monkeypatch.setenv("S3_PREFIX", "custom-prefix")
+        set_mode("docker")
+        config = resolve_storage()
+        assert config.data_dir == "s3://pipeline-staging/custom-prefix"
+        assert config.raw_dir == "s3://pipeline-staging/custom-prefix/raw"
+        assert config.normalized_dir == "s3://pipeline-staging/custom-prefix/normalized"
+        assert config.analytics_dir == "s3://pipeline-staging/custom-prefix/analytics"
 
     def test_docker_mode_with_endpoint_url(self, monkeypatch):
         """Docker mode with S3_ENDPOINT_URL sets up MinIO endpoint."""
@@ -140,6 +158,25 @@ class TestResolveStorage:
         assert isinstance(config.backend, S3Backend)
         assert config.backend.bucket == "my-bucket"
         assert config.backend.prefix == "pipeline"
+        # Exact path assertion (A5 C6): the prod prefix must appear in every
+        # path, not just the backend. A bug dropping the prefix from the prod
+        # base would misroute writes to s3://bucket/raw instead of
+        # s3://bucket/pipeline/raw.
+        assert config.data_dir == "s3://my-bucket/pipeline"
+        assert config.raw_dir == "s3://my-bucket/pipeline/raw"
+        assert config.normalized_dir == "s3://my-bucket/pipeline/normalized"
+        assert config.analytics_dir == "s3://my-bucket/pipeline/analytics"
+
+    def test_prod_mode_paths_include_prefix(self, monkeypatch):
+        """Prod mode paths include the prefix (mirror staging path test)."""
+        monkeypatch.setenv("S3_BUCKET", "prod-bucket")
+        monkeypatch.setenv("S3_PREFIX", "custom-prefix")
+        set_mode("prod")
+        config = resolve_storage()
+        assert config.data_dir == "s3://prod-bucket/custom-prefix"
+        assert config.raw_dir == "s3://prod-bucket/custom-prefix/raw"
+        assert config.normalized_dir == "s3://prod-bucket/custom-prefix/normalized"
+        assert config.analytics_dir == "s3://prod-bucket/custom-prefix/analytics"
 
     def test_prod_mode_requires_s3_bucket(self, monkeypatch):
         """Prod mode raises ValueError when S3_BUCKET is not set."""
@@ -382,9 +419,18 @@ class TestS3Backend:
         )
 
     def test_ensure_parent_is_noop(self):
-        backend = S3Backend(bucket="my-bucket")
+        backend = S3Backend(bucket="my-bucket", prefix="pipeline")
+        # Capture state before the call so we can assert ensure_parent is a
+        # true no-op (A5 C5): a mutation that mutates self.bucket/self.prefix
+        # must fail here, not merely "not raise".
+        bucket_before = backend.bucket
+        prefix_before = backend.prefix
         # Should not raise -- S3 doesn't need parent dirs
         backend.ensure_parent("s3://my-bucket/pipeline/raw/ibkr_snapshot")
+        assert backend.bucket == bucket_before
+        assert backend.prefix == prefix_before
+        assert backend.bucket == "my-bucket"
+        assert backend.prefix == "pipeline"
 
     def test_staging_path_with_prefix(self):
         backend = S3Backend(bucket="my-bucket", prefix="pipeline")

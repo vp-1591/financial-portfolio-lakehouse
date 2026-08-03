@@ -102,7 +102,10 @@ class TestLoadKey:
 
         os.environ.pop("ENCRYPTION_KEY", None)
         set_mode("docker")
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(
+            FileNotFoundError,
+            match="Set the ENCRYPTION_KEY environment variable",
+        ):
             load_key(tmp_path / "nonexistent.key")
         reset_mode()
 
@@ -157,3 +160,68 @@ class TestLoadKey:
         result = load_key(key_file)
         assert result == key
         reset_mode()
+
+    def test_storage_fallback_resolves_key_file(self, monkeypatch, tmp_path):
+        """load_key(path=None) in prod mode resolves via get_storage().encryption_key_file.
+
+        Exercises crypto.py:59-61 — the storage-based key-file fallback that
+        ``test_production_mode_falls_back_to_file`` skips by passing an explicit
+        ``key_file``. A bug in this resolution path would go undetected otherwise.
+        """
+        from types import SimpleNamespace
+
+        from pipeline import storage
+
+        monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+        set_mode("prod")
+
+        key = generate_key()
+        key_file = tmp_path / "encryption.key"
+        key_file.write_bytes(key)
+
+        monkeypatch.setattr(
+            storage,
+            "get_storage",
+            lambda: SimpleNamespace(encryption_key_file=str(key_file)),
+        )
+
+        assert load_key() == key
+        reset_mode()
+
+    def test_storage_fallback_raises_with_guidance_when_file_missing(
+        self, monkeypatch, tmp_path
+    ):
+        """load_key(path=None) via storage fallback raises FileNotFoundError with the
+        ENCRYPTION_KEY guidance message when the resolved key file does not exist."""
+        from types import SimpleNamespace
+
+        from pipeline import storage
+
+        monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+        set_mode("prod")
+
+        missing = tmp_path / "missing.key"
+        monkeypatch.setattr(
+            storage,
+            "get_storage",
+            lambda: SimpleNamespace(encryption_key_file=str(missing)),
+        )
+
+        with pytest.raises(
+            FileNotFoundError,
+            match="Set the ENCRYPTION_KEY environment variable",
+        ):
+            load_key()
+        reset_mode()
+
+
+class TestKeygenMain:
+    """Cover pipeline.keygen.main() — previously 0% coverage."""
+
+    def test_main_prints_guidance_and_generates_key(self, capsys):
+        from pipeline.keygen import main
+
+        main()
+        captured = capsys.readouterr()
+        assert "ENCRYPTION_KEY" in captured.out
+        assert "generate_key" in captured.out

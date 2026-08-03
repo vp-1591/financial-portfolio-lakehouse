@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import ClassVar
 
+import polars as pl
 import pyarrow as pa
 import pytest
 
+from pipeline.connectors.registry import get
 from pipeline.connectors.trading212.client import (
     Trading212HttpError,
     account_currency,
@@ -31,6 +34,7 @@ from pipeline.connectors.trading212.transform import transform_snapshot
 from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.raw.models import RAW_SCHEMA
+from tests.fixtures.trading212 import t212_normalized_snapshot, t212_raw_snapshot
 
 
 class TestClientParsing:
@@ -392,32 +396,59 @@ class TestTransformSnapshot:
         """Snapshot transform populates rows even if endpoints have different fetched_at timestamps.
 
         Regression test: when dedup_raw skips unchanged endpoints (e.g. account summary),
-        the raw table stores rows with different fetched_at timestamps. Filter_latest_snapshot
+        the raw table stores rows with different fetched_at timestamps. filter_latest_snapshot
         must keep the latest payload per source so that summary_data is not lost.
+
+        This test uses >=2 rows per source so the per-source dedup in
+        filter_latest_snapshot is actually exercised: each source has a stale
+        (older) row and a fresh (newer) row. If the dedup is disabled
+        (e.g. body replaced with ``return raw``), transform_snapshot sees
+        duplicate summary/positions payloads and the stale summary (with a
+        *different* cash balance) leaks into the output, changing the cash
+        row's security_value and failing the assertion below.
         """
         import hashlib
         from datetime import timedelta
 
-        summary = {"currencyCode": "EUR", "cash": 50.0, "total": 250.0}
-        positions = [{"ticker": "VUAA", "quantity": 2, "currentPrice": 100.0}]
+        # Two summary payloads: stale has cash=50.0, fresh has cash=250.0.
+        # filter_latest_snapshot must keep only the fresh row per source.
+        # The stale row is placed AFTER the fresh row in table order so that
+        # if dedup is disabled, the transform's last-row-wins loop overwrites
+        # the fresh summary with the stale one (cash=50.0), failing the
+        # assertion below. With dedup enabled, only the fresh row survives.
+        fresh_summary = {"currencyCode": "EUR", "cash": 250.0, "total": 250.0}
+        stale_summary = {"currencyCode": "EUR", "cash": 50.0, "total": 250.0}
+        fresh_positions = [{"ticker": "VUAA", "quantity": 2, "currentPrice": 100.0}]
+        stale_positions = [{"ticker": "VUAA", "quantity": 2, "currentPrice": 100.0}]
 
         now = datetime.now(UTC)
         t_older = now - timedelta(hours=1)
 
+        sources = [
+            "/equity/account/summary",
+            "/equity/account/summary",
+            "/equity/positions",
+            "/equity/positions",
+        ]
+        # fresh (now) first, stale (t_older) second — so last-row-wins without
+        # dedup picks the stale summary.
+        fetched_ats = [now, t_older, now, t_older]
         raw_payloads = [
-            json.dumps(summary).encode("utf-8"),
-            json.dumps(positions).encode("utf-8"),
+            json.dumps(fresh_summary).encode("utf-8"),
+            json.dumps(stale_summary).encode("utf-8"),
+            json.dumps(fresh_positions).encode("utf-8"),
+            json.dumps(stale_positions).encode("utf-8"),
         ]
         encrypted_payloads = [encrypt(p, fernet_key) for p in raw_payloads]
 
         raw = pa.table(
             {
-                "fetched_at": [t_older, now],  # summary is older, positions is newer
-                "broker": ["Trading 212", "Trading 212"],
-                "source": ["/equity/account/summary", "/equity/positions"],
+                "fetched_at": fetched_ats,
+                "broker": ["Trading 212"] * 4,
+                "source": sources,
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "source_file": ["", ""],
+                "source_file": [""] * 4,
             },
             schema=RAW_SCHEMA,
         )
@@ -427,6 +458,20 @@ class TestTransformSnapshot:
         types = result.column("position_type").to_pylist()
         assert "EQUITY" in types
         assert "CASH" in types
+
+        # The cash row must come from the FRESH summary (cash=250.0), not the
+        # stale one (cash=50.0). Because the stale row is placed after the fresh
+        # row in table order, disabling filter_latest_snapshot lets the
+        # transform's last-row-wins loop pick the stale summary, producing a
+        # 50.0 cash row instead of 250.0. Asserting the exact decrypted cash
+        # value pins this: a disabled dedup fails here.
+        cash_idx = types.index("CASH")
+        cash_value = decrypt_float(
+            result.column("security_value")[cash_idx].as_py(), fernet_key
+        )
+        assert cash_value == pytest.approx(250.0), (
+            f"Expected fresh cash=250.0 after per-source dedup, got {cash_value}"
+        )
 
 
 class TestClientPagination:
@@ -559,34 +604,60 @@ class TestCdcFetch:
     """Tests for Trading 212 CDC fetch error handling."""
 
     def test_fetch_cdc_logs_endpoint_failure(self, caplog) -> None:
-        """Failing CDC endpoints produce visible warnings, not silent skips."""
+        """Failing CDC endpoints produce visible warnings, not silent skips.
+
+        Actually invokes ``fetch_cdc`` with a mocked client whose CDC endpoint
+        methods raise, then asserts a WARNING is logged naming the failing
+        endpoint. Removing the ``logger.warning(...)`` call in ``fetch_cdc``
+        makes this test fail (no warning record captured).
+        """
         import logging
+        from unittest import mock
 
         from pipeline.connectors.trading212.client import Trading212Error
+        from pipeline.connectors.trading212.fetch import fetch_cdc
 
-        with caplog.at_level(logging.WARNING):
-            # Mock Trading212Client to fail on all CDC endpoints
-            from unittest import mock
+        with (
+            caplog.at_level(
+                logging.WARNING, logger="pipeline.connectors.trading212.fetch"
+            ),
+            mock.patch(
+                "pipeline.connectors.trading212.fetch.Trading212Client"
+            ) as MockCls,
+        ):
+            instance = MockCls.return_value
+            instance.orders.side_effect = Trading212Error("orders failed")
+            instance.dividends.side_effect = Trading212Error("dividends failed")
+            instance.transactions.side_effect = Trading212Error("transactions failed")
+            instance.captured_responses = []
 
-            client_class = mock.patch(
-                "pipeline.connectors.trading212.fetch.Trading212Client",
-                autospec=True,
-            )
-            with client_class as MockClient:
-                instance = MockClient.return_value
-                instance.orders.side_effect = Trading212Error("orders failed")
-                instance.dividends.side_effect = Trading212Error("dividends failed")
-                instance.transactions.side_effect = Trading212Error(
-                    "transactions failed"
+            # All three endpoints fail → fetch_cdc raises RuntimeError,
+            # but only after logging a warning per failing endpoint.
+            with pytest.raises(RuntimeError, match="all endpoints"):
+                fetch_cdc(
+                    api_key="test",
+                    api_secret="test",
+                    base_url="https://demo.trading212.com/api/v0",
                 )
-                instance.captured_responses = []
 
-                # fetch_cdc creates its own client, so we need to patch at module level
-
-        # Direct unit test of the logging behavior
-        from pipeline.connectors.trading212.fetch import logger
-
-        assert logger.name == "pipeline.connectors.trading212.fetch"
+        # A warning must be logged for each failing CDC endpoint, naming it.
+        warning_messages = [
+            record.message
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ]
+        endpoint_warnings = [
+            m for m in warning_messages if "CDC endpoint" in m and "failed" in m
+        ]
+        assert endpoint_warnings, (
+            "Expected at least one CDC endpoint failure warning, "
+            f"got: {warning_messages}"
+        )
+        # The warning must name a failing endpoint (orders/dividends/transactions).
+        assert any(
+            "orders" in m or "dividends" in m or "transactions" in m
+            for m in endpoint_warnings
+        ), f"Warning did not name a failing endpoint: {endpoint_warnings}"
 
     def test_fetch_cdc_raises_when_all_endpoints_empty(self) -> None:
         """When all CDC endpoints return empty lists, fetch_cdc raises RuntimeError."""
@@ -1200,3 +1271,152 @@ class TestCdcTransform:
         # gross_amount falls back to order.value (1500.0)
         gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
         assert gross == pytest.approx(1500.0)
+
+
+class TestT212FixtureRoundTrip:
+    """Round-trip: transform_snapshot(t212_raw_snapshot(...)) reproduces the
+    normalized fixture.
+
+    This is the reference template for F4's golden test (per PLAN.md
+    "Golden-test safety net"). The expected normalized table is sourced from
+    the fixture (built from real demo bronze shapes — not from running the
+    SUT), so a transform bug does not get baked into the expected values.
+    """
+
+    # Columns compared as decrypted plaintext floats (Fernet tokens are
+    # non-deterministic; never compare encrypted bytes).
+    _FLOAT_COLS: ClassVar[list[str]] = ["security_value"]
+    # Columns compared as exact strings.
+    _STR_COLS: ClassVar[list[str]] = [
+        "account_id",
+        "position_type",
+        "label",
+        "name",
+        "asset_class",
+        "security_ccy",
+        "isin",
+    ]
+
+    def test_transform_snapshot_reproduces_normalized_fixture(self) -> None:
+        fernet_key = generate_key()
+        fetched_at = datetime.now(UTC)
+
+        raw = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
+        result = transform_snapshot(raw, fernet_key)
+        expected = t212_normalized_snapshot(
+            fernet_key=fernet_key, fetched_at=fetched_at
+        )
+
+        # Schema must match exactly.
+        assert result.schema.equals(expected.schema), (
+            f"Schema mismatch:\nresult={result.schema}\nexpected={expected.schema}"
+        )
+        assert result.num_rows == expected.num_rows
+        assert result.num_rows == 3
+
+        # Sort both by label for stable row-by-row comparison (transform row
+        # order follows positions iteration, which is stable here, but sorting
+        # makes the comparison robust to future source-iteration changes).
+        result_sorted = result.sort_by("label")
+        expected_sorted = expected.sort_by("label")
+
+        for col in self._STR_COLS:
+            actual_vals = result_sorted.column(col).to_pylist()
+            expected_vals = expected_sorted.column(col).to_pylist()
+            assert actual_vals == expected_vals, (
+                f"Column {col} mismatch: {actual_vals} != {expected_vals}"
+            )
+
+        for col in self._FLOAT_COLS:
+            actual_enc = result_sorted.column(col).to_pylist()
+            expected_enc = expected_sorted.column(col).to_pylist()
+            actual_vals = [decrypt_float(v, fernet_key) for v in actual_enc]
+            expected_vals = [decrypt_float(v, fernet_key) for v in expected_enc]
+            for a, e in zip(actual_vals, expected_vals):
+                assert a == pytest.approx(e), f"Column {col} value mismatch: {a} != {e}"
+
+        # fetched_at: transform propagates the raw table's fetched_at; the
+        # fixture uses the same fixed timestamp, so they must match.
+        assert result_sorted.column("fetched_at").to_pylist() == (
+            expected_sorted.column("fetched_at").to_pylist()
+        )
+
+    def test_round_trip_known_values(self) -> None:
+        """Spot-check the known decrypted values the round-trip must produce.
+
+        Pins the exact amounts (2500.0 / 1800.0 / 1500.0) so a
+        ``security_value = 1.0`` or ``decrypt_float → 1.0`` mutation fails.
+        """
+        fernet_key = generate_key()
+        fetched_at = datetime.now(UTC)
+
+        raw = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
+        result = transform_snapshot(raw, fernet_key)
+
+        labels = result.column("label").to_pylist()
+        values = [
+            decrypt_float(v, fernet_key)
+            for v in result.column("security_value").to_pylist()
+        ]
+        by_label = dict(zip(labels, values))
+
+        assert by_label["VWCEl_EQ"] == pytest.approx(2500.0)
+        assert by_label["AAPLu_EQ"] == pytest.approx(1800.0)
+        assert by_label["CASH PLN"] == pytest.approx(1500.0)
+
+
+class TestTrading212ExtractHoldingsValues:
+    """H3: extract_holdings must surface decrypted security_value as
+    ``holdings[i].value``. A ``value=0.0`` mutation in the connector must
+    fail these assertions.
+    """
+
+    @staticmethod
+    def _normalized_df(fernet_key: bytes) -> pl.DataFrame:
+        """Build a decrypted normalized DataFrame for extract_holdings."""
+        table = t212_normalized_snapshot(fernet_key=fernet_key)
+        df = pl.from_arrow(table)
+        # extract_holdings reads security_value_decrypted (added by
+        # pipeline.normalized.extract._decrypt_df in production).
+        return df.with_columns(
+            pl.col("security_value")
+            .map_elements(
+                lambda v: decrypt_float(v, fernet_key),
+                return_dtype=pl.Float64,
+            )
+            .alias("security_value_decrypted")
+        )
+
+    def test_extract_holdings_values_match_known_amounts(self) -> None:
+        fernet_key = generate_key()
+        df = self._normalized_df(fernet_key)
+        connector = get("trading212")
+        holdings = connector.extract_holdings(df, fernet_key)
+
+        assert len(holdings) == 3
+        by_ticker = {h.ticker: h for h in holdings}
+
+        # Decrypted value must equal the known fixture amount (not just > 0).
+        assert by_ticker["VWCEl_EQ"].value == pytest.approx(2500.0)
+        assert by_ticker["AAPLu_EQ"].value == pytest.approx(1800.0)
+        assert by_ticker["CASH PLN"].value == pytest.approx(1500.0)
+
+        # broker/security_currency/ccy reflect the fixture (PLN wallet ccy).
+        assert all(h.broker == "Trading 212" for h in holdings)
+        assert all(h.currency == "PLN" for h in holdings)
+        assert all(h.security_currency == "PLN" for h in holdings)
+
+    def test_extract_holdings_value_not_zeroed(self) -> None:
+        """A value=0.0 mutation in extract_holdings must fail here."""
+        fernet_key = generate_key()
+        df = self._normalized_df(fernet_key)
+        connector = get("trading212")
+        holdings = connector.extract_holdings(df, fernet_key)
+
+        # Every holding must carry a non-zero decrypted value — pinning the
+        # known amounts above is the primary guard, but this explicit check
+        # catches a blanket zeroing mutation.
+        assert all(
+            h.value == pytest.approx(v)
+            for h, v in zip(holdings, (2500.0, 1800.0, 1500.0))
+        )

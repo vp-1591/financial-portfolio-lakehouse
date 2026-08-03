@@ -66,7 +66,16 @@ def _make_holdings_table(
     fernet_key: bytes,
     rows: list[dict] | None = None,
 ) -> pa.Table:
-    """Build a minimal consolidated_holdings table."""
+    """Build a minimal consolidated_holdings table.
+
+    The default row mirrors the real ``consolidated_holdings_normalized``
+    shape: all 10 schema columns populated, including ``security_value``
+    (Fernet-encrypted binary) and ``position_type``, and the identifier
+    uses the real ``ISIN:`` prefix (A3 F2). Previously ``security_value``
+    and ``position_type`` were omitted → ``_rows_to_table`` filled them
+    with None, masking any future null-detection regression on those
+    fields.
+    """
     now = datetime.now(UTC)
     if rows is None:
         rows = [
@@ -74,11 +83,13 @@ def _make_holdings_table(
                 "fetched_at": now,
                 "broker": "IBKR",
                 "ticker": "VWCE",
-                "target_ccy": "EUR",
-                "target_value": encrypt_float(5000.0, fernet_key),
-                "identifier": "IE00BK5BQT80",
+                "security_value": encrypt_float(5000.0, fernet_key),
                 "security_ccy": "EUR",
+                "target_value": encrypt_float(5000.0, fernet_key),
+                "target_ccy": "EUR",
+                "identifier": "ISIN:IE00BK5BQT80",
                 "description": "Vanguard FTSE All-World",
+                "position_type": "EQUITY",
             }
         ]
     return _rows_to_table(rows, consolidated_holdings_schema)
@@ -587,22 +598,33 @@ class TestRunValidation:
         assert exit_code == 1
 
     def test_fail_on_warn_flag(self, tmp_path: Path) -> None:
-        """run_validation returns 1 with --fail-on-warn when WARN exists."""
+        """run_validation returns 1 with --fail-on-warn when WARN exists.
+
+        D5: the required CDC tables (ibkr_cdc, trading212_cdc) are written so
+        that ``fail_count == 0`` — the exit-1 MUST come from the
+        ``fail_on_warn`` branch, not a missing-CDC FAIL.  We also assert that
+        without ``fail_on_warn`` the same fixtures return 0, proving no FAIL
+        is masking the WARN path.  Removing the ``fail_on_warn`` branch in
+        ``quality.py`` makes this test fail (the fail_on_warn=True assertion
+        expects 1, the branch removal returns 0).
+        """
         fernet_key = generate_key()
         storage = get_storage()
 
-        # Write tables with stale data to trigger freshness WARN
+        # Stale holdings to trigger a freshness WARN (30 days > 7-day threshold)
         old_ts = datetime.now(UTC) - timedelta(days=30)
         holdings_rows = [
             {
                 "fetched_at": old_ts,
                 "broker": "IBKR",
                 "ticker": "VWCE",
-                "target_ccy": "EUR",
-                "target_value": encrypt_float(5000.0, fernet_key),
-                "identifier": "IE00BK5BQT80",
+                "security_value": encrypt_float(5000.0, fernet_key),
                 "security_ccy": "EUR",
+                "target_value": encrypt_float(5000.0, fernet_key),
+                "target_ccy": "EUR",
+                "identifier": "ISIN:IE00BK5BQT80",
                 "description": "Vanguard FTSE All-World",
+                "position_type": "EQUITY",
             }
         ]
         holdings = _rows_to_table(holdings_rows, consolidated_holdings_schema)
@@ -615,13 +637,27 @@ class TestRunValidation:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
+        # Write required broker CDC tables so NON_EMPTY_REQUIRED doesn't FAIL
+        write_deltalake(storage.normalized_path("ibkr_cdc"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
+        )
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
             mode="overwrite",
         )
 
-        # With --fail-on-warn, stale data should return 1
+        # Without fail_on_warn: WARNs are tolerated → exit 0 (proves no FAIL)
+        exit_code = run_validation(
+            fernet_key=fernet_key, freshness_days=7, fail_on_warn=False
+        )
+        assert exit_code == 0, (
+            "Without fail_on_warn the stale-data WARN must NOT cause exit 1; "
+            "a non-zero code here means a FAIL is masking the WARN path."
+        )
+
+        # With fail_on_warn: the stale-data WARN triggers exit 1
         exit_code = run_validation(
             fernet_key=fernet_key, freshness_days=7, fail_on_warn=True
         )
@@ -683,6 +719,213 @@ class TestDataQualityRoundTrip:
         assert "required_nulls" in check_names
         assert "row_count_stability" in check_names
         assert "freshness" in check_names
+
+
+# ---------------------------------------------------------------------------
+# _get_previous_row_count coverage tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetPreviousRowCount:
+    """Cover ``_get_previous_row_count`` and the row-count-stability comparison.
+
+    Writes a prior ``data_quality`` row with a ``row_count_stability`` check,
+    then runs validation and asserts the new stability result reflects the
+    comparison against the previous count (A3 coverage: the function was
+    previously at 0% branch coverage).
+    """
+
+    def _write_prior_dq(
+        self, storage, table_name: str, actual: str, status: str
+    ) -> None:
+        """Write a prior data_quality row with a row_count_stability check."""
+        old_ts = datetime.now(UTC) - timedelta(hours=1)
+        dq_row = pa.table(
+            {
+                "checked_at": [old_ts],
+                "table_name": [table_name],
+                "check_name": ["row_count_stability"],
+                "status": [status],
+                "details": [f"Row count stable: {actual} (previous: {actual})"],
+                "threshold": [None],
+                "actual": [actual],
+            },
+            schema=data_quality_schema,
+        )
+        write_deltalake(
+            storage.analytics_path("data_quality"), dq_row, mode="overwrite"
+        )
+
+    @staticmethod
+    def _latest_stability_result(storage, table_name: str) -> tuple[str, str]:
+        """Read the most recent row_count_stability result for *table_name*.
+
+        Returns (status, details).
+        """
+        from deltalake import DeltaTable
+
+        dq_dt = DeltaTable(storage.analytics_path("data_quality"))
+        table = dq_dt.to_pyarrow_table()
+        rows = table.to_pylist()
+        stability = [
+            r
+            for r in rows
+            if r["table_name"] == table_name
+            and r["check_name"] == "row_count_stability"
+        ]
+        stability.sort(key=lambda r: r["checked_at"], reverse=True)
+        assert stability, f"No row_count_stability result for {table_name}"
+        return stability[0]["status"], stability[0]["details"]
+
+    def test_previous_count_stable_passes(self, tmp_path: Path) -> None:
+        """When previous count matches current, stability check passes."""
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)  # 1 row
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
+            mode="overwrite",
+        )
+        # Write prior DQ row: previous count = 1 (matches current)
+        self._write_prior_dq(storage, "portfolio_holdings", "1", PASS)
+
+        exit_code = run_validation(
+            fernet_key=fernet_key, freshness_days=30, tables=["portfolio_holdings"]
+        )
+        assert exit_code == 0
+
+        status, details = self._latest_stability_result(storage, "portfolio_holdings")
+        assert status == PASS
+        assert "stable" in details.lower()
+
+    def test_previous_count_drop_warns(self, tmp_path: Path) -> None:
+        """When current count drops >50% vs previous, stability check warns."""
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)  # 1 row
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
+            mode="overwrite",
+        )
+        # Write prior DQ row: previous count = 100 (current=1 → >50% drop)
+        self._write_prior_dq(storage, "portfolio_holdings", "100", PASS)
+
+        exit_code = run_validation(
+            fernet_key=fernet_key, freshness_days=30, tables=["portfolio_holdings"]
+        )
+        # WARN without fail_on_warn → exit 0
+        assert exit_code == 0
+
+        status, details = self._latest_stability_result(storage, "portfolio_holdings")
+        assert status == WARN
+        assert "dropped" in details.lower()
+
+    def test_no_previous_count_first_run(self, tmp_path: Path) -> None:
+        """With no prior data_quality row, stability check passes (first run)."""
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
+            mode="overwrite",
+        )
+        # No prior DQ row written
+
+        exit_code = run_validation(
+            fernet_key=fernet_key, freshness_days=30, tables=["portfolio_holdings"]
+        )
+        assert exit_code == 0
+
+        status, details = self._latest_stability_result(storage, "portfolio_holdings")
+        assert status == PASS
+        assert "first run" in details.lower()
+
+    def test_dq_exists_but_no_stability_for_table(self, tmp_path: Path) -> None:
+        """DQ table exists with other checks but no row_count_stability for
+        the queried table → ``_get_previous_row_count`` returns None (first-run
+        path).  Covers the ``stability_rows.is_empty()`` branch.
+        """
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
+            mode="overwrite",
+        )
+        # Write a DQ row for a DIFFERENT table (schema check, not stability)
+        old_ts = datetime.now(UTC) - timedelta(hours=1)
+        other_dq = pa.table(
+            {
+                "checked_at": [old_ts],
+                "table_name": ["consolidated_holdings"],
+                "check_name": ["schema"],
+                "status": [PASS],
+                "details": ["Schema matches"],
+                "threshold": [None],
+                "actual": [None],
+            },
+            schema=data_quality_schema,
+        )
+        write_deltalake(
+            storage.analytics_path("data_quality"), other_dq, mode="overwrite"
+        )
+
+        exit_code = run_validation(
+            fernet_key=fernet_key, freshness_days=30, tables=["portfolio_holdings"]
+        )
+        assert exit_code == 0
+        # No prior stability for portfolio_holdings → "First run" in details
+        status, details = self._latest_stability_result(storage, "portfolio_holdings")
+        assert status == PASS
+        assert "first run" in details.lower()
+
+    def test_previous_actual_not_integer(self, tmp_path: Path) -> None:
+        """Prior DQ row with non-integer ``actual`` → ``_get_previous_row_count``
+        returns None (the ``except (ValueError, TypeError)`` branch).
+        """
+        fernet_key = generate_key()
+        storage = get_storage()
+
+        portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
+        write_deltalake(
+            storage.analytics_path("portfolio_holdings"),
+            portfolio_holdings,
+            mode="overwrite",
+        )
+        # Write prior DQ with a non-integer actual value
+        old_ts = datetime.now(UTC) - timedelta(hours=1)
+        bad_dq = pa.table(
+            {
+                "checked_at": [old_ts],
+                "table_name": ["portfolio_holdings"],
+                "check_name": ["row_count_stability"],
+                "status": [PASS],
+                "details": ["Row count stable: N/A"],
+                "threshold": [None],
+                "actual": ["N/A"],  # not parseable as int
+            },
+            schema=data_quality_schema,
+        )
+        write_deltalake(
+            storage.analytics_path("data_quality"), bad_dq, mode="overwrite"
+        )
+
+        exit_code = run_validation(
+            fernet_key=fernet_key, freshness_days=30, tables=["portfolio_holdings"]
+        )
+        assert exit_code == 0
+        # Non-integer actual → treated as None → "First run" in details
+        status, details = self._latest_stability_result(storage, "portfolio_holdings")
+        assert status == PASS
+        assert "first run" in details.lower()
 
 
 # ---------------------------------------------------------------------------
