@@ -428,6 +428,8 @@ class TestTransformSnapshot:
         assert "EQUITY" in types
         assert "CASH" in types
 
+
+class TestClientPagination:
     """Tests for Trading212Client._fetch_paginated()."""
 
     def test_fetch_paginated_returns_bare_list(self) -> None:
