@@ -1,5 +1,7 @@
 # 0057: Fix Bronze→Silver Dedup and Cash Extraction Bugs
 
+> **Superseded by [ADR 0100](./0100-fix-snapshot-dedup-per-source-and-t212-encryption.md)** — snapshot dedup changed from a single global `fetched_at` maximum to latest-per-`source`; the IBKR `BASE_SUMMARY` cash fallback and T212 nested `cash` dict decisions carry forward unchanged, see 0100 §Decision.
+
 ## Context
 
 The bronze→silver transform had three bugs:
