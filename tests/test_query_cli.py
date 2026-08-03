@@ -154,15 +154,24 @@ class TestQueryCLI:
 
         assert result == 0
         captured = capsys.readouterr()
-        # Decrypted float values should appear (5000.0, 2700.0, 2000.0)
-        assert "5000.0" in captured.out or "5000" in captured.out
-        assert "2700.0" in captured.out or "2700" in captured.out
-        assert "2000.0" in captured.out or "2000" in captured.out
+        out = captured.out
+        # Exact decrypted float values (bounded equality, not or-substring).
+        # The `_decrypt_value * 10` mutation (5000 -> 50000) must FAIL: "5000.0"
+        # is not a substring of "50000.0" (the "." is not in the base64 alphabet,
+        # so a Fernet token can never contain "5000.0" either).
+        assert "5000.0" in out
+        assert "2700.0" in out
+        assert "2000.0" in out
 
     def test_no_decrypt(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Without --decrypt, binary columns remain as binary in output."""
+        """Without --decrypt, binary columns remain encrypted in output.
+
+        Detects the unconditional-decrypt mutation (``if args.decrypt or True:``)
+        by asserting the decrypted float values do NOT appear — only the
+        plaintext label column does.
+        """
         _setup_env(tmp_path)
 
         args = _make_args("SELECT label, security_value FROM ibkr_snapshot_normalized")
@@ -170,10 +179,16 @@ class TestQueryCLI:
 
         assert result == 0
         captured = capsys.readouterr()
-        # Without decrypt, the 'security_value' column should still contain binary data
-        # (Polars will show it as bytes or a hex-like representation)
-        # Just verify the command succeeds and labels are present
-        assert "VWCE" in captured.out
+        out = captured.out
+        # The label column is plaintext — always present.
+        assert "VWCE" in out
+        assert "security_value" in out
+        # Without --decrypt, the Fernet tokens (binary) must NOT decrypt to
+        # their numeric values. "." is not in the base64 alphabet, so these
+        # decimal-form numbers can only appear if decryption ran.
+        assert "5000.0" not in out
+        assert "2700.0" not in out
+        assert "2000.0" not in out
 
     def test_invalid_sql(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

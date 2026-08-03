@@ -40,13 +40,29 @@ def ibkr_raw_positions(
         "</AccountInformation>"
         "<OpenPositions>"
         f'<OpenPosition accountId="{account_id}" currency="EUR" fxRateToBase="1.0"'
-        ' assetClass="STK" symbol="VWCE" description="Vanguard FTSE All-World UCITS ETF"'
+        ' assetCategory="STK" symbol="VWCE" description="Vanguard FTSE All-World UCITS ETF"'
         ' isin="IE00BK5BQT80"'
-        ' quantity="100" markPrice="50.0" positionValue="5000.0"/>'
+        ' position="100" markPrice="50.0" positionValue="5000.0"/>'
         f'<OpenPosition accountId="{account_id}" currency="USD" fxRateToBase="0.9"'
-        ' assetClass="STK" symbol="AAPL" description="Apple Inc"'
+        ' assetCategory="STK" symbol="AAPL" description="Apple Inc"'
         ' isin="US0378331005"'
-        ' quantity="50" markPrice="60.0" positionValue="3000.0"/>'
+        ' position="50" markPrice="60.0" positionValue="3000.0"/>'
+        # Non-STK position: exercises the assetCategory read (real Flex key).
+        # Without the fix, this is misclassified as "STK" because the
+        # transform read ``assetClass`` (absent on real data) and defaulted.
+        f'<OpenPosition accountId="{account_id}" currency="USD" fxRateToBase="0.9"'
+        ' assetCategory="OPT" symbol="SPY 20251219 C400"'
+        ' description="SPY CALL 400 12/19/2025"'
+        ' isin=""'
+        ' position="1" markPrice="500.0" positionValue="500.0"/>'
+        # Zero positionValue with non-zero position + markPrice: exercises the
+        # fallback that reads ``position`` (real Flex key, not ``quantity``).
+        # Without the fix, ``quantity`` is absent → 0, value=0*markPrice=0,
+        # and the position is silently dropped.
+        f'<OpenPosition accountId="{account_id}" currency="EUR" fxRateToBase="1.0"'
+        ' assetCategory="BOND" symbol="BOND01" description="Test Bond"'
+        ' isin=""'
+        ' position="100" markPrice="25.0" positionValue="0.0"/>'
         "</OpenPositions>"
         "<CashReport>"
         f'<CashReportCurrency accountId="{account_id}" currency="EUR"'
@@ -81,26 +97,37 @@ def ibkr_normalized_snapshot(
 ) -> pa.Table:
     """Build a normalized IBKR snapshot table with encrypted values.
 
-    Default data: 2 equities (VWCE, AAPL) + 1 cash entry (EUR).
+    Default data: 4 OpenPosition rows (VWCE STK, AAPL STK, SPY OPT, BOND01
+    BOND) + 1 cash entry (EUR). Values are stored in native (security)
+    currency — they match what ``transform_snapshot`` produces from
+    ``ibkr_raw_positions`` (no FX pre-conversion).
     """
     if fernet_key is None:
         fernet_key = generate_key()
     now = datetime.now(UTC)
     return pa.table(
         {
-            "fetched_at": [now, now, now],
-            "account_id": [account_id, account_id, account_id],
-            "position_type": ["EQUITY", "EQUITY", "CASH"],
-            "label": ["VWCE", "AAPL", "CASH EUR"],
-            "asset_class": ["STK", "STK", "CASH"],
+            "fetched_at": [now, now, now, now, now],
+            "account_id": [account_id, account_id, account_id, account_id, account_id],
+            "position_type": ["EQUITY", "EQUITY", "EQUITY", "EQUITY", "CASH"],
+            "label": ["VWCE", "AAPL", "SPY 20251219 C400", "BOND01", "CASH EUR"],
+            "asset_class": ["STK", "STK", "OPT", "BOND", "CASH"],
             "security_value": [
                 encrypt_float(5000.0, fernet_key),
-                encrypt_float(2700.0, fernet_key),  # 3000 USD * 0.9 EUR/USD
+                encrypt_float(3000.0, fernet_key),  # USD native (3000, not 2700)
+                encrypt_float(500.0, fernet_key),
+                encrypt_float(2500.0, fernet_key),  # position * markPrice = 100 * 25
                 encrypt_float(2000.0, fernet_key),
             ],
-            "security_ccy": ["EUR", "USD", "EUR"],
-            "isin": ["IE00BK5BQT80", "US0378331005", ""],
-            "description": ["Vanguard FTSE All-World", "Apple Inc", "Cash EUR"],
+            "security_ccy": ["EUR", "USD", "USD", "EUR", "EUR"],
+            "isin": ["IE00BK5BQT80", "US0378331005", "", "", ""],
+            "description": [
+                "Vanguard FTSE All-World UCITS ETF",
+                "Apple Inc",
+                "SPY CALL 400 12/19/2025",
+                "Test Bond",
+                "Cash EUR",
+            ],
         },
         schema=ibkr_snapshot_normalized_schema,
     )
@@ -134,7 +161,7 @@ def ibkr_raw_cdc(
         ' quantity="10" tradePrice="150.0" proceeds="-1500.0"'
         ' ibCommission="-1.0" ibCommissionCurrency="USD" netCash="-1501.0"'
         ' buySell="BUY" transactionType="ExTrade"'
-        f' ibExecutionId="e001" tradeId="T001" transactionId="TX001"'
+        f' ibExecID="e001" tradeID="T001" transactionID="TX001"'
         ' taxes="0.0" conid="265598" securityId="US0378331005"'
         ' multiplier="1" openCloseIndicator="O"/>'
         "</Trades>"
@@ -144,45 +171,45 @@ def ibkr_raw_cdc(
         ' isin="IE00BK5BQT80" currency="EUR" fxRateToBase="1.0"'
         ' dateTime="20260301" settleDate="20260304"'
         ' amount="42.50" type="Dividends" dividendType="Qualified"'
-        ' tradeId="" transactionId="CT001" code=""'
-        ' assetClass="STK" conid="23897068" securityId="IE00BK5BQT80"/>'
+        ' tradeID="" transactionID="CT001" code=""'
+        ' assetCategory="STK" conid="23897068" securityId="IE00BK5BQT80"/>'
         f'<CashTransaction accountId="{account_id}" symbol="TLT"'
         ' description="iShares 20+ Year Treasury Bond ETF"'
         ' isin="US4642874848" currency="USD" fxRateToBase="0.9"'
         ' dateTime="20260401" settleDate="20260404"'
         ' amount="35.00" type="Bond Interest Received" dividendType=""'
-        ' tradeId="" transactionId="CT002" code=""'
-        ' assetClass="STK" conid="7697096" securityId="US4642874848"/>'
+        ' tradeID="" transactionID="CT002" code=""'
+        ' assetCategory="STK" conid="7697096" securityId="US4642874848"/>'
         f'<CashTransaction accountId="{account_id}" symbol=""'
         ' description="Deposit EUR"'
         ' isin="" currency="EUR" fxRateToBase="1.0"'
         ' dateTime="20260501" settleDate="20260504"'
         ' amount="5000.00" type="Deposits &amp; Withdrawals" dividendType=""'
-        ' tradeId="" transactionId="CT003" code=""'
-        ' assetClass="" conid="" securityId=""/>'
+        ' tradeID="" transactionID="CT003" code=""'
+        ' assetCategory="" conid="" securityId=""/>'
         f'<CashTransaction accountId="{account_id}" symbol=""'
         ' description="Withdrawal EUR"'
         ' isin="" currency="EUR" fxRateToBase="1.0"'
         ' dateTime="20260515" settleDate="20260518"'
         ' amount="-2000.00" type="Deposits &amp; Withdrawals" dividendType=""'
-        ' tradeId="" transactionId="CT004" code=""'
-        ' assetClass="" conid="" securityId=""/>'
+        ' tradeID="" transactionID="CT004" code=""'
+        ' assetCategory="" conid="" securityId=""/>'
         "</CashTransactions>"
         "<Transfers>"
         f'<Transfer accountId="{account_id}" symbol="MSFT"'
         ' description="Microsoft Corp" currency="USD" fxRateToBase="0.9"'
-        ' assetClass="STK" dateTime="20260210;120000" settleDate="20260212"'
+        ' assetCategory="STK" dateTime="20260210;120000" settleDate="20260212"'
         ' type="ACATS" direction="IN" quantity="5" transferPrice="400.0"'
         ' positionAmount="2000.0" positionAmountInBase="1800.0"'
-        ' cashTransfer="0.0" transactionId="TR001"'
+        ' cashTransfer="0.0" transactionID="TR001"'
         ' conid="277883" securityId="US5949181045"/>'
         "</Transfers>"
         "<TransactionFees>"
         f'<TransactionFee accountId="{account_id}" symbol="AAPL"'
         ' description="Apple Inc" currency="USD" fxRateToBase="0.9"'
-        ' assetClass="STK" date="20260115" reportDate="20260115"'
+        ' assetCategory="STK" date="20260115" reportDate="20260115"'
         ' settleDate="20260117" taxDescription="SEC Fee"'
-        ' taxAmount="0.05" orderId="O001" tradeId="T001"'
+        ' taxAmount="0.05" orderId="O001" tradeID="T001"'
         ' tradePrice="150.0" source="TRADE" code=""'
         ' conid="265598" securityId="US0378331005" quantity="10"/>'
         "</TransactionFees>"

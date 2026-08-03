@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -53,7 +52,14 @@ def _isolate_pipeline_env(monkeypatch, tmp_path):
     # Redirect PROJECT_ROOT to an empty temp dir so load_dotenv finds no .env.
     # Tests that need .env loading set PROJECT_ROOT to their own tmp_path.
     monkeypatch.setattr("pipeline.secrets.PROJECT_ROOT", tmp_path)
-    # Reset storage singleton so resolve_storage() re-reads env vars
+    # Reset storage singleton so resolve_storage() re-reads env vars.
+    # This autouse teardown is what guarantees no ``_setup_storage`` fixture
+    # (in test_consolidate_pipeline.py, test_transform_pipeline.py,
+    # test_report.py, test_quality.py, test_cdc_analytics.py,
+    # test_portfolio_holdings.py) leaves ``set_mode("docker")`` / ``_config``
+    # set after its test: ``_config = None`` and ``reset_mode()`` run before
+    # AND after every test, so a test running after a docker-mode test always
+    # observes the default (None) mode (A2 mechanics 1-2, A3 F4, A7 F36).
     import pipeline.secrets
     import pipeline.storage
 
@@ -137,10 +143,14 @@ def secrets_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def env_key(fernet_key: bytes):
-    """Set ENCRYPTION_KEY env var for the duration of a test."""
-    os.environ["ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
-    try:
-        yield
-    finally:
-        os.environ.pop("ENCRYPTION_KEY", None)
+def env_key(fernet_key: bytes, monkeypatch: pytest.MonkeyPatch):
+    """Set ENCRYPTION_KEY env var for the duration of a test.
+
+    Uses ``monkeypatch.setenv`` so the var is restored automatically at
+    teardown (no manual ``os.environ`` mutation; A4/A7 F35). The autouse
+    ``_isolate_pipeline_env`` fixture also deletes ``ENCRYPTION_KEY`` before
+    each test, so the two-layer isolation is robust even if a test fails
+    before teardown.
+    """
+    monkeypatch.setenv("ENCRYPTION_KEY", fernet_key.decode("utf-8"))
+    yield

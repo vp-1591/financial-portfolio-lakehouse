@@ -111,6 +111,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0098 | Add Retry Logic to CurrencyConverter.request_json | 2026-07-25 | active | — |
 | 0099 | Retry on IBKR Flex Transient Error 1019 | 2026-08-02 | active | — |
 | 0100 | Fix Snapshot Dedup Per Source and T212 Snapshot Encryption | 2026-08-03 | active | — |
+| 0101 | Fix IBKR Flex Attribute Names for CDC event_id Dedup | 2026-08-03 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

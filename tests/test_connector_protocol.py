@@ -13,6 +13,7 @@ import argparse
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from pipeline.connectors.registry import get
 from pipeline.crypto import encrypt_float, generate_key
@@ -220,14 +221,18 @@ class TestRequiredSecrets:
 
 
 def _ibkr_normalized_df(fernet_key: bytes) -> pl.DataFrame:
-    """Build a normalized IBKR DataFrame matching the fixture schema."""
+    """Build a normalized IBKR DataFrame matching the fixture schema.
+
+    Values are in native (security) currency, aligned with the F1 fixture
+    (AAPL=3000.0 USD native, not the old FX-converted 2700.0).
+    """
     return pl.DataFrame(
         {
             "label": ["VWCE", "AAPL"],
             "security_ccy": ["EUR", "USD"],
             "security_value": [
                 encrypt_float(5000.0, fernet_key),
-                encrypt_float(2700.0, fernet_key),
+                encrypt_float(3000.0, fernet_key),
             ],
             "isin": ["IE00BK5BQT80", "US0378331005"],
             "description": ["Vanguard FTSE All-World", "Apple Inc"],
@@ -236,12 +241,16 @@ def _ibkr_normalized_df(fernet_key: bytes) -> pl.DataFrame:
 
 
 def _t212_normalized_df(fernet_key: bytes) -> pl.DataFrame:
-    """Build a normalized Trading 212 DataFrame matching the fixture schema."""
+    """Build a normalized Trading 212 DataFrame matching the fixture schema.
+
+    Labels/security_ccy aligned with the F2 fixture (real demo T212 shape:
+    ``VWCEl_EQ``/``AAPLu_EQ`` single-lowercase-suffix labels, PLN wallet ccy).
+    """
     return pl.DataFrame(
         {
-            "label": ["VWCE_DE_EQ", "AAPL_US_EQ"],
+            "label": ["VWCEl_EQ", "AAPLu_EQ"],
             "name": ["Vanguard FTSE All-World UCITS ETF", "Apple Inc"],
-            "security_ccy": ["EUR", "USD"],
+            "security_ccy": ["PLN", "PLN"],
             "security_value": [
                 encrypt_float(2500.0, fernet_key),
                 encrypt_float(1800.0, fernet_key),
@@ -295,6 +304,10 @@ class TestIbkrExtractHoldings:
         assert holdings[0].identifier == "ISIN:IE00BK5BQT80"
         assert holdings[0].security_currency == "EUR"
         assert holdings[0].description == "Vanguard FTSE All-World"
+        # H3: decrypt value and assert the known expected amount (not positivity).
+        # A ``value=0.0`` mutation in ``ibkr/connector.py:78`` must fail this.
+        assert holdings[0].value == pytest.approx(5000.0)
+        assert holdings[1].value == pytest.approx(3000.0)
 
     def test_isin_formatting(self) -> None:
         fernet_key = generate_key()
@@ -332,8 +345,12 @@ class TestTrading212ExtractHoldings:
 
         assert len(holdings) == 2
         assert holdings[0].broker == "Trading 212"
-        assert holdings[0].ticker == "VWCE_DE_EQ"
+        assert holdings[0].ticker == "VWCEl_EQ"
         assert holdings[0].description == "Vanguard FTSE All-World UCITS ETF"
+        # H3: decrypt value and assert the known expected amount (not positivity).
+        # A ``value=0.0`` mutation in the T212 connector must fail this.
+        assert holdings[0].value == pytest.approx(2500.0)
+        assert holdings[1].value == pytest.approx(1800.0)
 
     def test_t212_uses_name_column_for_description(self) -> None:
         fernet_key = generate_key()

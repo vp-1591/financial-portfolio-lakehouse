@@ -621,6 +621,17 @@ class TestBuildInterestIncome:
         assert result.num_rows == 1
         assert result.column("broker")[0].as_py() == "IBKR"
 
+        # Assert the surviving row is the INTEREST event, not the DIVIDEND.
+        # interest_income_schema has no event_type/ticker column, so the
+        # reliable discriminator is the encrypted cash_amount: the INTEREST
+        # event paid 35.0 EUR; the DIVIDEND paid 42.5 EUR.  Under the C13
+        # mutation (``event_type == "INTEREST" -> "DIVIDEND"`` at
+        # cdc_tables.py:~410) the DIVIDEND row survives and cash_amount
+        # decrypts to 42.5, failing this assertion.
+        cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
+        assert cash == pytest.approx(35.0)
+        assert result.column("event_count")[0].as_py() == 1
+
     def test_groups_by_period_broker_currency(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
@@ -723,6 +734,97 @@ class TestBuildInterestIncome:
             < 0.01
         )
         assert result.column("event_count")[0].as_py() == 2
+
+    def test_interest_income_overwrites_not_appends(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """build_interest_income OVERWRITES (not appends) the analytics table.
+
+        Pre-populates ``analytics/interest_income`` with a sentinel/stale row,
+        runs the writer against a real local Delta table, re-opens the
+        persisted table and asserts the sentinel is GONE (overwrite) rather
+        than retained alongside the new row (append).  Catches the
+        ``mode="overwrite" -> "append"`` mutation in ``_write_analytics_table``
+        (cdc_tables.py:~259) for the interest_income path, which has no
+        re-read test today.
+        """
+        from datetime import UTC, datetime
+
+        from deltalake import DeltaTable
+
+        from pipeline.crypto import encrypt_float
+
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        # Pre-populate the OUTPUT table with a sentinel/stale row.
+        stale_ts = datetime.now(UTC)
+        stale_row = pa.table(
+            {
+                "calculated_at": pa.array(
+                    [stale_ts], type=pa.timestamp("us", tz="UTC")
+                ),
+                "period_month": pa.array(["1999-01"], type=pa.string()),
+                "period_quarter": pa.array(["1999-Q1"], type=pa.string()),
+                "broker": pa.array(["STALE_SENTINEL"], type=pa.string()),
+                "security_ccy": pa.array(["XXX"], type=pa.string()),
+                "cash_amount": pa.array(
+                    [encrypt_float(1.0, fernet_key)], type=pa.binary()
+                ),
+                "target_value": pa.array(
+                    [encrypt_float(1.0, fernet_key)], type=pa.binary()
+                ),
+                "target_ccy": pa.array(["XXX"], type=pa.string()),
+                "event_count": pa.array([1], type=pa.int64()),
+            },
+            schema=interest_income_schema,
+        )
+        out_path = storage.analytics_path("interest_income")
+        storage.backend.ensure_parent(out_path)
+        write_deltalake(
+            out_path,
+            stale_row,
+            mode="overwrite",
+            storage_options=storage.storage_options,
+        )
+
+        # Write a real INTEREST CDC event and run the writer.
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "INTEREST",
+                    "event_id": "int-1",
+                    "event_datetime": "2026-03-01",
+                    "broker": "IBKR",
+                    "security_ccy": "EUR",
+                    "cash_amount": 35.0,
+                    "target_ccy": "EUR",
+                    "target_value": 35.0,
+                },
+            ],
+        )
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        result = build_interest_income(fernet_key=fernet_key)
+        assert result.num_rows == 1
+
+        # Re-open the persisted Delta table and verify overwrite semantics.
+        readback = DeltaTable(out_path, storage_options=storage.storage_options)
+        persisted = readback.to_pyarrow_table()
+        brokers = persisted.column("broker").to_pylist()
+        # overwrite: sentinel GONE -> 1 row; append would retain sentinel -> 2 rows.
+        assert persisted.num_rows == 1
+        assert "STALE_SENTINEL" not in brokers
+        assert "IBKR" in brokers
 
 
 # ---------------------------------------------------------------------------
@@ -975,6 +1077,98 @@ class TestBuildCashFlowSummary:
 
         dividend_idx = event_types.index("DIVIDEND")
         assert result.column("event_count")[dividend_idx].as_py() == 1
+
+    def test_cash_flow_summary_overwrites_not_appends(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """build_cash_flow_summary OVERWRITES (not appends) the analytics table.
+
+        Pre-populates ``analytics/cash_flow_summary`` with a sentinel/stale
+        row, runs the writer against a real local Delta table, re-opens the
+        persisted table and asserts the sentinel is GONE (overwrite) rather
+        than retained alongside the new rows (append).  Catches the
+        ``mode="overwrite" -> "append"`` mutation in ``_write_analytics_table``
+        (cdc_tables.py:~259) for the cash_flow_summary path, which has no
+        re-read test today.
+        """
+        from datetime import UTC, datetime
+
+        from deltalake import DeltaTable
+
+        from pipeline.crypto import encrypt_float
+
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        # Pre-populate the OUTPUT table with a sentinel/stale row.
+        stale_ts = datetime.now(UTC)
+        stale_row = pa.table(
+            {
+                "calculated_at": pa.array(
+                    [stale_ts], type=pa.timestamp("us", tz="UTC")
+                ),
+                "period_month": pa.array(["1999-01"], type=pa.string()),
+                "period_quarter": pa.array(["1999-Q1"], type=pa.string()),
+                "broker": pa.array(["STALE_SENTINEL"], type=pa.string()),
+                "event_type": pa.array(["STALE"], type=pa.string()),
+                "security_ccy": pa.array(["XXX"], type=pa.string()),
+                "cash_amount": pa.array(
+                    [encrypt_float(1.0, fernet_key)], type=pa.binary()
+                ),
+                "target_value": pa.array(
+                    [encrypt_float(1.0, fernet_key)], type=pa.binary()
+                ),
+                "target_ccy": pa.array(["XXX"], type=pa.string()),
+                "event_count": pa.array([1], type=pa.int64()),
+            },
+            schema=cash_flow_summary_schema,
+        )
+        out_path = storage.analytics_path("cash_flow_summary")
+        storage.backend.ensure_parent(out_path)
+        write_deltalake(
+            out_path,
+            stale_row,
+            mode="overwrite",
+            storage_options=storage.storage_options,
+        )
+
+        # Write a real CDC event and run the writer.
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "DEPOSIT",
+                    "event_id": "dep-1",
+                    "event_datetime": "2026-03-01",
+                    "broker": "IBKR",
+                    "security_ccy": "EUR",
+                    "cash_amount": 5000.0,
+                    "target_ccy": "EUR",
+                    "target_value": 5000.0,
+                },
+            ],
+        )
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        result = build_cash_flow_summary(fernet_key=fernet_key)
+        assert result.num_rows == 1
+
+        # Re-open the persisted Delta table and verify overwrite semantics.
+        readback = DeltaTable(out_path, storage_options=storage.storage_options)
+        persisted = readback.to_pyarrow_table()
+        brokers = persisted.column("broker").to_pylist()
+        # overwrite: sentinel GONE -> 1 row; append would retain sentinel -> 2 rows.
+        assert persisted.num_rows == 1
+        assert "STALE_SENTINEL" not in brokers
+        assert "IBKR" in brokers
 
 
 # ---------------------------------------------------------------------------

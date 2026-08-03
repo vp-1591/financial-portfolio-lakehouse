@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pytest
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from pipeline.connectors.ibkr import transform
 from pipeline.connectors.ibkr.client import (
@@ -39,9 +43,9 @@ class TestClientParsing:
             '<FlexStatement accountId="U123" fromDate="20260601" toDate="20260625">'
             "<OpenPositions>"
             '<OpenPosition accountId="U123" currency="EUR" fxRateToBase="1.2"'
-            ' assetClass="STK" symbol="EUR ETF" description="iShares Core MSCI World"'
+            ' assetCategory="STK" symbol="EUR ETF" description="iShares Core MSCI World"'
             ' isin="IE00BK5BQT80" listingExchange="XETRA"'
-            ' reportDate="20260625" quantity="100" markPrice="50.0"'
+            ' reportDate="20260625" position="100" markPrice="50.0"'
             ' positionValue="5000.0" costBasisPrice="40.0"'
             ' costBasisMoney="4000.0" percentOfNAV="5.0"'
             ' unrealizedPnl="1000.0"/>'
@@ -524,7 +528,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U123" currency="USD"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000.0" '
-            'assetClass="STK" isin="US0378331005" '
+            'assetCategory="STK" isin="US0378331005" '
             'description="Apple Inc" fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "<CashReport>"
@@ -551,7 +555,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U456" currency="EUR"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="SAP" currency="EUR" positionValue="5000.0" '
-            'assetClass="STK" isin="DE0007164600" '
+            'assetCategory="STK" isin="DE0007164600" '
             'description="SAP SE" fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "</FlexStatement>"
@@ -573,7 +577,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U789" currency="USD"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="ZERO" currency="USD" positionValue="0.0" '
-            'assetClass="STK" fxRateToBase="1.0"/>'
+            'assetCategory="STK" fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "</FlexStatement>"
             "</FlexStatements>"
@@ -587,15 +591,29 @@ class TestFlexTransformSnapshot:
         assert "EQUITY" not in types
 
     def test_transform_currency_override(self, fernet_key: bytes) -> None:
+        """base_currency_override changes base_currency_by_account, observable
+        via the BASE_SUMMARY cash fallback.
+
+        The AccountInformation reports currency="BASE" (not a real code), so
+        without an override the account defaults to "USD". With
+        base_currency_override="CHF" the BASE_SUMMARY cash row must be labelled
+        "CASH CHF" and use CHF as security_ccy. This verifies the main override
+        block (transform.py:111-113) actually runs — the redundant inline
+        override that previously masked it has been removed.
+        """
         xml_str = (
             '<FlexQueryResponse queryName="test" type="AF">'
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U999" fromDate="20240101" toDate="20240102">'
             '<AccountInformation accountId="U999" currency="BASE"/>'
             "<OpenPositions>"
-            '<OpenPosition symbol="AAPL" positionValue="5000.0" '
-            'assetClass="STK" fxRateToBase="0.9"/>'
+            '<OpenPosition symbol="AAPL" currency="USD" positionValue="5000.0" '
+            'assetCategory="STK" fxRateToBase="0.9"/>'
             "</OpenPositions>"
+            "<CashReport>"
+            '<CashReportCurrency accountId="U999" currency="BASE SUMMARY"'
+            ' endingCash="3000.0"/>'
+            "</CashReport>"
             "</FlexStatement>"
             "</FlexStatements>"
             "</FlexQueryResponse>"
@@ -606,10 +624,16 @@ class TestFlexTransformSnapshot:
             raw, fernet_key, base_currency_override="CHF"
         )
 
-        # The position has no native currency, so security_ccy
-        # falls back to "USD" (the default for unknown currencies).
+        types = result.column("position_type").to_pylist()
+        assert "CASH" in types, f"Expected CASH row from BASE_SUMMARY, got {types}"
+
+        cash_idx = types.index("CASH")
+        labels = result.column("label").to_pylist()
+        assert labels[cash_idx] == "CASH CHF", (
+            f"Override should set cash currency to CHF, got {labels[cash_idx]}"
+        )
         currencies = result.column("security_ccy").to_pylist()
-        assert all(c == "USD" for c in currencies)
+        assert currencies[cash_idx] == "CHF"
 
     def test_transform_produces_cash_from_base_summary_fallback(
         self, fernet_key: bytes
@@ -624,7 +648,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U999" currency="USD"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="CSPX" currency="USD" positionValue="5000.0"'
-            ' assetClass="STK" isin="IE00B5BMR087"'
+            ' assetCategory="STK" isin="IE00B5BMR087"'
             ' fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "<CashReport>"
@@ -661,7 +685,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U123" currency="USD"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000.0"'
-            ' assetClass="STK" fxRateToBase="1.0"/>'
+            ' assetCategory="STK" fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "<CashReport>"
             '<CashReportCurrency accountId="U123" currency="USD"'
@@ -693,7 +717,7 @@ class TestFlexTransformSnapshot:
             '<AccountInformation accountId="U999" currency="BASE"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="CSPX" currency="USD" positionValue="5000.0"'
-            ' assetClass="STK" isin="IE00B5BMR087"'
+            ' assetCategory="STK" isin="IE00B5BMR087"'
             ' fxRateToBase="0.9"/>'
             "</OpenPositions>"
             "<CashReport>"
@@ -764,7 +788,7 @@ class TestConnectorFlexDispatch:
             '<AccountInformation accountId="U123" currency="USD"/>'
             "<OpenPositions>"
             '<OpenPosition symbol="AAPL" currency="USD" positionValue="10000" '
-            'assetClass="STK" fxRateToBase="1.0"/>'
+            'assetCategory="STK" fxRateToBase="1.0"/>'
             "</OpenPositions>"
             "</FlexStatement>"
             "</FlexStatements>"
@@ -793,6 +817,116 @@ class TestConnectorFlexDispatch:
 
         assert result.num_rows >= 1
         assert "EQUITY" in result.column("position_type").to_pylist()
+
+
+class TestIbkrExtractHoldingsValue:
+    """Value-level assertions for IbkrConnector.extract_holdings (A1 H3).
+
+    The protocol tests check broker/ticker/currency/description but never the
+    ``value`` field — the primary financial output. A ``value=0.0`` mutation in
+    ``ibkr/connector.py:78`` passes all 30 protocol tests. These tests decrypt
+    ``value`` and assert known expected amounts (not positivity) derived from
+    the fixture, so the zero-value mutation fails.
+    """
+
+    @staticmethod
+    def _to_decrypted_df(table: pa.Table, fernet_key: bytes) -> pl.DataFrame:
+        import polars as pl
+
+        from pipeline.crypto import decrypt_float
+
+        # Convert the Arrow table to a polars DataFrame and add the
+        # security_value_decrypted column that extract_holdings reads.
+        df = pl.from_arrow(table)
+        return df.with_columns(
+            pl.col("security_value")
+            .map_elements(
+                lambda v: decrypt_float(v, fernet_key),
+                return_dtype=pl.Float64,
+            )
+            .alias("security_value_decrypted")
+        )
+
+    def test_extract_holdings_value_matches_fixture(self) -> None:
+        """extract_holdings produces Holding.value matching known fixture amounts."""
+
+        from pipeline.connectors.registry import get
+        from pipeline.crypto import generate_key
+        from tests.fixtures.ibkr import ibkr_raw_positions
+
+        fernet_key = generate_key()
+        raw = ibkr_raw_positions(fernet_key=fernet_key)
+        connector = get("ibkr")
+        normalized = connector.transform_snapshot(raw, fernet_key)
+        df = self._to_decrypted_df(normalized, fernet_key)
+        holdings = connector.extract_holdings(df, fernet_key)
+
+        # 4 OpenPosition rows + 1 CASH row
+        assert len(holdings) == 5
+
+        by_ticker = {h.ticker: h for h in holdings}
+
+        # VWCE: positionValue=5000.0 EUR
+        assert by_ticker["VWCE"].value == pytest.approx(5000.0)
+        assert by_ticker["VWCE"].currency == "EUR"
+
+        # AAPL: positionValue=3000.0 USD (native currency, no FX pre-conversion)
+        assert by_ticker["AAPL"].value == pytest.approx(3000.0)
+        assert by_ticker["AAPL"].currency == "USD"
+
+        # SPY OPT: positionValue=500.0 USD — classified OPT (not STK)
+        assert by_ticker["SPY 20251219 C400"].value == pytest.approx(500.0)
+        assert by_ticker["SPY 20251219 C400"].security_currency == "USD"
+
+        # BOND01: positionValue=0 but position=100 * markPrice=25 → 2500.0.
+        # This position must NOT be dropped (the zero-positionValue fallback
+        # reads ``position``, the real Flex attribute).
+        assert by_ticker["BOND01"].value == pytest.approx(2500.0)
+        assert by_ticker["BOND01"].currency == "EUR"
+
+        # CASH EUR: endingCash=2000.0
+        assert by_ticker["CASH EUR"].value == pytest.approx(2000.0)
+
+    def test_opt_position_classified_opt_not_stk(self) -> None:
+        """The OPT fixture position is classified 'OPT' via assetCategory.
+
+        Without the transform.py fix (``assetCategory`` instead of
+        ``assetClass``), this defaults to 'STK'.
+        """
+        from pipeline.connectors.registry import get
+        from pipeline.crypto import generate_key
+        from tests.fixtures.ibkr import ibkr_raw_positions
+
+        fernet_key = generate_key()
+        raw = ibkr_raw_positions(fernet_key=fernet_key)
+        result = get("ibkr").transform_snapshot(raw, fernet_key)
+
+        labels = result.column("label").to_pylist()
+        asset_classes = result.column("asset_class").to_pylist()
+        opt_idx = labels.index("SPY 20251219 C400")
+        assert asset_classes[opt_idx] == "OPT", (
+            f"OPT position must be classified 'OPT', got {asset_classes[opt_idx]}"
+        )
+
+    def test_zero_position_value_position_not_dropped(self) -> None:
+        """A position with positionValue=0 but non-zero position*markPrice is kept.
+
+        Without the transform.py fix (``position`` instead of ``quantity``),
+        the fallback yields 0 and the position is silently dropped.
+        """
+        from pipeline.connectors.registry import get
+        from pipeline.crypto import generate_key
+        from tests.fixtures.ibkr import ibkr_raw_positions
+
+        fernet_key = generate_key()
+        raw = ibkr_raw_positions(fernet_key=fernet_key)
+        result = get("ibkr").transform_snapshot(raw, fernet_key)
+
+        labels = result.column("label").to_pylist()
+        assert "BOND01" in labels, (
+            "Zero-positionValue position with non-zero position*markPrice "
+            "must not be dropped"
+        )
 
 
 class TestCdcFetch:
@@ -830,7 +964,18 @@ class TestCdcFetch:
         assert result.num_rows == 1
         assert result.column("broker")[0].as_py() == "IBKR"
         assert result.column("source")[0].as_py() == "flex_cdc"
-        assert result.column("payload")[0].as_py() is not None
+
+        # Payload must be non-empty, parseable XML — not just "not None".
+        # A bare ``is not None`` check lets ``b""`` (empty/corrupted payload)
+        # pass silently (A1 W3 mutation).
+        payload = result.column("payload")[0].as_py()
+        assert isinstance(payload, (bytes, bytearray)), (
+            f"payload must be bytes, got {type(payload)!r}"
+        )
+        assert len(payload) > 0, "payload must be non-empty"
+        root = ET.fromstring(payload)
+        assert root.tag == "FlexQueryResponse"
+        assert root.find(".//Trade") is not None
 
     def test_fetch_cdc_kwargs_with_dedicated_query_id(self, monkeypatch) -> None:
         """When IBKR_FLEX_CDC_QUERY_ID is set, it takes precedence."""
@@ -925,6 +1070,63 @@ class TestCdcTransform:
         ids1 = result1.column("event_id").to_pylist()
         ids2 = result2.column("event_id").to_pylist()
         assert ids1 == ids2
+
+    def test_transform_cdc_uses_canonical_event_ids(self, fernet_key: bytes) -> None:
+        """Trade/CashTransaction/Transfer event_ids come from canonical Flex IDs.
+
+        Real Flex payloads use ``ibExecID``/``tradeID``/``transactionID``
+        (capital ``ID``). Before the production fix the transform read
+        ``ibExecutionId``/``tradeId``/``transactionId`` — absent on real data
+        — so every event_id fell back to a deterministic hash. This test
+        asserts the fixture's canonical IDs are used directly (not hashes),
+        proving the fix. (Demo bronze was not queried here; the fixture's
+        canonical IDs stand in for real data per the F1 acceptance note.)
+        """
+        from pipeline.connectors.ibkr.transform import (
+            _deterministic_event_id,
+            transform_cdc,
+        )
+        from tests.fixtures.ibkr import ibkr_raw_cdc
+
+        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        sources = result.column("source").to_pylist()
+        event_ids = result.column("event_id").to_pylist()
+        account_id = "U123456"
+
+        # The Trade's event_id must be the canonical ibExecID ("e001"), not a
+        # 16-hex deterministic hash.
+        trade_idx = sources.index("Trade")
+        assert event_ids[trade_idx] == "e001", (
+            f"Trade event_id should be canonical ibExecID 'e001', "
+            f"got {event_ids[trade_idx]!r}"
+        )
+
+        # The deterministic fallback hash for this Trade — must NOT match.
+        fallback = _deterministic_event_id(
+            "Trade",
+            account_id,
+            "20260115;103000",
+            "AAPL",
+            "10",
+        )
+        assert event_ids[trade_idx] != fallback
+
+        # CashTransaction event_ids must be the canonical transactionIDs.
+        ct_indices = [i for i, s in enumerate(sources) if s == "CashTransaction"]
+        ct_ids = {event_ids[i] for i in ct_indices}
+        assert ct_ids == {"CT001", "CT002", "CT003", "CT004"}, (
+            f"CashTransaction event_ids should be canonical transactionIDs, "
+            f"got {ct_ids}"
+        )
+
+        # The Transfer's event_id must be the canonical transactionID ("TR001").
+        transfer_idx = sources.index("Transfer")
+        assert event_ids[transfer_idx] == "TR001", (
+            f"Transfer event_id should be canonical transactionID 'TR001', "
+            f"got {event_ids[transfer_idx]!r}"
+        )
 
     def test_transform_cdc_encrypts_value_columns(self, fernet_key: bytes) -> None:
         """IBKR CDC transform encrypts value columns correctly."""
@@ -1076,7 +1278,7 @@ class TestIbkrFeeConversion:
             f' ibCommission="{ib_commission}" ibCommissionCurrency="{ib_commission_currency}"'
             ' netCash="-1501.0"'
             ' buySell="BUY" transactionType="ExTrade"'
-            f' ibExecutionId="e001" tradeId="T001" transactionId="TX001"'
+            f' ibExecID="e001" tradeID="T001" transactionID="TX001"'
             ' taxes="0.0" conid="265598" securityId="US0378331005"'
             ' multiplier="1" openCloseIndicator="O"/>'
             "</Trades>"

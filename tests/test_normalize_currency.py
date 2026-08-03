@@ -420,3 +420,57 @@ class TestNormalizeCurrency:
         value = decrypt_float(result.column("target_value")[0].as_py(), fernet_key)
         assert value == pytest.approx(148484.0 * 0.0117)  # ≈ 1737.26 EUR
         assert result.column("target_ccy")[0].as_py() == "EUR"
+
+    def test_normalize_overwrites_not_appends(self, tmp_path) -> None:
+        """normalize_currency OVERWRITES (not appends) the cdc_events table.
+
+        Runs the writer twice on the same table and re-opens the persisted
+        Delta table after each run.  Under overwrite the row count stays at 1
+        (the stale rows from the first run are replaced); under append the
+        count doubles on the second run (stale rows retained + new rows
+        accumulated).  Catches the ``mode="overwrite" -> "append"`` mutation
+        (A2 D3).
+        """
+        from deltalake import DeltaTable, write_deltalake
+
+        fernet_key = generate_key()
+        table = _make_cdc_table(
+            [{"security_ccy": "EUR", "cash_amount": 42.5}],
+            fernet_key,
+        )
+
+        table_path = str(tmp_path / "cdc_events")
+        write_deltalake(table_path, table, mode="overwrite")
+
+        from pipeline.normalized.consolidate import CurrencyConverter
+
+        converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
+
+        # First run: overwrites the input table with the normalized result.
+        result = normalize_currency(
+            table_path=table_path,
+            fernet_key=fernet_key,
+            converter=converter,
+        )
+        assert result.num_rows == 1
+
+        # Re-open the persisted table: overwrite -> 1 row.
+        readback = DeltaTable(table_path)
+        persisted = readback.to_pyarrow_table()
+        assert persisted.num_rows == 1
+
+        # Second run: re-normalizes the existing table.  Overwrite -> still
+        # 1 row; append mutation -> 2 rows (first-run row retained + appended).
+        normalize_currency(
+            table_path=table_path,
+            fernet_key=fernet_key,
+            converter=converter,
+        )
+        readback2 = DeltaTable(table_path)
+        persisted2 = readback2.to_pyarrow_table()
+        assert persisted2.num_rows == 1  # overwrite; append would be 2
+
+        # The persisted row carries the normalized target_value (42.5 EUR).
+        value = decrypt_float(persisted2.column("target_value")[0].as_py(), fernet_key)
+        assert value == pytest.approx(42.5)
+        assert persisted2.column("target_ccy")[0].as_py() == "EUR"

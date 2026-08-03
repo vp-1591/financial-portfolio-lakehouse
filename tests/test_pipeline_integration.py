@@ -15,10 +15,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
+import pytest
+from deltalake import write_deltalake
 
-from pipeline.crypto import encrypt, generate_key
+from pipeline.crypto import encrypt, encrypt_float, generate_key
 from pipeline.raw.ingest import encrypt_raw_payloads
 from pipeline.raw.models import RAW_SCHEMA
+from pipeline.storage import StorageConfig, use_storage
+from tests.local_backend import LocalBackend
 
 
 class TestEncryptRawPayloadsSetColumn:
@@ -316,3 +320,182 @@ class TestDirectoryCreation:
         result = consolidate_holdings(holdings, key, converter, table_path=table_path)
         assert result.num_rows == 1
         assert Path(table_path).exists()
+
+
+class TestCliDispatchIntegration:
+    """End-to-end ``main()`` dispatch integration tests (F9 C1-C3).
+
+    Exercises the full argparse parse -> ``commands[args.command](args)``
+    dispatch path with a REAL subcommand (``query``) against a populated
+    local backend.  Unlike ``test_run_subcommands.py`` (which monkeypatches
+    the ``cmd_*`` handler to test dispatch *routing* only), these tests let
+    ``cmd_query``, ``refresh()``, ``get_connection()``, and DuckDB run for
+    real — only ``resolve_storage()`` is stubbed (to install a
+    ``LocalBackend``, since real S3 is unavailable in tests).
+
+    A dispatch-break mutation (removing ``"query"`` from the commands dict
+    in ``pipeline/run.py``) raises ``KeyError`` here, failing this test —
+    the existing ``test_run_subcommands.py`` monkeypatched-dispatch tests
+    cover the same mutation for ``run-connector``; this test extends
+    coverage to the ``query`` subcommand running end-to-end.
+    """
+
+    def _write_ibkr_normalized(self, data: Path, key: bytes) -> None:
+        """Write a one-row IBKR normalized Delta table for query tests."""
+        from datetime import datetime
+
+        from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+
+        now = datetime.now(UTC)
+        table = pa.table(
+            {
+                "fetched_at": [now],
+                "account_id": ["U123456"],
+                "position_type": ["EQUITY"],
+                "label": ["VWCE"],
+                "asset_class": ["STK"],
+                "security_value": [encrypt_float(5000.0, key)],
+                "security_ccy": ["EUR"],
+                "isin": ["IE00BK5BQT80"],
+                "description": ["Vanguard FTSE All-World"],
+            },
+            schema=ibkr_snapshot_normalized_schema,
+        )
+        write_deltalake(
+            str(data / "normalized" / "ibkr_snapshot"), table, mode="overwrite"
+        )
+
+    def test_main_query_runs_end_to_end(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """main() dispatches 'query' and cmd_query runs a real DuckDB query.
+
+        Verifies the dispatch integration: argparse parses the subcommand,
+        ``main()`` dispatches to the real ``cmd_query`` (not a stub), which
+        queries a real Delta table via DuckDB and prints results.
+        """
+        import sys
+
+        from pipeline import run as run_module
+        from pipeline.query import clear_table_cache, refresh
+        from pipeline.secrets import reset_mode
+
+        key = generate_key()
+        data = tmp_path / "data"
+        for subdir in ("normalized/ibkr_snapshot", "raw/ibkr_snapshot"):
+            (data / subdir).mkdir(parents=True, exist_ok=True)
+        self._write_ibkr_normalized(data, key)
+
+        secrets = tmp_path / ".secrets"
+        secrets.mkdir(parents=True, exist_ok=True)
+        (secrets / "encryption.key").write_bytes(key)
+
+        config = StorageConfig(
+            data_dir=str(data),
+            raw_dir=str(data / "raw"),
+            normalized_dir=str(data / "normalized"),
+            analytics_dir=str(data / "analytics"),
+            secrets_dir=str(secrets),
+            encryption_key_file=str(secrets / "encryption.key"),
+            backend=LocalBackend(data),
+        )
+
+        # Stub resolve_storage to install the LocalBackend config — real S3
+        # is not available in tests.  Everything else (argparse, dispatch,
+        # cmd_query, DuckDB) runs for real.
+        monkeypatch.setattr(
+            "pipeline.storage.resolve_storage", lambda: use_storage(config)
+        )
+        monkeypatch.setenv("ENCRYPTION_KEY", key.decode("utf-8"))
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "pipeline.run",
+                "query",
+                "SELECT label FROM ibkr_snapshot_normalized",
+                "--mode",
+                "docker",
+            ],
+        )
+
+        clear_table_cache()
+        try:
+            rc = run_module.main()
+            assert rc == 0
+            assert "VWCE" in capsys.readouterr().out
+        finally:
+            refresh()
+            reset_mode()
+
+    def test_main_query_decrypt_flag_runs_end_to_end(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """main() with --decrypt dispatches and decrypts the real query output.
+
+        Extends the dispatch integration to the ``--decrypt`` flag: the real
+        ``cmd_query`` invokes ``decrypt_df`` and the decrypted float value
+        appears in output.  The ``_decrypt_value * 10`` mutation (5000 ->
+        50000) fails this test because ``"5000.0"`` is not a substring of
+        ``"50000.0"``.
+        """
+        import sys
+
+        from pipeline import run as run_module
+        from pipeline.query import clear_table_cache, refresh
+        from pipeline.secrets import reset_mode
+
+        key = generate_key()
+        data = tmp_path / "data"
+        for subdir in ("normalized/ibkr_snapshot", "raw/ibkr_snapshot"):
+            (data / subdir).mkdir(parents=True, exist_ok=True)
+        self._write_ibkr_normalized(data, key)
+
+        secrets = tmp_path / ".secrets"
+        secrets.mkdir(parents=True, exist_ok=True)
+        (secrets / "encryption.key").write_bytes(key)
+
+        config = StorageConfig(
+            data_dir=str(data),
+            raw_dir=str(data / "raw"),
+            normalized_dir=str(data / "normalized"),
+            analytics_dir=str(data / "analytics"),
+            secrets_dir=str(secrets),
+            encryption_key_file=str(secrets / "encryption.key"),
+            backend=LocalBackend(data),
+        )
+
+        monkeypatch.setattr(
+            "pipeline.storage.resolve_storage", lambda: use_storage(config)
+        )
+        monkeypatch.setenv("ENCRYPTION_KEY", key.decode("utf-8"))
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "pipeline.run",
+                "query",
+                "SELECT label, security_value FROM ibkr_snapshot_normalized",
+                "--decrypt",
+                "--mode",
+                "docker",
+            ],
+        )
+
+        clear_table_cache()
+        try:
+            rc = run_module.main()
+            assert rc == 0
+            out = capsys.readouterr().out
+            assert "VWCE" in out
+            # Bounded equality — catches the _decrypt_value * 10 mutation.
+            assert "5000.0" in out
+        finally:
+            refresh()
+            reset_mode()

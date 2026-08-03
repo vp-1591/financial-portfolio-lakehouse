@@ -7,6 +7,7 @@ values, and position types.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -15,13 +16,14 @@ from deltalake import write_deltalake
 
 from pipeline.analytics.holdings import build_portfolio_holdings
 from pipeline.analytics.models import portfolio_holdings_schema
-from pipeline.crypto import decrypt_float, generate_key
+from pipeline.crypto import decrypt_float, encrypt_float, generate_key
 from pipeline.normalized.consolidate import (
     CurrencyConverter,
     Holding,
     consolidate_holdings,
 )
 from pipeline.normalized.extract import extract_holdings
+from pipeline.normalized.models import consolidated_holdings_schema
 from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
@@ -63,26 +65,34 @@ def _setup_storage(tmp_path: Path) -> None:
     use_storage(config)
 
 
-def _build_consolidated_holdings(fernet_key: bytes) -> pa.Table:
+def _build_consolidated_holdings(
+    fernet_key: bytes,
+    brokers: tuple[str, ...] = ("ibkr", "trading212", "xtb"),
+) -> pa.Table:
     """Write broker snapshots and build consolidated_holdings from them.
 
     Returns the Delta table path for consolidated_holdings.
+
+    The ``brokers`` parameter lets value-assertion tests exclude XTB (F10
+    scope is IBKR + T212 only — XTB is deferred per F3).
     """
     config = get_storage()
 
-    # Write normalized fixtures for each broker
-    for broker, factory in [
-        ("ibkr", ibkr_normalized_snapshot),
-        ("trading212", t212_normalized_snapshot),
-        ("xtb", xtb_normalized_snapshot),
-    ]:
-        table = factory(fernet_key=fernet_key)
-        path = config.normalized_path(f"{broker}_snapshot")
+    broker_factories = {
+        "ibkr": ibkr_normalized_snapshot,
+        "trading212": t212_normalized_snapshot,
+        "xtb": xtb_normalized_snapshot,
+    }
+
+    # Write normalized fixtures for each requested broker
+    for broker_name in brokers:
+        table = broker_factories[broker_name](fernet_key=fernet_key)
+        path = config.normalized_path(f"{broker_name}_snapshot")
         write_deltalake(path, table, mode="overwrite")
 
     # Extract and consolidate
     all_holdings: list[Holding] = []
-    for broker_name in ("ibkr", "trading212", "xtb"):
+    for broker_name in brokers:
         snapshot_path = config.normalized_path(f"{broker_name}_snapshot")
         holdings = extract_holdings(broker_name, snapshot_path, fernet_key)
         all_holdings.extend(holdings)
@@ -205,16 +215,21 @@ class TestBuildPortfolioHoldings:
         assert stored.num_rows == result.num_rows
 
     def test_native_value_for_eur_positions(self, tmp_path: Path):
-        """EUR-denominated positions should have native value equal to target_value."""
+        """EUR-denominated positions have known expected plaintext amounts.
+
+        W3: assert against hand-verified expected amounts (from the IBKR
+        fixture: VWCE=5000, BOND01=2500, CASH EUR=2000), not just
+        cross-column equality of two decrypted columns (which passes even
+        if ``decrypt_float`` returns a constant — the round1-monetary
+        structural hole at line 207).
+        """
         fernet_key = generate_key()
-        _build_consolidated_holdings(fernet_key)
+        _build_consolidated_holdings(fernet_key, brokers=("ibkr", "trading212"))
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        # Find EUR-currency rows where target_ccy is also EUR
         import polars as pl
 
         df = pl.from_arrow(result)
-        # Decrypt value columns for comparison
         df = df.with_columns(
             pl.col("security_value")
             .map_elements(
@@ -230,11 +245,24 @@ class TestBuildPortfolioHoldings:
         eur_native = df.filter(
             (pl.col("security_ccy") == "EUR") & (pl.col("target_ccy") == "EUR")
         )
-        # For EUR positions, native value should equal target value
         assert len(eur_native) > 0
+
+        # Hand-verified expected plaintext amounts from the IBKR fixture.
+        # security_value (native EUR) == target_value (EUR) for these rows,
+        # and both must match the original fixture value — not just each other.
+        expected_eur = {
+            "VWCE": 5000.0,
+            "BOND01": 2500.0,
+            "CASH EUR": 2000.0,
+        }
         for row in eur_native.iter_rows(named=True):
-            assert abs(row["security_value"] - row["target_value"]) < 0.01, (
-                f"EUR position {row['ticker']}: native {row['security_value']} != target {row['target_value']}"
+            ticker = row["ticker"]
+            expected = expected_eur[ticker]
+            assert row["security_value"] == pytest.approx(expected, rel=1e-6), (
+                f"EUR position {ticker}: security_value {row['security_value']} != {expected}"
+            )
+            assert row["target_value"] == pytest.approx(expected, rel=1e-6), (
+                f"EUR position {ticker}: target_value {row['target_value']} != {expected}"
             )
 
     def test_missing_consolidated_raises(self, tmp_path: Path):
@@ -252,13 +280,38 @@ class TestBuildPortfolioHoldings:
         assert "percentage" in result.column_names
 
     def test_percentage_values_positive(self, tmp_path: Path):
-        """All percentage values are positive."""
+        """Percentage values match hand-verified expected numbers.
+
+        W3: assert ACTUAL percentage values (known expected numbers from
+        the IBKR + T212 fixtures), not just ``> 0``.  Removing the
+        percentage division in the portfolio math must fail this test.
+        """
         fernet_key = generate_key()
-        _build_consolidated_holdings(fernet_key)
+        _build_consolidated_holdings(fernet_key, brokers=("ibkr", "trading212"))
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
+        # Build a {ticker: percentage} dict from the result
+        tickers = result.column("ticker").to_pylist()
         percentages = result.column("percentage").to_pylist()
-        assert all(p > 0 for p in percentages)
+        actual = dict(zip(tickers, percentages, strict=True))
+
+        # Hand-verified: total_target = 14100.0 (5000+2700+450+2500+2000+625+450+375)
+        # percentage = round(target_value / total_target * 100, 4)
+        expected_pct = {
+            "VWCE": 35.4610,  # 5000/14100*100
+            "AAPL": 19.1489,  # 2700/14100*100
+            "SPY 20251219 C400": 3.1915,  # 450/14100*100
+            "BOND01": 17.7305,  # 2500/14100*100
+            "CASH EUR": 14.1844,  # 2000/14100*100
+            "VWCEl_EQ": 4.4326,  # 625/14100*100
+            "AAPLu_EQ": 3.1915,  # 450/14100*100
+            "CASH PLN": 2.6596,  # 375/14100*100
+        }
+        for ticker, expected in expected_pct.items():
+            assert ticker in actual, f"Missing ticker {ticker} in result"
+            assert actual[ticker] == pytest.approx(expected, rel=1e-4), (
+                f"{ticker}: percentage {actual[ticker]} != {expected}"
+            )
 
     def test_percentage_sums_to_100(self, tmp_path: Path):
         """Percentage values sum to approximately 100."""
@@ -327,4 +380,218 @@ class TestBuildPortfolioHoldings:
         # All percentages should be 0.0, not None/null
         assert all(p == 0.0 for p in percentages), (
             f"Expected all 0.0, got {percentages}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Golden safety net at the build_portfolio_holdings boundary
+# ---------------------------------------------------------------------------
+
+
+def _assert_golden_equal(
+    result_rows: list[dict],
+    expected_rows: list[dict],
+    float_cols: list[str],
+    sort_keys: list[str],
+) -> None:
+    """Compare decrypted result rows against hand-verified expected rows.
+
+    Golden-test conventions:
+    - Sort both sides by ``sort_keys`` before comparison.
+    - Schema check: every expected column must be present in result.
+    - Per-column: ``pytest.approx(rel=1e-6)`` for floats, exact for strings.
+    - Encrypted columns are never compared here — caller passes decrypted
+      plaintext only.
+
+    Small duplication from sibling fixers F4/F5 is plan-compliant.
+    """
+    assert len(result_rows) == len(expected_rows), (
+        f"Row count mismatch: result={len(result_rows)}, expected={len(expected_rows)}"
+    )
+
+    result_sorted = sorted(result_rows, key=lambda r: tuple(r[k] for k in sort_keys))
+    expected_sorted = sorted(
+        expected_rows, key=lambda r: tuple(r[k] for k in sort_keys)
+    )
+
+    for i, (result_row, expected_row) in enumerate(
+        zip(result_sorted, expected_sorted, strict=True)
+    ):
+        # Schema check: every expected key must be present in result
+        for col in expected_row:
+            assert col in result_row, f"Row {i}: column {col!r} missing from result"
+
+        for col, expected_val in expected_row.items():
+            actual_val = result_row[col]
+            if col in float_cols:
+                assert actual_val == pytest.approx(expected_val, rel=1e-6), (
+                    f"Row {i} column {col!r}: {actual_val} != {expected_val}"
+                )
+            else:
+                assert actual_val == expected_val, (
+                    f"Row {i} column {col!r}: {actual_val!r} != {expected_val!r}"
+                )
+
+
+class TestGoldenPortfolioHoldings:
+    """Golden safety net at the ``build_portfolio_holdings`` boundary.
+
+    Catches drift the per-cell tripwires never name (an un-asserted column,
+    a ``decrypt_float → 1.0`` mutation that makes cross-column-only asserts
+    silently pass).  Expected values are hand-verified plaintext constants
+    sourced from the IBKR + T212 fixture values and FX rates — NOT from
+    running the SUT.
+    """
+
+    def test_golden_build_portfolio_holdings(self, tmp_path: Path):
+        """3-row golden comparison at the analytics boundary.
+
+        Consolidated input (hand-crafted, 3 rows):
+          - AAPL/IBKR:  security=3000 USD, target=2700 EUR (3000×0.9)
+          - VWCE/IBKR:  security=5000 EUR, target=5000 EUR (1:1)
+          - CASH PLN/T212: security=1500 PLN, target=375 EUR (1500×0.25)
+
+        Expected output (decrypted plaintext, hand-verified math):
+          total_target = 8075.0
+          percentage = round(target / total_target * 100, 4)
+        """
+        fernet_key = generate_key()
+        config = get_storage()
+        now = datetime.now(UTC)
+
+        # Write a 3-row consolidated_holdings table with encrypted values
+        consolidated_rows = [
+            {
+                "fetched_at": now,
+                "broker": "IBKR",
+                "ticker": "AAPL",
+                "security_value": encrypt_float(3000.0, fernet_key),
+                "security_ccy": "USD",
+                "target_value": encrypt_float(2700.0, fernet_key),
+                "target_ccy": "EUR",
+                "identifier": "ISIN:US0378331005",
+                "description": "Apple Inc",
+                "position_type": "EQUITY",
+            },
+            {
+                "fetched_at": now,
+                "broker": "IBKR",
+                "ticker": "VWCE",
+                "security_value": encrypt_float(5000.0, fernet_key),
+                "security_ccy": "EUR",
+                "target_value": encrypt_float(5000.0, fernet_key),
+                "target_ccy": "EUR",
+                "identifier": "ISIN:IE00BK5BQT80",
+                "description": "Vanguard FTSE All-World UCITS ETF",
+                "position_type": "EQUITY",
+            },
+            {
+                "fetched_at": now,
+                "broker": "Trading 212",
+                "ticker": "CASH PLN",
+                "security_value": encrypt_float(1500.0, fernet_key),
+                "security_ccy": "PLN",
+                "target_value": encrypt_float(375.0, fernet_key),
+                "target_ccy": "EUR",
+                "identifier": "-",
+                "description": "Cash PLN",
+                "position_type": "CASH",
+            },
+        ]
+
+        from tests.test_quality import _rows_to_table
+
+        cons_table = _rows_to_table(consolidated_rows, consolidated_holdings_schema)
+        write_deltalake(
+            config.normalized_path("consolidated_holdings"),
+            cons_table,
+            mode="overwrite",
+        )
+
+        result = build_portfolio_holdings(fernet_key=fernet_key)
+
+        # Schema check
+        assert result.schema.equals(portfolio_holdings_schema)
+
+        # Decrypt value columns and build result rows for comparison
+        import polars as pl
+
+        df = pl.from_arrow(result)
+        df = df.with_columns(
+            pl.col("security_value")
+            .map_elements(
+                lambda v: decrypt_float(v, fernet_key), return_dtype=pl.Float64
+            )
+            .alias("security_value"),
+            pl.col("target_value")
+            .map_elements(
+                lambda v: decrypt_float(v, fernet_key), return_dtype=pl.Float64
+            )
+            .alias("target_value"),
+        )
+
+        # Columns to compare (exclude calculated_at — varies per run)
+        compare_cols = [
+            "broker",
+            "ticker",
+            "security_ccy",
+            "security_value",
+            "target_value",
+            "target_ccy",
+            "percentage",
+            "position_type",
+            "identifier",
+            "description",
+        ]
+        result_rows = df.select(compare_cols).to_dicts()
+
+        # Hand-verified expected plaintext values.
+        # total_target = 2700 + 5000 + 375 = 8075
+        # AAPL: 2700/8075*100 = 33.4365
+        # VWCE: 5000/8075*100 = 61.9195
+        # CASH PLN: 375/8075*100 = 4.644
+        expected_rows = [
+            {
+                "broker": "IBKR",
+                "ticker": "AAPL",
+                "security_ccy": "USD",
+                "security_value": 3000.0,
+                "target_value": 2700.0,
+                "target_ccy": "EUR",
+                "percentage": 33.4365,
+                "position_type": "EQUITY",
+                "identifier": "ISIN:US0378331005",
+                "description": "Apple Inc",
+            },
+            {
+                "broker": "IBKR",
+                "ticker": "VWCE",
+                "security_ccy": "EUR",
+                "security_value": 5000.0,
+                "target_value": 5000.0,
+                "target_ccy": "EUR",
+                "percentage": 61.9195,
+                "position_type": "EQUITY",
+                "identifier": "ISIN:IE00BK5BQT80",
+                "description": "Vanguard FTSE All-World UCITS ETF",
+            },
+            {
+                "broker": "Trading 212",
+                "ticker": "CASH PLN",
+                "security_ccy": "PLN",
+                "security_value": 1500.0,
+                "target_value": 375.0,
+                "target_ccy": "EUR",
+                "percentage": 4.644,
+                "position_type": "CASH",
+                "identifier": "-",
+                "description": "Cash PLN",
+            },
+        ]
+
+        _assert_golden_equal(
+            result_rows,
+            expected_rows,
+            float_cols=["security_value", "target_value", "percentage"],
+            sort_keys=["ticker", "broker"],
         )

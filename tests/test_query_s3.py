@@ -10,6 +10,32 @@ from pipeline.query import _configure_s3
 from pipeline.secrets import resolve_aws_credentials, set_mode
 
 
+def _secret_fields(conn: duckdb.DuckDBPyConnection) -> dict[str, str]:
+    """Return the per-field values of the DuckDB S3 SECRET.
+
+    Parses the ``secret_string`` column of ``duckdb_secrets()`` (the last
+    column) into a ``name=value`` dict.  This reads the SECRET's actual
+    field assignment -- unlike ``current_setting('s3_*')`` which reads
+    from the AWS environment variables (DuckDB's S3 extension auto-reads
+    ``AWS_ACCESS_KEY_ID`` / ``AWS_REGION``) and so cannot detect a
+    KEY_ID/REGION swap inside the SECRET.  A substring ``in str(row)``
+    assertion (A5 W4/C7) likewise passes when a value lands in the wrong
+    field; per-field extraction from ``secret_string`` does not.
+
+    The ``secret`` value is redacted by DuckDB (``secret=redacted``) so it
+    cannot be verified here; KEY_ID and REGION are available verbatim.
+    """
+    rows = conn.execute("SELECT * FROM duckdb_secrets() WHERE type = 's3'").fetchall()
+    assert rows, "expected at least one S3 secret"
+    secret_string = rows[0][6]
+    fields: dict[str, str] = {}
+    for pair in secret_string.split(";"):
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            fields[key] = value
+    return fields
+
+
 class TestConfigureS3:
     """Verify _configure_s3 uses DuckDB SECRET mechanism."""
 
@@ -36,11 +62,14 @@ class TestConfigureS3:
         s3_secrets = [s for s in secrets if s[1] == "s3"]
         assert len(s3_secrets) >= 1, f"Expected at least one S3 secret, got: {secrets}"
 
-        # Verify the secret contains our key ID
-        secret_row = s3_secrets[0]
-        assert "test-key-id" in str(secret_row), (
-            f"Secret should contain key ID: {secret_row}"
-        )
+        # Per-field verification: extract KEY_ID/REGION from the SECRET's
+        # secret_string rather than substring-matching the whole row (A5
+        # W4/C7). A KEY_ID/REGION swap mutation would place "test-key-id" in
+        # the REGION field and still satisfy a substring ``in str(row)``
+        # assertion, but per-field extraction catches the field misassignment.
+        fields = _secret_fields(conn)
+        assert fields["key_id"] == "test-key-id", f"KEY_ID field: {fields}"
+        assert fields["region"] == "eu-west-1", f"REGION field: {fields}"
         conn.close()
 
     def test_uses_region_from_env(self):
@@ -61,9 +90,10 @@ class TestConfigureS3:
             "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
         ).fetchall()
         assert len(secrets) >= 1
-        assert "us-east-1" in str(secrets[0]), (
-            f"Secret should contain region: {secrets[0]}"
-        )
+        # Per-field check (A5 W4/C7): region must land in the REGION field,
+        # not merely appear somewhere in the row string.
+        fields = _secret_fields(conn)
+        assert fields["region"] == "us-east-1", f"REGION field: {fields}"
         conn.close()
 
     def test_default_region(self):
@@ -83,9 +113,9 @@ class TestConfigureS3:
             "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
         ).fetchall()
         assert len(secrets) >= 1
-        assert "eu-west-1" in str(secrets[0]), (
-            f"Secret should default to eu-west-1: {secrets[0]}"
-        )
+        # Per-field check (A5 W4/C7): default region must be in REGION field.
+        fields = _secret_fields(conn)
+        assert fields["region"] == "eu-west-1", f"REGION field: {fields}"
         conn.close()
 
     def test_secret_propagates_to_s3_settings(self):
@@ -178,10 +208,11 @@ class TestConfigureS3:
             "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
         ).fetchall()
         assert len(secrets) >= 1, f"Expected S3 secret in staging mode, got: {secrets}"
-        secret_str = str(secrets[0])
-        assert "staging-key-id" in secret_str, (
-            f"Secret should use staging credentials, got: {secret_str}"
-        )
+        # Per-field verification (A5 W4/C7): KEY_ID and REGION must land in
+        # their own fields, not merely appear somewhere in the row string.
+        fields = _secret_fields(conn)
+        assert fields["key_id"] == "staging-key-id", f"KEY_ID field: {fields}"
+        assert fields["region"] == "eu-west-1", f"REGION field: {fields}"
         conn.close()
 
     def test_staging_mode_no_credentials_creates_empty_secret(self):
@@ -189,9 +220,11 @@ class TestConfigureS3:
         credentials is created to prevent DuckDB from falling back to
         any credentials in environment variables.
 
-        This tests the core isolation guarantee: if AWS credentials
-        are missing, the pipeline must NOT fall back to credentials
-        from a different environment.
+        This tests the core isolation guarantee (A5 C4): if AWS credentials
+        are missing, the pipeline must NOT fall back to credentials from a
+        different environment. We verify the CONTENT of the SECRET's
+        credential fields is empty -- not merely that a SECRET exists -- so
+        a mutation leaking production credentials into the demo SECRET fails.
         """
         conn = duckdb.connect()
         with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
@@ -200,12 +233,25 @@ class TestConfigureS3:
             set_mode("staging")
             _configure_s3(conn)
 
-        # A SECRET should be created with empty credentials,
-        # preventing DuckDB from falling back to any env vars.
+        # A SECRET should be created with EMPTY credentials (content check,
+        # not just existence -- A5 C4/W1), preventing DuckDB from falling
+        # back to any env vars. A mutation that injects non-empty (e.g.
+        # leaked production) credentials here must fail this assertion.
         secrets = conn.execute(
             "SELECT * FROM duckdb_secrets() WHERE type = 's3'"
         ).fetchall()
         assert len(secrets) >= 1, (
             f"Expected at least one S3 secret with empty credentials, got: {secrets}"
         )
+        # Content check (A5 C4/W1): the SECRET's KEY_ID field must be EMPTY
+        # (not merely present), so a mutation that injects non-empty (e.g.
+        # leaked production) credentials into the demo SECRET fails. DuckDB
+        # redacts the SECRET value (``secret=redacted``) so only KEY_ID can
+        # be verified verbatim from the secret_string.
+        fields = _secret_fields(conn)
+        assert fields["key_id"] == "", (
+            "demo SECRET KEY_ID must be empty so DuckDB cannot fall back to "
+            f"production credentials; got: {fields!r}"
+        )
+        assert fields["region"] == "eu-west-1", f"REGION field: {fields}"
         conn.close()

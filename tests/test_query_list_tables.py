@@ -128,34 +128,64 @@ class TestListTables:
     """Verify list_tables() returns layer-qualified aliases."""
 
     def setup_method(self):
-        """Clear cache and configure S3 storage before each test."""
+        """Clear cache and configure a POPULATED local backend before each test.
+
+        Uses a LocalBackend with real Delta tables so list_tables() returns a
+        non-empty list and the for-loop bodies in the alias tests actually
+        execute (A6 W1/C3 — previously pointed at a nonexistent S3 bucket,
+        making the loops vacuously true and the parse_alias swap mutation
+        undetectable here).
+        """
+        import tempfile
+        from pathlib import Path
+
         from pipeline.secrets import set_mode
 
         clear_table_cache()
         set_mode("docker")
-        # Use S3Backend pointing to a nonexistent bucket so list_tables()
-        # returns an empty list without needing actual S3 access.
-        backend = S3Backend(bucket="test-bucket", prefix="pipeline")
+        self._tmp = tempfile.mkdtemp()
+        data = Path(self._tmp) / "data"
+        for layer in LAYERS:
+            (data / layer).mkdir(parents=True, exist_ok=True)
+        # Write real Delta tables so list_tables() is non-empty.
+        for name in ("ibkr_snapshot", "trading212_snapshot"):
+            write_deltalake(
+                str(data / "normalized" / name),
+                pa.table({"label": ["test"]}),
+                mode="overwrite",
+            )
+        write_deltalake(
+            str(data / "raw" / "ibkr_snapshot"),
+            pa.table({"x": [1]}),
+            mode="overwrite",
+        )
         use_storage(
             StorageConfig(
-                data_dir="s3://test-bucket/pipeline",
-                raw_dir="s3://test-bucket/pipeline/raw",
-                normalized_dir="s3://test-bucket/pipeline/normalized",
-                analytics_dir="s3://test-bucket/pipeline/analytics",
-                secrets_dir="/tmp/secrets",
-                encryption_key_file="/tmp/secrets/encryption.key",
-                backend=backend,
+                data_dir=str(data),
+                raw_dir=str(data / "raw"),
+                normalized_dir=str(data / "normalized"),
+                analytics_dir=str(data / "analytics"),
+                secrets_dir=str(Path(self._tmp) / ".secrets"),
+                encryption_key_file=str(
+                    Path(self._tmp) / ".secrets" / "encryption.key"
+                ),
+                backend=LocalBackend(data),
             )
         )
 
     def teardown_method(self):
-        """Reset storage and mode after each test."""
+        """Reset storage and mode, and clean up the temp dir after each test."""
+        import shutil
+
         import pipeline.storage as _storage_mod
         from pipeline.secrets import reset_mode
 
         _storage_mod._config = None
         reset_mode()
         clear_table_cache()
+        tmp = getattr(self, "_tmp", None)
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_returns_list_of_strings(self):
         """list_tables() returns a list of strings."""
