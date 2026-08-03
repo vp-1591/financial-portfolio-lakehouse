@@ -67,7 +67,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0054 | Public-Subnet ECS — Eliminate Perma-VPC Charges | 2026-07-09 | active | — |
 | 0055 | IAM Role Credential Fallback for ECS Tasks | 2026-07-09 | superseded | 0088 |
 | 0056 | Fix CI Push Branch Filter to Eliminate Duplicate Runs | 2026-07-09 | active | — |
-| 0057 | Fix Bronze→Silver Dedup and Cash Extraction Bugs | 2026-07-10 | active | — |
+| 0057 | Fix Bronze→Silver Dedup and Cash Extraction Bugs | 2026-07-10 | superseded | 0100 |
 | 0058 | Broker-Neutral CDC Events Schema | 2026-07-10 | superseded | 0077 |
 | 0059 | Fix T212 CDC Paginated Response Bug and Test Isolation Leak | 2026-07-10 | active | — |
 | 0060 | Fix T212 CDC Transform for Nested JSON Structures | 2026-07-11 | active | — |
@@ -110,6 +110,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0097 | Remove Yahoo Finance as FX Rate Provider | 2026-07-25 | active | — |
 | 0098 | Add Retry Logic to CurrencyConverter.request_json | 2026-07-25 | active | — |
 | 0099 | Retry on IBKR Flex Transient Error 1019 | 2026-08-02 | active | — |
+| 0100 | Fix Snapshot Dedup Per Source and T212 Snapshot Encryption | 2026-08-03 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

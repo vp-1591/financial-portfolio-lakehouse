@@ -86,6 +86,8 @@ def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
     if raw.num_rows <= 1:
         return raw
 
+    # Decision: docs/adr/0100-fix-snapshot-dedup-per-source-and-t212-encryption.md
+    # (reverses the global-max filter decided in ADR 0057)
     import pyarrow as pa
 
     sources = raw.column("source").to_pylist()
