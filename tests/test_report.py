@@ -223,12 +223,17 @@ def fernet_key(tmp_path: Path) -> bytes:
     return key
 
 
-def _make_args(output_path: str, **kwargs) -> argparse.Namespace:
-    """Create an argparse.Namespace for cmd_report."""
+def _make_args(output_path: str | None = None, **kwargs) -> argparse.Namespace:
+    """Create an argparse.Namespace for cmd_report.
+
+    When *output_path* is ``None`` the CLI's default applies: a timestamped
+    file under ``data/reports/``.
+    """
     return argparse.Namespace(
         output=output_path,
         base_currency=kwargs.get("base_currency"),
         open=kwargs.get("open", False),
+        mode=kwargs.get("mode", "docker"),
     )
 
 
@@ -327,19 +332,36 @@ class TestCmdReport:
         assert result == 1
 
     def test_default_output_path(self, fernet_key: bytes, tmp_path: Path, monkeypatch):
-        """Default output path is data/report.html relative to CWD."""
+        """Default output writes a timestamped, mode-suffixed file under data/reports/."""
         _build_all_gold_tables(fernet_key)
         _write_minimal_cdc_tables(fernet_key)
 
-        # Change CWD to tmp_path so data/report.html is written there
+        # Change CWD to tmp_path so the default path is written there
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "data").mkdir(exist_ok=True)
 
-        args = _make_args("data/report.html")
+        args = _make_args(None, mode="staging")  # use the CLI default
         result = cmd_report(args)
 
         assert result == 0
-        assert (tmp_path / "data" / "report.html").exists()
+        reports_dir = tmp_path / "data" / "reports"
+        matches = list(reports_dir.glob("report-*-staging.html"))
+        assert len(matches) == 1, f"expected one report, found {matches}"
+        assert matches[0].stat().st_size > 0
+
+    def test_default_output_path_is_timestamped(self):
+        """_default_report_path embeds a datetime and mode the filesystem accepts."""
+        from pipeline.report.renderer import _default_report_path
+
+        path = _default_report_path("prod")
+        # Pattern: data/reports/report-YYYY-MM-DD_HH-MM-SS-prod.html
+        assert path.startswith("data/reports/report-")
+        assert path.endswith("-prod.html")
+        # Filename has no characters illegal on Windows (no colons, etc.)
+        name = Path(path).name
+        assert ":" not in name
+        # The timestamp portion (between "report-" and "-prod.html") parses.
+        ts = name.removeprefix("report-").removesuffix("-prod.html")
+        datetime.strptime(ts, "%Y-%m-%d_%H-%M-%S").replace(tzinfo=UTC)
 
     def test_failed_table_hides_its_section(self, fernet_key: bytes, tmp_path: Path):
         """Report hides sections whose dependency tables have FAIL in DQ."""
