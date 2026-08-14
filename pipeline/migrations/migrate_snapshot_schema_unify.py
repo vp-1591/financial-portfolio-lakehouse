@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 
 import boto3
+import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
 from pipeline.normalized.models import snapshot_normalized_schema
@@ -75,7 +76,7 @@ def rename_name_to_description(
     table_name: str,
     table_path: str,
     storage_opts: dict[str, str],
-    target_schema: object,
+    target_schema: pa.Schema,
     dry_run: bool = False,
 ) -> bool:
     """Rename ``name`` -> ``description`` in a normalized snapshot Delta table.
@@ -100,7 +101,19 @@ def rename_name_to_description(
         return False
 
     print(f"  Migrating: {table_path} ({table.num_rows} rows)")
-    new_table = table.rename_columns({"name": "description"})
+    # rename name -> description, then reorder columns to the shared schema's
+    # field order. rename_columns keeps `description` where `name` sat (in the
+    # middle of the old T212/XTB schema); the shared schema places `description`
+    # last, so a plain rename would fail the order-sensitive schema check below
+    # and quality.py's check_schema (schema.equals is order-sensitive).
+    target_names = list(target_schema.names)
+    renamed = table.rename_columns({"name": "description"})
+    if set(renamed.column_names) != set(target_names):
+        print("  ERROR: column set mismatch after rename!")
+        print(f"  Expected: {target_names}")
+        print(f"  Got: {renamed.column_names}")
+        return False
+    new_table = renamed.select(target_names)
 
     if new_table.schema != target_schema:
         print("  ERROR: Schema mismatch after migration!")
