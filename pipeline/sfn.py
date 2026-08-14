@@ -3,9 +3,10 @@
 When ``cmd_full`` runs in staging or prod mode it does not execute the
 pipeline locally — instead it starts a Step Functions execution that runs
 each connector as an ECS Fargate task and then runs the
-``run-consolidate-analytics`` task.  The caller's machine only needs AWS
-credentials with ``states:StartExecution`` permission; broker secrets are
-injected into the ECS containers by SSM at task launch time.
+``run-consolidate-analytics`` task.  The caller's machine needs AWS
+credentials with ``states:ListStateMachines`` / ``states:StartExecution``
+permission; broker secrets are injected into the ECS containers by SSM at
+task launch time.
 
 This module is split into:
 
@@ -21,11 +22,25 @@ Clients are built with boto3's default credential chain (the base
 ``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY`` env vars exported by the
 ``configure-aws-credentials`` GitHub Action), not via
 :func:`pipeline.secrets.resolve_aws_credentials`.  The credential
-isolation between environments is handled at the SSM / ECS level; the SFN
-trigger only needs IAM ``states:ListStateMachines`` /
-``states:StartExecution`` / ``ecs:DescribeTaskDefinition`` /
-``logs:FilterLogEvents`` permissions, which the same access key provides in
-either environment.
+isolation between environments is handled at the SSM / ECS level.
+
+The IAM permissions the trigger needs differ by environment (ADR 0053 /
+0093):
+
+- **staging** — the ``pipeline-demo-cicd`` policy grants the full set:
+  ``states:ListStateMachines``, ``states:StartExecution``,
+  ``states:DescribeExecution``, ``states:GetExecutionHistory``,
+  ``ecs:DescribeTaskDefinition``, and ``logs:FilterLogEvents``.  Staging
+  is CI-triggered on every merge to ``main`` and polls with ``--wait``, so
+  it can start executions and read history/logs.
+- **prod** — the ``pipeline-cicd`` policy grants **only**
+  ``ecs:DescribeTaskDefinition``.  Production runs on a daily EventBridge
+  schedule, not CI/manual trigger, so the prod key deliberately lacks
+  Step Functions permissions (a compromised prod key cannot trigger the
+  production state machine).  Running ``full --mode prod`` locally against
+  the prod ``pipeline`` user therefore fails with ``AccessDeniedException``
+  on ``states:ListStateMachines``; per ADR 0093 the caller's IAM user must
+  have the SFN permissions added to use that path.
 """
 
 from __future__ import annotations
