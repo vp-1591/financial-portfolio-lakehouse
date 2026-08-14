@@ -218,8 +218,9 @@ class TestBuildPortfolioHoldings:
         """EUR-denominated positions have known expected plaintext amounts.
 
         W3: assert against hand-verified expected amounts (from the IBKR
-        fixture: VWCE=5000, BOND01=2500, CASH EUR=2000), not just
-        cross-column equality of two decrypted columns (which passes even
+        fixture: VWCE=5000, BOND01=2500, CASH EUR=2000; and the T212 fixture:
+        VWCEl_EQ=2500 once the snapshot uses the instrument currency EUR), not
+        just cross-column equality of two decrypted columns (which passes even
         if ``decrypt_float`` returns a constant — the round1-monetary
         structural hole at line 207).
         """
@@ -247,13 +248,16 @@ class TestBuildPortfolioHoldings:
         )
         assert len(eur_native) > 0
 
-        # Hand-verified expected plaintext amounts from the IBKR fixture.
-        # security_value (native EUR) == target_value (EUR) for these rows,
-        # and both must match the original fixture value — not just each other.
+        # Hand-verified expected plaintext amounts. IBKR rows (VWCE, BOND01,
+        # CASH EUR) plus the T212 VWCEl_EQ equity whose snapshot now uses the
+        # instrument trading currency (EUR), so security_value (native EUR) ==
+        # target_value (EUR) and both must match the original fixture value —
+        # not just each other.
         expected_eur = {
             "VWCE": 5000.0,
             "BOND01": 2500.0,
             "CASH EUR": 2000.0,
+            "VWCEl_EQ": 2500.0,
         }
         for row in eur_native.iter_rows(named=True):
             ticker = row["ticker"]
@@ -295,17 +299,20 @@ class TestBuildPortfolioHoldings:
         percentages = result.column("percentage").to_pylist()
         actual = dict(zip(tickers, percentages, strict=True))
 
-        # Hand-verified: total_target = 14100.0 (5000+2700+450+2500+2000+625+450+375)
+        # Hand-verified: total_target = 17145.0
+        # (5000+2700+450+2500+2000 + 2500+1620+375) where the T212 equities now
+        # use their instrument currency: VWCEl_EQ=2500 EUR (1:1) and
+        # AAPLu_EQ=1800 USD -> 1620 EUR (x0.9). CASH PLN=1500 PLN -> 375 EUR.
         # percentage = round(target_value / total_target * 100, 4)
         expected_pct = {
-            "VWCE": 35.4610,  # 5000/14100*100
-            "AAPL": 19.1489,  # 2700/14100*100
-            "SPY 20251219 C400": 3.1915,  # 450/14100*100
-            "BOND01": 17.7305,  # 2500/14100*100
-            "CASH EUR": 14.1844,  # 2000/14100*100
-            "VWCEl_EQ": 4.4326,  # 625/14100*100
-            "AAPLu_EQ": 3.1915,  # 450/14100*100
-            "CASH PLN": 2.6596,  # 375/14100*100
+            "VWCE": 29.1630,  # 5000/17145*100
+            "AAPL": 15.7480,  # 2700/17145*100
+            "SPY 20251219 C400": 2.6247,  # 450/17145*100
+            "BOND01": 14.5815,  # 2500/17145*100
+            "CASH EUR": 11.6652,  # 2000/17145*100
+            "VWCEl_EQ": 14.5815,  # 2500/17145*100
+            "AAPLu_EQ": 9.4488,  # 1620/17145*100
+            "CASH PLN": 2.1872,  # 375/17145*100
         }
         for ticker, expected in expected_pct.items():
             assert ticker in actual, f"Missing ticker {ticker} in result"

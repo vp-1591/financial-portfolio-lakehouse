@@ -105,13 +105,14 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0092 | Remove _DEMO env var suffix pattern | 2026-07-23 | active | — |
 | 0093 | Resolve State Machine ARN via boto3 Instead of Env Var | 2026-07-24 | active | — |
 | 0094 | Remove Connector *_ENABLED Environment Variable Toggles | 2026-07-24 | active | — |
-| 0095 | Fix T212 Snapshot Currency Mismatch and GBX Rate Bug | 2026-07-24 | superseded | 0097 |
+| 0095 | Fix T212 Snapshot Currency Mismatch and GBX Rate Bug | 2026-07-24 | superseded | 0097, 0102 |
 | 0096 | Outlier Detection: Use Smallest Bar Instead of Median | 2026-07-25 | active | — |
 | 0097 | Remove Yahoo Finance as FX Rate Provider | 2026-07-25 | active | — |
 | 0098 | Add Retry Logic to CurrencyConverter.request_json | 2026-07-25 | active | — |
 | 0099 | Retry on IBKR Flex Transient Error 1019 | 2026-08-02 | active | — |
 | 0100 | Fix Snapshot Dedup Per Source and T212 Snapshot Encryption | 2026-08-03 | active | — |
 | 0101 | Fix IBKR Flex Attribute Names for CDC event_id Dedup | 2026-08-03 | active | — |
+| 0102 | Standardize Snapshot Schemas and Fix T212 security_ccy to Instrument Currency | 2026-08-14 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

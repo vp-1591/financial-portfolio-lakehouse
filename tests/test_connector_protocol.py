@@ -244,13 +244,14 @@ def _t212_normalized_df(fernet_key: bytes) -> pl.DataFrame:
     """Build a normalized Trading 212 DataFrame matching the fixture schema.
 
     Labels/security_ccy aligned with the F2 fixture (real demo T212 shape:
-    ``VWCEl_EQ``/``AAPLu_EQ`` single-lowercase-suffix labels, PLN wallet ccy).
+    ``VWCEl_EQ``/``AAPLu_EQ`` single-lowercase-suffix labels, instrument ccy
+    EUR/USD for the 2 equities).
     """
     return pl.DataFrame(
         {
             "label": ["VWCEl_EQ", "AAPLu_EQ"],
-            "name": ["Vanguard FTSE All-World UCITS ETF", "Apple Inc"],
-            "security_ccy": ["PLN", "PLN"],
+            "description": ["Vanguard FTSE All-World UCITS ETF", "Apple Inc"],
+            "security_ccy": ["EUR", "USD"],
             "security_value": [
                 encrypt_float(2500.0, fernet_key),
                 encrypt_float(1800.0, fernet_key),
@@ -265,7 +266,7 @@ def _xtb_normalized_df(fernet_key: bytes) -> pl.DataFrame:
     return pl.DataFrame(
         {
             "label": ["VWCE.DE", "CDR.PL"],
-            "name": ["Vanguard FTSE All-World UCITS ETF", "CD Projekt"],
+            "description": ["Vanguard FTSE All-World UCITS ETF", "CD Projekt"],
             "security_ccy": ["EUR", "PLN"],
             "security_value": [
                 encrypt_float(1000.0, fernet_key),
@@ -352,13 +353,13 @@ class TestTrading212ExtractHoldings:
         assert holdings[0].value == pytest.approx(2500.0)
         assert holdings[1].value == pytest.approx(1800.0)
 
-    def test_t212_uses_name_column_for_description(self) -> None:
+    def test_t212_uses_description_column(self) -> None:
         fernet_key = generate_key()
         df = _decrypt_df(_t212_normalized_df(fernet_key), fernet_key)
         connector = get("trading212")
         holdings = connector.extract_holdings(df, fernet_key)
 
-        # T212 uses the "name" column for description, not "description"
+        # T212 reads the "description" column for the holding description.
         assert holdings[0].description == "Vanguard FTSE All-World UCITS ETF"
 
 
@@ -385,7 +386,7 @@ class TestXtbExtractHoldings:
         assert holdings[0].security_currency == "EUR"
         assert holdings[1].security_currency == "PLN"
 
-    def test_xtb_uses_name_column_for_description(self) -> None:
+    def test_xtb_uses_description_column(self) -> None:
         fernet_key = generate_key()
         df = _decrypt_df(_xtb_normalized_df(fernet_key), fernet_key)
         connector = get("xtb")

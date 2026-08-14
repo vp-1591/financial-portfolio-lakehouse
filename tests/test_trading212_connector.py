@@ -28,6 +28,7 @@ from pipeline.connectors.trading212.client import (
     position_label,
     position_name,
     position_security_currency,
+    position_security_value,
     position_value,
 )
 from pipeline.connectors.trading212.transform import transform_snapshot
@@ -151,6 +152,26 @@ class TestClientParsing:
         position = {"quantity": 2, "currentPrice": 100.0}
         assert position_value(position) == 200.0
 
+    def test_position_security_value_uses_current_price_times_quantity(self) -> None:
+        """position_security_value returns quantity * currentPrice (instrument ccy)."""
+        position = {"quantity": 25.0, "currentPrice": 100.0}
+        assert position_security_value(position) == 2500.0
+
+    def test_position_security_value_returns_none_when_price_missing(self) -> None:
+        """Without currentPrice the instrument value is unknown -> None (fallback signal)."""
+        position = {"quantity": 25.0, "walletImpact": {"currentValue": 1290.0}}
+        assert position_security_value(position) is None
+
+    def test_position_security_value_returns_none_when_quantity_missing(self) -> None:
+        """Without quantity the instrument value is unknown -> None (fallback signal)."""
+        position = {"currentPrice": 100.0}
+        assert position_security_value(position) is None
+
+    def test_position_security_value_returns_none_when_both_missing(self) -> None:
+        """A wallet-only position (no price/quantity) signals fallback via None."""
+        position = {"walletImpact": {"currency": "PLN", "currentValue": 1290.0}}
+        assert position_security_value(position) is None
+
     def test_position_currency_uses_wallet_currency(self) -> None:
         position = {"walletImpact": {"currency": "PLN", "currentValue": 100.0}}
         assert position_currency(position, {}, "EUR") == "PLN"
@@ -159,7 +180,26 @@ class TestClientParsing:
         position = {
             "instrument": {"ticker": "IS3N", "currencyCode": "EUR"},
         }
-        assert position_security_currency(position, {}, "PLN") == "EUR"
+        assert position_security_currency(position, {}) == "EUR"
+
+    def test_position_security_currency_returns_none_when_unresolvable(self) -> None:
+        """No instrument dict, no currencyCode, and an empty ticker->ccy map -> None.
+
+        Signals the caller to fall back to the wallet-currency pairing so an
+        inconsistent (instrument-value, wallet-ccy) row is never emitted (ADR 0102).
+        """
+        position = {
+            "ticker": "VWCEl_EQ",
+            "quantity": 25.0,
+            "currentPrice": 100.0,
+            "walletImpact": {"currency": "PLN", "currentValue": 2200.0},
+        }
+        assert position_security_currency(position, {}) is None
+
+    def test_position_security_currency_resolves_via_ticker_map(self) -> None:
+        """Ticker absent from the position but present in instrument_currencies."""
+        position = {"ticker": "VWCEl_EQ", "quantity": 25.0, "currentPrice": 100.0}
+        assert position_security_currency(position, {"VWCEl_EQ": "EUR"}) == "EUR"
 
     def test_instrument_currencies(self) -> None:
         instruments = [
@@ -283,6 +323,8 @@ class TestTransformSnapshot:
                     "name": "iShares Core MSCI World",
                     "isin": "IE00B4L5Y983",
                 },
+                "quantity": 2,
+                "currentPrice": 50.0,
                 "walletImpact": {"currency": "PLN", "currentValue": 100.0},
             }
         ]
@@ -301,10 +343,12 @@ class TestTransformSnapshot:
         isins = result.column("isin").to_pylist()
         assert "IE00B4L5Y983" in isins
 
-        # security_ccy should be wallet currency (PLN from walletImpact),
-        # not instrument currency (EUR from instrument.currencyCode)
+        # security_ccy should be instrument currency (EUR from
+        # instrument.currencyCode), not wallet currency (PLN from
+        # walletImpact) — the transform pairs currentPrice*quantity with
+        # the instrument currency when both factors are available.
         ccys = result.column("security_ccy").to_pylist()
-        assert ccys[0] == "PLN"
+        assert ccys[0] == "EUR"
 
     def test_transform_produces_cash_from_nested_cash_dict(
         self, fernet_key: bytes
@@ -333,15 +377,15 @@ class TestTransformSnapshot:
         cash_amount = decrypt_float(values[cash_idx], fernet_key)
         assert cash_amount == pytest.approx(10500.0)
 
-    def test_snapshot_security_ccy_uses_wallet_currency(
+    def test_snapshot_security_ccy_uses_instrument_currency(
         self, fernet_key: bytes
     ) -> None:
         """Snapshot security_ccy should reflect the currency of security_value.
 
-        When walletImpact provides currentValue (in wallet currency PLN),
-        security_ccy must be PLN (wallet currency), not the instrument's
-        trading currency (EUR/GBX/GBP). This is the fix for the value-currency
-        mismatch bug where PLN values were labeled as EUR/GBX/GBP.
+        When currentPrice and quantity are available, security_ccy must be
+        the instrument's trading currency (EUR/GBX/GBP), not the wallet
+        currency (PLN). The transform pairs ``currentPrice * quantity`` with
+        the instrument currency; only the CASH row uses the wallet currency.
         """
         summary = {"currencyCode": "PLN", "cash": 10500.0, "total": 24989.22}
         positions = [
@@ -379,15 +423,134 @@ class TestTransformSnapshot:
         ccys = result.column("security_ccy").to_pylist()
         types = result.column("position_type").to_pylist()
 
-        # All positions use wallet currency (PLN) as security_ccy,
-        # not the instrument's trading currency (EUR/GBX/GBP)
+        # Equities use their instrument trading currency (EUR/GBX/GBP) as
+        # security_ccy, not the wallet currency (PLN); CASH stays PLN.
         equity_ccys = [ccys[i] for i, t in enumerate(types) if t == "EQUITY"]
         cash_ccys = [ccys[i] for i, t in enumerate(types) if t == "CASH"]
-        assert all(c == "PLN" for c in equity_ccys), (
-            f"Expected all equity security_ccy to be PLN, got {equity_ccys}"
+        assert equity_ccys == ["EUR", "GBX", "GBP"], (
+            f"Expected equity security_ccy [EUR, GBX, GBP], got {equity_ccys}"
         )
-        assert all(c == "PLN" for c in cash_ccys), (
-            f"Expected all cash security_ccy to be PLN, got {cash_ccys}"
+        assert cash_ccys == ["PLN"], (
+            f"Expected cash security_ccy [PLN], got {cash_ccys}"
+        )
+
+    def test_transform_snapshot_pairs_instrument_value_with_instrument_ccy(
+        self, fernet_key: bytes
+    ) -> None:
+        """Equity with currentPrice*quantity uses instrument currency and value.
+
+        The transform pairs ``currentPrice * quantity`` (instrument currency)
+        with the instrument's trading currency from ``instrument.currencyCode``,
+        NOT the wallet currency from ``walletImpact.currency``.
+        """
+        summary = {"currencyCode": "PLN", "cash": 0.0, "total": 2500.0}
+        positions = [
+            {
+                "ticker": "VWCEl_EQ",
+                "quantity": 25.0,
+                "currentPrice": 100.0,
+                "walletImpact": {"currency": "PLN", "currentValue": 2500.0},
+                "instrument": {"ticker": "VWCEl_EQ", "currencyCode": "EUR"},
+            }
+        ]
+        instruments = [{"ticker": "VWCEl_EQ", "currencyCode": "EUR", "name": "VWCE"}]
+
+        raw = self._build_raw_table(summary, positions, instruments)
+        result = transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "EQUITY" in types
+        equity_idx = types.index("EQUITY")
+
+        ccys = result.column("security_ccy").to_pylist()
+        assert ccys[equity_idx] == "EUR", (
+            f"Expected instrument ccy EUR, got {ccys[equity_idx]}"
+        )
+
+        values = result.column("security_value").to_pylist()
+        val = decrypt_float(values[equity_idx], fernet_key)
+        assert val == pytest.approx(2500.0), (
+            f"Expected quantity*currentPrice = 2500.0, got {val}"
+        )
+
+    def test_transform_snapshot_falls_back_to_wallet_ccy_without_price(
+        self, fernet_key: bytes
+    ) -> None:
+        """When currentPrice/quantity are missing, fall back to wallet ccy/value.
+
+        A position with only ``walletImpact`` (no ``currentPrice``/``quantity``)
+        must use the wallet-currency pairing: ``security_ccy`` = wallet currency
+        (PLN) and ``security_value`` = ``walletImpact.currentValue``.
+        """
+        summary = {"currencyCode": "PLN", "cash": 0.0, "total": 1290.0}
+        positions = [
+            {
+                "ticker": "VWCEl_EQ",
+                "walletImpact": {"currency": "PLN", "currentValue": 1290.0},
+                "instrument": {"ticker": "VWCEl_EQ", "currencyCode": "EUR"},
+            }
+        ]
+        instruments = [{"ticker": "VWCEl_EQ", "currencyCode": "EUR", "name": "VWCE"}]
+
+        raw = self._build_raw_table(summary, positions, instruments)
+        result = transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "EQUITY" in types
+        equity_idx = types.index("EQUITY")
+
+        ccys = result.column("security_ccy").to_pylist()
+        assert ccys[equity_idx] == "PLN", (
+            f"Expected wallet fallback ccy PLN, got {ccys[equity_idx]}"
+        )
+
+        values = result.column("security_value").to_pylist()
+        val = decrypt_float(values[equity_idx], fernet_key)
+        assert val == pytest.approx(1290.0), (
+            f"Expected walletImpact.currentValue = 1290.0, got {val}"
+        )
+
+    def test_transform_snapshot_falls_back_to_wallet_ccy_when_instrument_ccy_missing(
+        self, fernet_key: bytes
+    ) -> None:
+        """Instrument value resolvable but instrument ccy unresolvable -> wallet pairing.
+
+        Regression for the ADR 0102 invariant: ``currentPrice * quantity`` is
+        available (instrument value = 2500.0) but the instrument currency cannot
+        be resolved (no ``instrument`` dict, no ``currencyCode``, empty
+        ``instruments``). The row must NOT pair the instrument value (2500.0)
+        with the wallet currency (PLN); it must fall back to the wallet-currency
+        pairing (``walletImpact.currentValue`` 2200.0 in PLN).
+        """
+        summary = {"currencyCode": "PLN", "cash": 0.0, "total": 2200.0}
+        positions = [
+            {
+                "ticker": "VWCEl_EQ",
+                "quantity": 25.0,
+                "currentPrice": 100.0,  # instrument value = 2500.0 (resolvable)
+                "walletImpact": {"currency": "PLN", "currentValue": 2200.0},
+                # No `instrument` dict, no `currencyCode`, ticker absent from instruments.
+            }
+        ]
+        instruments: list[dict] = []  # empty -> instrument_currencies = {}
+
+        raw = self._build_raw_table(summary, positions, instruments)
+        result = transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "EQUITY" in types
+        equity_idx = types.index("EQUITY")
+
+        ccys = result.column("security_ccy").to_pylist()
+        assert ccys[equity_idx] == "PLN", (
+            f"Expected wallet fallback ccy PLN, got {ccys[equity_idx]}"
+        )
+
+        values = result.column("security_value").to_pylist()
+        val = decrypt_float(values[equity_idx], fernet_key)
+        assert val == pytest.approx(2200.0), (
+            f"Expected walletImpact.currentValue = 2200.0 (wallet pairing), "
+            f"got {val} (must NOT be the unpaired instrument value 2500.0)"
         )
 
     def test_transform_snapshot_with_mixed_endpoint_timestamps(
@@ -1291,7 +1454,7 @@ class TestT212FixtureRoundTrip:
         "account_id",
         "position_type",
         "label",
-        "name",
+        "description",
         "asset_class",
         "security_ccy",
         "isin",
@@ -1401,10 +1564,15 @@ class TestTrading212ExtractHoldingsValues:
         assert by_ticker["AAPLu_EQ"].value == pytest.approx(1800.0)
         assert by_ticker["CASH PLN"].value == pytest.approx(1500.0)
 
-        # broker/security_currency/ccy reflect the fixture (PLN wallet ccy).
+        # broker/security_currency/ccy reflect the fixture: equities use
+        # instrument currency (EUR/USD), CASH uses wallet currency (PLN).
         assert all(h.broker == "Trading 212" for h in holdings)
-        assert all(h.currency == "PLN" for h in holdings)
-        assert all(h.security_currency == "PLN" for h in holdings)
+        assert by_ticker["VWCEl_EQ"].currency == "EUR"
+        assert by_ticker["AAPLu_EQ"].currency == "USD"
+        assert by_ticker["CASH PLN"].currency == "PLN"
+        assert by_ticker["VWCEl_EQ"].security_currency == "EUR"
+        assert by_ticker["AAPLu_EQ"].security_currency == "USD"
+        assert by_ticker["CASH PLN"].security_currency == "PLN"
 
     def test_extract_holdings_value_not_zeroed(self) -> None:
         """A value=0.0 mutation in extract_holdings must fail here."""

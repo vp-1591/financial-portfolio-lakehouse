@@ -344,7 +344,7 @@ class TestCliDispatchIntegration:
         """Write a one-row IBKR normalized Delta table for query tests."""
         from datetime import datetime
 
-        from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+        from pipeline.normalized.models import snapshot_normalized_schema
 
         now = datetime.now(UTC)
         table = pa.table(
@@ -359,7 +359,7 @@ class TestCliDispatchIntegration:
                 "isin": ["IE00BK5BQT80"],
                 "description": ["Vanguard FTSE All-World"],
             },
-            schema=ibkr_snapshot_normalized_schema,
+            schema=snapshot_normalized_schema,
         )
         write_deltalake(
             str(data / "normalized" / "ibkr_snapshot"), table, mode="overwrite"

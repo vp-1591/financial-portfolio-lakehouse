@@ -22,6 +22,8 @@ from pipeline.connectors.trading212.client import (
     position_isin,
     position_label,
     position_name,
+    position_security_currency,
+    position_security_value,
     position_value,
 )
 from pipeline.connectors.transform_utils import (
@@ -33,7 +35,7 @@ from pipeline.connectors.transform_utils import (
 )
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
-    trading212_snapshot_normalized_schema,
+    snapshot_normalized_schema,
 )
 
 _SNAPSHOT_ENCRYPT_COLUMNS = ["security_value"]
@@ -64,7 +66,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     if summary_data is None or positions_data is None:
         return build_normalized_table(
             records,
-            trading212_snapshot_normalized_schema,
+            snapshot_normalized_schema,
             fernet_key,
             encrypt_columns=_SNAPSHOT_ENCRYPT_COLUMNS,
         )
@@ -78,7 +80,18 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     fetched_at = rows[0].fetched_at
 
     for position in positions_data if isinstance(positions_data, list) else []:
-        value = position_value(position)
+        instrument_value = position_security_value(position)
+        instrument_ccy = position_security_currency(position, instrument_currencies)
+        if instrument_value and instrument_ccy is not None:
+            value = instrument_value
+            security_ccy = instrument_ccy
+        else:
+            # Wallet-currency fallback: used when currentPrice/quantity are missing
+            # (instrument_value unresolvable) OR the instrument currency cannot be
+            # resolved (instrument_ccy is None). Either way the value/ccy pair stays
+            # consistent (both in the wallet currency). See ADR 0102.
+            value = position_value(position)
+            security_ccy = position_currency(position, instrument_currencies, currency)
         if value == 0:
             continue
 
@@ -88,18 +101,15 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "account_id": "",
                 "position_type": "EQUITY",
                 "label": position_label(position),
-                "name": position_name(position, instrument_names),
+                "description": position_name(position, instrument_names),
                 "asset_class": "EQUITY",
                 "security_value": value,
-                # Decision: docs/adr/0097-remove-yahoo-finance-fx-provider.md
-                # (snapshot security_ccy originally from ADR 0095)
-                # Use wallet currency for snapshot security_ccy because
-                # position_value() returns walletImpact.currentValue (in
-                # wallet currency). Contrast with CDC events where fxRate
-                # converts to instrument currency.
-                "security_ccy": position_currency(
-                    position, instrument_currencies, currency
-                ),
+                # Decision: docs/adr/0102-standardize-snapshot-schemas-t212-instrument-ccy.md
+                # Use the instrument-currency pairing (currentPrice * quantity +
+                # instrument currency) when BOTH are resolvable; otherwise fall back
+                # to the wallet-currency pairing so value/ccy stay consistent. The
+                # currency check was missing originally (superseded ADR 0095 Bug 1).
+                "security_ccy": security_ccy,
                 "isin": position_isin(position, instrument_isins),
             }
         )
@@ -112,7 +122,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                 "account_id": "",
                 "position_type": "CASH",
                 "label": f"CASH {currency}".rstrip(),
-                "name": f"Cash {currency}".rstrip(),
+                "description": f"Cash {currency}".rstrip(),
                 "asset_class": "CASH",
                 "security_value": cash_balance,
                 "security_ccy": currency,
@@ -122,7 +132,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
     return build_normalized_table(
         records,
-        trading212_snapshot_normalized_schema,
+        snapshot_normalized_schema,
         fernet_key,
         encrypt_columns=_SNAPSHOT_ENCRYPT_COLUMNS,
     )

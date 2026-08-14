@@ -71,9 +71,9 @@ class TestIBKRTransform:
         raw_table = ibkr_raw_positions(fernet_key=fernet_key)
         connector = get("ibkr")
         result = connector.transform_snapshot(raw_table, fernet_key)
-        from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+        from pipeline.normalized.models import snapshot_normalized_schema
 
-        assert result.schema.equals(ibkr_snapshot_normalized_schema)
+        assert result.schema.equals(snapshot_normalized_schema)
 
     def test_transform_snapshot_contains_equity_and_cash(self):
         fernet_key = generate_key()
@@ -127,9 +127,9 @@ class TestT212Transform:
         raw_table = t212_raw_snapshot(fernet_key=fernet_key)
         connector = get("trading212")
         result = connector.transform_snapshot(raw_table, fernet_key)
-        from pipeline.normalized.models import trading212_snapshot_normalized_schema
+        from pipeline.normalized.models import snapshot_normalized_schema
 
-        assert result.schema.equals(trading212_snapshot_normalized_schema)
+        assert result.schema.equals(snapshot_normalized_schema)
 
     def test_transform_snapshot_security_values_match_known_amounts(self):
         """Decrypt security_value and assert known expected amounts (A2 H4/W6).
@@ -149,7 +149,7 @@ class TestT212Transform:
         ]
         by_label = dict(zip(labels, values))
 
-        # walletImpact.currentValue for equities; cash.availableToTrade for CASH.
+        # quantity * currentPrice (instrument ccy) for equities; cash.availableToTrade for CASH.
         assert by_label["VWCEl_EQ"] == pytest.approx(2500.0)
         assert by_label["AAPLu_EQ"] == pytest.approx(1800.0)
         assert by_label["CASH PLN"] == pytest.approx(1500.0)
@@ -170,9 +170,9 @@ class TestXTBTransform:
         raw_table = xtb_raw_snapshot(fernet_key=fernet_key)
         connector = get("xtb")
         result = connector.transform_snapshot(raw_table, fernet_key)
-        from pipeline.normalized.models import xtb_snapshot_normalized_schema
+        from pipeline.normalized.models import snapshot_normalized_schema
 
-        assert result.schema.equals(xtb_snapshot_normalized_schema)
+        assert result.schema.equals(snapshot_normalized_schema)
 
 
 class TestNormalizedFixtureWrite:
@@ -296,10 +296,10 @@ class TestTransformSnapshotGolden:
         "account_id",
         "position_type",
         "label",
-        "name",
         "asset_class",
         "security_ccy",
         "isin",
+        "description",
     ]
     _FLOAT_COLS: ClassVar[list[str]] = ["security_value"]
 
@@ -320,9 +320,9 @@ class TestTransformSnapshotGolden:
     }
     _T212_FLOAT_EXPECTED: ClassVar[dict[str, dict[tuple[str, str], float]]] = {
         "security_value": {
-            ("", "AAPLu_EQ"): 1800.0,  # walletImpact.currentValue
-            ("", "CASH PLN"): 1500.0,  # cash.availableToTrade
-            ("", "VWCEl_EQ"): 2500.0,  # walletImpact.currentValue
+            ("", "AAPLu_EQ"): 1800.0,  # quantity * currentPrice (instrument ccy USD)
+            ("", "CASH PLN"): 1500.0,  # cash.availableToTrade (wallet ccy PLN)
+            ("", "VWCEl_EQ"): 2500.0,  # quantity * currentPrice (instrument ccy EUR)
         }
     }
 

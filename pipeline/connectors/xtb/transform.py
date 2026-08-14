@@ -15,7 +15,7 @@ from pipeline.connectors.xtb.parser import (
 )
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
-    xtb_snapshot_normalized_schema,
+    snapshot_normalized_schema,
 )
 
 
@@ -42,9 +42,13 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
                     "account_id": pos.account_id,
                     "position_type": pos.asset_class,
                     "label": pos.label,
-                    "name": pos.name,
+                    "description": pos.name,
                     "asset_class": pos.asset_class,
                     "security_value": pos.value,
+                    # XTB XLSX exposes no per-position instrument currency; security_ccy
+                    # stays the account currency (chart currency-exposure grouping for
+                    # XTB remains account-currency — known limitation, see
+                    # docs/adr/0102-standardize-snapshot-schemas-t212-instrument-ccy.md).
                     "security_ccy": pos.currency,
                     "isin": pos.isin,
                 }
@@ -52,7 +56,7 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
     return build_normalized_table(
         records,
-        xtb_snapshot_normalized_schema,
+        snapshot_normalized_schema,
         fernet_key,
         encrypt_columns=["security_value"],
     )

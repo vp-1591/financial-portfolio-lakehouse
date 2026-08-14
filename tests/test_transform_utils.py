@@ -260,19 +260,19 @@ class TestBuildNormalizedTable:
     def test_empty_records_returns_empty_table_with_correct_schema(
         self, fernet_key: bytes
     ) -> None:
-        from pipeline.normalized.models import xtb_snapshot_normalized_schema
+        from pipeline.normalized.models import snapshot_normalized_schema
 
         result = build_normalized_table(
             [],
-            xtb_snapshot_normalized_schema,
+            snapshot_normalized_schema,
             fernet_key,
             encrypt_columns=["security_value"],
         )
         assert result.num_rows == 0
-        assert result.schema.equals(xtb_snapshot_normalized_schema)
+        assert result.schema.equals(snapshot_normalized_schema)
 
     def test_single_record_with_encrypted_column(self, fernet_key: bytes) -> None:
-        from pipeline.normalized.models import xtb_snapshot_normalized_schema
+        from pipeline.normalized.models import snapshot_normalized_schema
 
         now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [
@@ -281,7 +281,7 @@ class TestBuildNormalizedTable:
                 "account_id": "XTB-123",
                 "position_type": "EQUITY",
                 "label": "VWCE.DE",
-                "name": "Vanguard FTSE All-World",
+                "description": "Vanguard FTSE All-World",
                 "asset_class": "EQUITY",
                 "security_value": 1000.0,
                 "security_ccy": "EUR",
@@ -290,7 +290,7 @@ class TestBuildNormalizedTable:
         ]
         result = build_normalized_table(
             records,
-            xtb_snapshot_normalized_schema,
+            snapshot_normalized_schema,
             fernet_key,
             encrypt_columns=["security_value"],
         )
@@ -350,7 +350,7 @@ class TestBuildNormalizedTable:
         assert result.column("label")[0].as_py() == "X"
 
     def test_schema_column_ordering_preserved(self, fernet_key: bytes) -> None:
-        from pipeline.normalized.models import trading212_snapshot_normalized_schema
+        from pipeline.normalized.models import snapshot_normalized_schema
 
         now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [
@@ -359,7 +359,7 @@ class TestBuildNormalizedTable:
                 "account_id": "T212-1",
                 "position_type": "EQUITY",
                 "label": "AAPL",
-                "name": "Apple Inc",
+                "description": "Apple Inc",
                 "asset_class": "EQUITY",
                 "security_value": 500.0,
                 "security_ccy": "USD",
@@ -368,13 +368,11 @@ class TestBuildNormalizedTable:
         ]
         result = build_normalized_table(
             records,
-            trading212_snapshot_normalized_schema,
+            snapshot_normalized_schema,
             fernet_key,
             encrypt_columns=["security_value"],
         )
-        assert list(result.schema.names) == list(
-            trading212_snapshot_normalized_schema.names
-        )
+        assert list(result.schema.names) == list(snapshot_normalized_schema.names)
 
 
 class TestFilterLatestSnapshot:

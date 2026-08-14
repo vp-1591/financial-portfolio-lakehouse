@@ -35,9 +35,7 @@ from pipeline.analytics.models import (
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     consolidated_holdings_schema,
-    ibkr_snapshot_normalized_schema,
-    trading212_snapshot_normalized_schema,
-    xtb_snapshot_normalized_schema,
+    snapshot_normalized_schema,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,9 +67,9 @@ TABLE_SCHEMAS: dict[str, pa.Schema] = {
     # Silver tables
     "consolidated_holdings": consolidated_holdings_schema,
     "cdc_events": cdc_events_normalized_schema,
-    "ibkr_snapshot": ibkr_snapshot_normalized_schema,
-    "trading212_snapshot": trading212_snapshot_normalized_schema,
-    "xtb_snapshot": xtb_snapshot_normalized_schema,
+    "ibkr_snapshot": snapshot_normalized_schema,
+    "trading212_snapshot": snapshot_normalized_schema,
+    "xtb_snapshot": snapshot_normalized_schema,
     "ibkr_cdc": cdc_events_normalized_schema,
     "trading212_cdc": cdc_events_normalized_schema,
     "xtb_cdc": cdc_events_normalized_schema,

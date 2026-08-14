@@ -30,7 +30,7 @@ from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     consolidated_holdings_schema,
-    ibkr_snapshot_normalized_schema,
+    snapshot_normalized_schema,
 )
 from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.local_backend import LocalBackend
@@ -948,7 +948,7 @@ def _make_ibkr_snapshot_table(fernet_key: bytes) -> pa.Table:
             "isin": ["IE00BK5BQT80"],
             "description": ["Vanguard FTSE All-World"],
         },
-        schema=ibkr_snapshot_normalized_schema,
+        schema=snapshot_normalized_schema,
     )
 
 

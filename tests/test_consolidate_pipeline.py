@@ -174,8 +174,9 @@ class TestExtractHoldings:
         assert len(holdings) >= 2
 
         # H2: decrypted security_value must match the pre-encryption T212
-        # fixture values (PLN-native). A decrypt corruption (decrypt_float
-        # -> 1.0) makes these assertions fail.
+        # fixture values (instrument-native EUR/USD for equities, wallet PLN
+        # for CASH). A decrypt corruption (decrypt_float -> 1.0) makes these
+        # assertions fail.
         expected_values = {
             "VWCEl_EQ": pytest.approx(2500.0),
             "AAPLu_EQ": pytest.approx(1800.0),
@@ -249,8 +250,9 @@ class TestConsolidateMultiBroker:
         )
 
         # H1: verify FX-converted target_value against hand-computed expected
-        # amounts for a multi-currency subset (IBKR EUR/USD + T212 PLN). A
-        # skip-FX mutation (converted_value = holding.value) makes these fail.
+        # amounts for a multi-currency subset (IBKR EUR/USD + T212
+        # instrument-native EUR/USD and wallet PLN for CASH). A skip-FX
+        # mutation (converted_value = holding.value) makes these fail.
         tickers = result.column("ticker").to_pylist()
         brokers = result.column("broker").to_pylist()
         target_values = [
@@ -277,15 +279,17 @@ class TestConsolidateMultiBroker:
             ("SPY 20251219 C400", "IBKR"): (pytest.approx(500.0), pytest.approx(450.0)),
             ("BOND01", "IBKR"): (pytest.approx(2500.0), pytest.approx(2500.0)),
             ("CASH EUR", "IBKR"): (pytest.approx(2000.0), pytest.approx(2000.0)),
-            # T212 native PLN -> EUR at 0.25
+            # T212 instrument-native: VWCEl_EQ EUR->EUR (rate 1.0)
             ("VWCEl_EQ", "Trading 212"): (
                 pytest.approx(2500.0),
-                pytest.approx(625.0),
+                pytest.approx(2500.0),
             ),
+            # T212 AAPLu_EQ USD->EUR at 0.9
             ("AAPLu_EQ", "Trading 212"): (
                 pytest.approx(1800.0),
-                pytest.approx(450.0),
+                pytest.approx(1620.0),
             ),
+            # T212 CASH PLN->EUR at 0.25 (wallet currency, unchanged)
             ("CASH PLN", "Trading 212"): (
                 pytest.approx(1500.0),
                 pytest.approx(375.0),
@@ -414,10 +418,10 @@ class TestConsolidateHoldingsGolden:
             Holding(
                 broker="Trading 212",
                 ticker="VWCEl_EQ",
-                currency="PLN",
+                currency="EUR",
                 value=2500.0,
                 identifier="ISIN:IE00BK5BQT80",
-                security_currency="PLN",
+                security_currency="EUR",
                 description="Vanguard FTSE All-World UCITS ETF",
                 position_type="EQUITY",
             ),
@@ -473,8 +477,8 @@ class TestConsolidateHoldingsGolden:
                 "broker": "Trading 212",
                 "ticker": "VWCEl_EQ",
                 "security_value": 2500.0,
-                "security_ccy": "PLN",
-                "target_value": 625.0,
+                "security_ccy": "EUR",
+                "target_value": 2500.0,
                 "target_ccy": "EUR",
                 "identifier": "ISIN:IE00BK5BQT80",
                 "description": "Vanguard FTSE All-World UCITS ETF",
