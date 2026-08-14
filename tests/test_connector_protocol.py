@@ -14,12 +14,17 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from deltalake import write_deltalake
 
 from pipeline.connectors.registry import get
-from pipeline.crypto import encrypt_float, generate_key
+from pipeline.crypto import decrypt_float, encrypt_float, generate_key
 from pipeline.normalized.consolidate import Holding
+from pipeline.normalized.extract import extract_holdings
 from pipeline.secrets import reset_mode, set_mode
 from pipeline.storage import StorageConfig, use_storage
+from tests.fixtures.ibkr import ibkr_normalized_snapshot
+from tests.fixtures.trading212 import t212_normalized_snapshot
+from tests.fixtures.xtb import xtb_normalized_snapshot
 from tests.local_backend import LocalBackend
 
 # ---------------------------------------------------------------------------
@@ -169,8 +174,6 @@ class TestFetchCdcKwargs:
     """CDC kwargs: T212 returns snapshot kwargs, IBKR/XTB return {}."""
 
     def test_ibkr_returns_empty(self) -> None:
-        from pipeline.secrets import reset_mode, set_mode
-
         set_mode("docker")
         assert get("ibkr").fetch_cdc_kwargs() == {}
         reset_mode()
@@ -279,7 +282,6 @@ def _xtb_normalized_df(fernet_key: bytes) -> pl.DataFrame:
 
 def _decrypt_df(df: pl.DataFrame, fernet_key: bytes) -> pl.DataFrame:
     """Add a security_value_decrypted column to a DataFrame."""
-    from pipeline.crypto import decrypt_float
 
     return df.with_columns(
         pl.col("security_value")
@@ -405,10 +407,6 @@ class TestExtractHoldingsShim:
     after delegating to connector.extract_holdings."""
 
     def test_ibkr_shim(self, tmp_path: Path) -> None:
-        from deltalake import write_deltalake
-
-        from pipeline.normalized.extract import extract_holdings
-        from tests.fixtures.ibkr import ibkr_normalized_snapshot
 
         fernet_key = generate_key()
         data = tmp_path / "data"
@@ -434,10 +432,6 @@ class TestExtractHoldingsShim:
         assert any(h.ticker == "VWCE" for h in holdings)
 
     def test_t212_shim(self, tmp_path: Path) -> None:
-        from deltalake import write_deltalake
-
-        from pipeline.normalized.extract import extract_holdings
-        from tests.fixtures.trading212 import t212_normalized_snapshot
 
         fernet_key = generate_key()
         data = tmp_path / "data"
@@ -462,10 +456,6 @@ class TestExtractHoldingsShim:
         assert all(isinstance(h, Holding) for h in holdings)
 
     def test_xtb_shim(self, tmp_path: Path) -> None:
-        from deltalake import write_deltalake
-
-        from pipeline.normalized.extract import extract_holdings
-        from tests.fixtures.xtb import xtb_normalized_snapshot
 
         fernet_key = generate_key()
         data = tmp_path / "data"
