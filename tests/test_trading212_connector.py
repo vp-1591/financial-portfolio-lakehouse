@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import base64 as b64
+import hashlib
 import json
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
+from unittest import mock
+from unittest.mock import MagicMock
 
 import polars as pl
 import pyarrow as pa
@@ -12,6 +17,8 @@ import pytest
 
 from pipeline.connectors.registry import get
 from pipeline.connectors.trading212.client import (
+    Trading212Client,
+    Trading212Error,
     Trading212HttpError,
     account_currency,
     as_float,
@@ -31,7 +38,9 @@ from pipeline.connectors.trading212.client import (
     position_security_value,
     position_value,
 )
-from pipeline.connectors.trading212.transform import transform_snapshot
+from pipeline.connectors.trading212.fetch import fetch_cdc
+from pipeline.connectors.trading212.transform import transform_cdc, transform_snapshot
+from pipeline.connectors.transform_utils import _unwrap_events
 from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.raw.models import RAW_SCHEMA
@@ -56,7 +65,6 @@ class TestClientParsing:
         assert concise_details("unauthorized") == "unauthorized"
 
     def test_basic_auth_header(self) -> None:
-        import base64 as b64
 
         expected = b64.b64encode(b"api-key:api-secret").decode("ascii")
         assert basic_auth_header(" api-key ", " api-secret ") == f"Basic {expected}"
@@ -70,7 +78,6 @@ class TestClientParsing:
         defines authWithSecretKey as { scheme: basic }. This test prevents
         a silent downgrade to Bearer or any other auth method.
         """
-        import base64 as b64
 
         header = basic_auth_header("mykey", "mysecret")
         # Must start with "Basic " — never "Bearer " or a raw key
@@ -258,9 +265,6 @@ class TestTransformSnapshot:
         Payloads are encrypted to match the real pipeline flow where
         raw Delta tables store encrypted payloads.
         """
-        import hashlib
-
-        from pipeline.raw.models import RAW_SCHEMA
 
         key = self._fernet_key
         now = datetime.now(UTC)
@@ -570,8 +574,6 @@ class TestTransformSnapshot:
         *different* cash balance) leaks into the output, changing the cash
         row's security_value and failing the assertion below.
         """
-        import hashlib
-        from datetime import timedelta
 
         # Two summary payloads: stale has cash=50.0, fresh has cash=250.0.
         # filter_latest_snapshot must keep only the fresh row per source.
@@ -642,9 +644,6 @@ class TestClientPagination:
 
     def test_fetch_paginated_returns_bare_list(self) -> None:
         """When API returns a bare list, _fetch_paginated returns it directly."""
-        from unittest.mock import MagicMock
-
-        from pipeline.connectors.trading212.client import Trading212Client
 
         client = Trading212Client(
             "https://demo.trading212.com/api/v0",
@@ -660,9 +659,6 @@ class TestClientPagination:
 
     def test_fetch_paginated_collects_all_pages(self) -> None:
         """When API returns paginated dict responses, all items are collected."""
-        from unittest.mock import MagicMock
-
-        from pipeline.connectors.trading212.client import Trading212Client
 
         client = Trading212Client(
             "https://demo.trading212.com/api/v0",
@@ -687,9 +683,6 @@ class TestClientPagination:
 
     def test_fetch_paginated_single_page(self) -> None:
         """Paginated response with nextPagePath=None returns items from one call."""
-        from unittest.mock import MagicMock
-
-        from pipeline.connectors.trading212.client import Trading212Client
 
         client = Trading212Client(
             "https://demo.trading212.com/api/v0",
@@ -708,12 +701,6 @@ class TestClientPagination:
 
     def test_fetch_paginated_raises_on_unexpected_type(self) -> None:
         """Non-list, non-dict responses raise Trading212Error."""
-        from unittest.mock import MagicMock
-
-        from pipeline.connectors.trading212.client import (
-            Trading212Client,
-            Trading212Error,
-        )
 
         client = Trading212Client(
             "https://demo.trading212.com/api/v0",
@@ -727,12 +714,6 @@ class TestClientPagination:
 
     def test_fetch_paginated_raises_on_missing_items(self) -> None:
         """Dict response without 'items' key raises Trading212Error."""
-        from unittest.mock import MagicMock
-
-        from pipeline.connectors.trading212.client import (
-            Trading212Client,
-            Trading212Error,
-        )
 
         client = Trading212Client(
             "https://demo.trading212.com/api/v0",
@@ -746,9 +727,6 @@ class TestClientPagination:
 
     def test_orders_uses_pagination(self) -> None:
         """orders() delegates to _fetch_paginated."""
-        from unittest.mock import MagicMock
-
-        from pipeline.connectors.trading212.client import Trading212Client
 
         client = Trading212Client(
             "https://demo.trading212.com/api/v0",
@@ -774,11 +752,6 @@ class TestCdcFetch:
         endpoint. Removing the ``logger.warning(...)`` call in ``fetch_cdc``
         makes this test fail (no warning record captured).
         """
-        import logging
-        from unittest import mock
-
-        from pipeline.connectors.trading212.client import Trading212Error
-        from pipeline.connectors.trading212.fetch import fetch_cdc
 
         with (
             caplog.at_level(
@@ -824,9 +797,6 @@ class TestCdcFetch:
 
     def test_fetch_cdc_raises_when_all_endpoints_empty(self) -> None:
         """When all CDC endpoints return empty lists, fetch_cdc raises RuntimeError."""
-        from unittest import mock
-
-        from pipeline.connectors.trading212.fetch import fetch_cdc
 
         with mock.patch(
             "pipeline.connectors.trading212.fetch.Trading212Client"
@@ -851,30 +821,25 @@ class TestUnwrapEvents:
     """Tests for _unwrap_events helper (moved from transform_utils)."""
 
     def test_bare_list_returns_as_is(self) -> None:
-        from pipeline.connectors.transform_utils import _unwrap_events
 
         events = [{"id": 1}, {"id": 2}]
         assert _unwrap_events(events) is events
 
     def test_paginated_dict_extracts_items(self) -> None:
-        from pipeline.connectors.transform_utils import _unwrap_events
 
         payload = {"items": [{"id": 1}], "nextPagePath": None}
         assert _unwrap_events(payload) == [{"id": 1}]
 
     def test_paginated_dict_empty_items(self) -> None:
-        from pipeline.connectors.transform_utils import _unwrap_events
 
         payload = {"items": [], "nextPagePath": None}
         assert _unwrap_events(payload) == []
 
     def test_dict_without_items_returns_empty(self) -> None:
-        from pipeline.connectors.transform_utils import _unwrap_events
 
         assert _unwrap_events({"error": "not found"}) == []
 
     def test_non_dict_non_list_returns_empty(self) -> None:
-        from pipeline.connectors.transform_utils import _unwrap_events
 
         assert _unwrap_events("string") == []
         assert _unwrap_events(42) == []
@@ -895,7 +860,6 @@ class TestCdcTransform:
         fernet_key: bytes,
     ) -> pa.Table:
         """Build a raw-layer table with encrypted CDC event payloads."""
-        import hashlib
 
         now = datetime.now(UTC)
         raw_payloads = [json.dumps(events).encode("utf-8")]
@@ -956,7 +920,6 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """T212 orders are transformed into TRADE events with all fields populated."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [self._make_order_event()]
         raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
@@ -999,7 +962,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
         """T212 orders with walletImpact.taxes correctly split fees and taxes."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         event = self._make_order_event()
         event["fill"]["walletImpact"]["taxes"] = [
@@ -1021,7 +983,6 @@ class TestCdcTransform:
         Per the sign convention (ADR 0058), SELL = inflow -> positive cash.
         The direction sign applies only to BUY; SELL keeps the magnitude.
         """
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         event = self._make_order_event()
         event["order"]["side"] = "SELL"
@@ -1046,7 +1007,6 @@ class TestCdcTransform:
           - cash_amount (security ccy) = 2000 * 0.25 = 500 USD
           - security_ccy = "USD" (security, not "PLN")
         """
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         event = self._make_order_event()
         event["order"]["ticker"] = "SPYI_US_EQ"
@@ -1100,7 +1060,6 @@ class TestCdcTransform:
           - fx_rate = 19.949 (PLN→GBX)
           - cash_amount (security ccy) = 7500 * 19.949 ≈ 149617.5 GBX
         """
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         event = self._make_order_event()
         event["order"]["ticker"] = "SGLN_UK_EQ"
@@ -1153,7 +1112,6 @@ class TestCdcTransform:
           - fee_amount (wallet) = 4.0 PLN → 1.0 USD
           - tax_amount (wallet) = 2.0 PLN → 0.5 USD
         """
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         event = self._make_order_event()
         event["order"]["ticker"] = "SPYI_US_EQ"
@@ -1203,9 +1161,6 @@ class TestCdcTransform:
         self, fernet_key: bytes, caplog: pytest.LogCaptureFixture
     ) -> None:
         """T212 dividends with currency != tickerCurrency produce a warning log."""
-        import logging
-
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [
             {
@@ -1246,9 +1201,6 @@ class TestCdcTransform:
         self, fernet_key: bytes, caplog: pytest.LogCaptureFixture
     ) -> None:
         """T212 dividends with currency == tickerCurrency produce no mismatch warning."""
-        import logging
-
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [
             {
@@ -1287,7 +1239,6 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """T212 dividends are transformed into DIVIDEND events with nested instrument."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [
             {
@@ -1331,7 +1282,6 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """T212 transactions are classified into normalized event types."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [
             {
@@ -1355,7 +1305,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_transaction_withdraw_type(self, fernet_key: bytes) -> None:
         """T212 WITHDRAW transactions are mapped to WITHDRAWAL event type."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [
             {
@@ -1379,7 +1328,6 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """When no events are parsed, transform returns an empty schema-correct table."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events: list[dict] = []
         raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
@@ -1390,7 +1338,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_unwraps_paginated_dict(self, fernet_key: bytes) -> None:
         """Paginated T212 responses (dict with 'items') are unwrapped correctly."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         events = [self._make_order_event()]
         paginated_payload = {"items": events, "nextPagePath": None}
@@ -1407,7 +1354,6 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """Paginated response with empty items list produces zero rows."""
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         paginated_payload = {"items": [], "nextPagePath": None}
         raw = self._build_raw_cdc_table(
@@ -1428,7 +1374,6 @@ class TestCdcTransform:
         StructFieldNotFoundError on absent fields, so the transform must
         pre-fill missing keys with None.
         """
-        from pipeline.connectors.trading212.transform import transform_cdc
 
         # Build an order event without filledQuantity or filledValue on
         # the order object — this is exactly what the real API returns
