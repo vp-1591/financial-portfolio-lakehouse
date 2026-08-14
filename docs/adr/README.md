@@ -114,6 +114,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0101 | Fix IBKR Flex Attribute Names for CDC event_id Dedup | 2026-08-03 | active | — |
 | 0102 | Standardize Snapshot Schemas and Fix T212 security_ccy to Instrument Currency | 2026-08-14 | active | — |
 | 0103 | Prod boto3 Default-Chain Credential Fallback | 2026-08-14 | active | — |
+| 0104 | Fix T212 Trade cash_amount/gross_amount Sign Convention | 2026-08-14 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

@@ -368,10 +368,24 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         [instrument.struct.field("currency"), order.struct.field("currency")]
     ).cast(pl.Utf8)
 
+    # Decision: docs/adr/0104-fix-t212-trade-sign-convention.md
+    # Sign convention (origin ADR 0058, carried forward into the active schema
+    # ADR 0077): positive = inflow, negative = outflow.  T212 reports the trade
+    # cash impact as an unsigned magnitude in walletImpact.netValue for both
+    # BUY and SELL, carrying direction only in ``side``.  IBKR already reports a
+    # signed netCash (BUY negative).  Apply the direction sign here so T212
+    # trades conform to the convention and match IBKR: BUY = outflow ->
+    # negative, SELL = inflow -> positive.  Without this, the Cash Flow
+    # Breakdown chart nets unsigned T212 magnitudes against signed IBKR
+    # values within the TRADE event type.
+    side = order.struct.field("side")
+    direction = pl.when(side == "BUY").then(-1.0).otherwise(1.0)
+
     # Cash amount in security currency, converted from wallet currency using
     # walletImpact.fxRate.  For same-currency trades (wallet ccy == security ccy)
-    # the fx_rate is 1.0 and this is equivalent to net_value.
-    cash_amount_security_ccy = net_value * fx_rate
+    # the fx_rate is 1.0 and this is equivalent to net_value.  Signed by
+    # direction so buys are negative (outflow) and sells positive (inflow).
+    cash_amount_security_ccy = net_value * fx_rate * direction
 
     return df.select(
         fetched_at=pl.lit(fetched_at),
@@ -407,7 +421,8 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         gross_amount=pl.coalesce(
             [order.struct.field("filledValue"), order.struct.field("value")]
         ).cast(pl.Float64)
-        * fx_rate,
+        * fx_rate
+        * direction,
         fee_amount=pl.Series("fee_amount", fee_amounts, dtype=pl.Float64) * fx_rate,
         tax_amount=pl.Series("tax_amount", tax_amounts, dtype=pl.Float64) * fx_rate,
         # target_fx_rate, target_value, target_ccy are null for T212 orders;
