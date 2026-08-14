@@ -10,11 +10,9 @@ import pyarrow as pa
 import pytest
 from deltalake import write_deltalake
 
+import pipeline.query as _query_mod
 import pipeline.storage as _storage_mod
 from pipeline.crypto import encrypt_float, encrypt_string, generate_key
-from pipeline.query import (
-    _TABLE_CACHE as fresh_cache,
-)
 from pipeline.query import (
     LAYERS,
     _decrypt_value,
@@ -337,10 +335,13 @@ class TestListTables:
         except Exception:
             # If no storage configured, that's fine for this test.
             pass
-        # After clearing, cache should be None.
+        # After clearing, the module-level cache should be None. Read the live
+        # module attribute (not a top-level snapshot) so a rebind by
+        # clear_table_cache() is actually observed — a stale `as fresh_cache`
+        # alias bound at import time would always be None and make this vacuous.
         clear_table_cache()
 
-        assert fresh_cache is None
+        assert _query_mod._TABLE_CACHE is None
 
 
 # ---------------------------------------------------------------------------
