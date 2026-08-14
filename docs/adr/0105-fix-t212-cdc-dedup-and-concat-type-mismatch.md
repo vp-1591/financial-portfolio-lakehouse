@@ -39,8 +39,11 @@ was uncaught and would crash any T212 run with both orders and dividends.
 - **Add `event_id` dedup to the T212 CDC transform**, mirroring the IBKR
   pattern (ADR 0069). After `pl.concat(dfs)` and before `finalize_table`,
   sort by `fetched_at` descending and `.unique(subset=["event_type",
-  "event_id"])`, keeping the latest-fetched version, then re-sort for
-  deterministic order. The subset is `["event_type", "event_id"]` — **not**
+  "event_id"], keep="first")`, keeping the latest-fetched version, then
+  re-sort for deterministic order. `keep="first"` is required because
+  `unique()`'s default `keep="any"` is non-deterministic and may drop the
+  newest version despite the descending sort. The subset is
+  `["event_type", "event_id"]` — **not**
   `["event_id"]` alone as in IBKR — because T212 `order.id` is an integer cast
   to string while dividend/transaction `reference` is a separate string ID
   space; a dividend `reference` of `"12345"` could collide with order id
@@ -57,11 +60,23 @@ was uncaught and would crash any T212 run with both orders and dividends.
   is a boundary check at a different layer (cross-broker correctness), not
   duplicated logic.
 
-- **Fix the `instrument_ccy` concat type mismatch** by casting the Null
-  literals to `pl.Utf8` (`pl.lit(None).cast(pl.Utf8)`) in the orders and
-  transactions transforms, so all endpoints produce String-typed
-  `instrument_ccy` matching the schema and each other. `pl.concat(dfs)` now
-  succeeds across mixed endpoints.
+- **Fix the `instrument_ccy` concat type mismatch** by concatenating the
+  per-endpoint frames with `pl.concat(dfs, how="vertical_relaxed")`, which
+  promotes mismatched column types at the concat boundary (Null → String for
+  `instrument_ccy`, which is `pl.lit(None)` for orders/transactions but
+  `pl.col("tickerCurrency")` for dividends). This replaces per-endpoint
+  `pl.lit(None).cast(pl.Utf8)` casts with a single concat-site setting and
+  protects against future columns that are Null in one endpoint and typed in
+  another.
+
+- **Share the dedup recipe via `dedup_cdc_events`** in
+  `pipeline/connectors/transform_utils.py`. The "sort by `fetched_at`
+  descending → `unique(keep="first")` → log → optional re-sort" pattern is
+  used by both the T212 transform and the `consolidate_cdc_events` boundary
+  check; a single helper keeps them consistent so a future policy change
+  (subset, keep, sort) propagates from one place. IBKR's inline dedup is
+  carried forward unchanged for now (see Constraints); adopting the helper
+  there is a follow-up.
 
 - **No downstream duplicate-`event_id` quality check.** With two active
   `unique()` filters (transform + consolidate) running in the same pipeline, a
@@ -96,8 +111,8 @@ is superseded.
 
 - T212 CDC events appear once per `(event_type, event_id)`; analytics cash sums
   and `event_count` are no longer inflated by duplicates.
-- The `instrument_ccy` cast unblocks `transform_cdc` for T212 accounts that have
-  both orders and dividends (previously a latent crash).
+- The `vertical_relaxed` concat unblocks `transform_cdc` for T212 accounts that
+  have both orders and dividends (previously a latent crash).
 - The consolidate boundary dedup is currently a no-op for IBKR and T212 (both
   dedup at transform) but earns its keep as a regression catch and XTB/future
   guard; cost is one `unique()` per consolidate run.
@@ -120,10 +135,15 @@ is superseded.
   this is the load-bearing proof that `event_type` belongs in the subset (it
   would fail under `["event_id"]` alone) and that mixed-endpoint concat now
   succeeds (it would have hit the Null/String SchemaError before the
-  `instrument_ccy` cast).
+  `vertical_relaxed` concat).
+- `tests/test_trading212_connector.py::TestCdcTransform::test_transform_cdc_dedup_keeps_latest_fetched_version`
+  — two payloads with the same order id but different `fetched_at` and a
+  corrected `walletImpact.netValue`; asserts the latest-fetched
+  `cash_amount` wins. Verified to fail with `keep="last"`, guarding the
+  `keep="first"` contract.
 - `tests/test_consolidate_cdc.py` — existing consolidate tests still pass
   (boundary dedup is a no-op when inputs are already unique).
 - `tests/test_ibkr_connector.py::TestCdcTransform::test_transform_cdc_deduplicates_across_payloads`
   — unchanged, still passes.
-- Full suite: 758 tests pass; `ruff check`/`ruff format` clean; `pyright
+- Full suite: 759 tests pass; `ruff check`/`ruff format` clean; `pyright
   pipeline/ tests/` 0 errors.

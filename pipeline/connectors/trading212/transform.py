@@ -29,6 +29,7 @@ from pipeline.connectors.trading212.client import (
 from pipeline.connectors.transform_utils import (
     build_normalized_table,
     decrypt_cdc_payloads,
+    dedup_cdc_events,
     filter_latest_snapshot,
     finalize_table,
     iter_raw_payloads,
@@ -290,7 +291,11 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             [], cdc_events_normalized_schema, fernet_key, _CDC_ENCRYPT_COLUMNS
         )
 
-    result = pl.concat(dfs)
+    # vertical_relaxed promotes mismatched column types across endpoints at
+    # the concat boundary (e.g. instrument_ccy is Null for orders/transactions
+    # but String for dividends) so per-endpoint casts are not needed.
+    # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
+    result = pl.concat(dfs, how="vertical_relaxed")
 
     # T212 CDC fetches the full order/dividend/transaction history on every
     # run.  Re-fetched pages produce raw payloads with different byte content
@@ -299,20 +304,12 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     # string while dividend/transaction reference is a separate string ID
     # space, so event_type scopes the uniqueness -- keeping the version from
     # the latest fetched_at.  Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
-    before = result.height
-    result = (
-        result.sort("fetched_at", descending=True)
-        .unique(subset=["event_type", "event_id"], keep="first")
-        .sort(["event_type", "event_id"])
+    result = dedup_cdc_events(
+        result,
+        subset=["event_type", "event_id"],
+        sort_after=["event_type", "event_id"],
+        label="T212 CDC",
     )
-    after = result.height
-    if before > after:
-        logger.info(
-            "T212 CDC dedup: removed %d duplicate events (%d → %d)",
-            before - after,
-            before,
-            after,
-        )
 
     return finalize_table(
         result, cdc_events_normalized_schema, fernet_key, _CDC_ENCRYPT_COLUMNS
@@ -422,10 +419,10 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
             [order.struct.field("createdAt"), fill.struct.field("filledAt")]
         ),
         security_ccy=security_ccy,
-        # Cast to Utf8 so orders/transactions match dividends' String-typed
-        # instrument_ccy; otherwise pl.concat across endpoints fails (Null vs
-        # String). Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
-        instrument_ccy=pl.lit(None).cast(pl.Utf8),
+        # Null-typed; pl.concat(how="vertical_relaxed") at the concat site
+        # promotes it to String to match dividends' tickerCurrency.
+        # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
+        instrument_ccy=pl.lit(None),
         cash_amount=cash_amount_security_ccy,
         settle_date=pl.coalesce(
             [fill.struct.field("filledAt"), order.struct.field("createdAt")]
@@ -546,7 +543,8 @@ def _transform_transactions(
         raw_event_type=raw_type,
         event_datetime=pl.col("dateTime").cast(pl.Utf8),
         security_ccy=pl.col("currency").cast(pl.Utf8),
-        instrument_ccy=pl.lit(None).cast(pl.Utf8),
+        # Null-typed; promoted to String by pl.concat(how="vertical_relaxed").
+        instrument_ccy=pl.lit(None),
         cash_amount=amount,
         settle_date=pl.lit(""),
         ticker=pl.lit(""),

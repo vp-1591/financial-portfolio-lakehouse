@@ -18,6 +18,7 @@ import polars as pl
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
+from pipeline.connectors.transform_utils import dedup_cdc_events
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.storage import get_storage
 
@@ -85,23 +86,14 @@ def consolidate_cdc_events() -> pa.Table:
     # check guards against future brokers that skip transform-level dedup and
     # against raw-layer replays that bypass the transform contract.  It also
     # catches the T212 full-history re-fetch class of bug regardless of broker.
-    # keep="first" honors the descending fetched_at sort so the latest version
-    # of each event wins (unique()'s default keep="any" is non-deterministic).
     # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
     df = pl.from_arrow(result)
-    if df.height > 0:
-        before = df.height
-        df = df.sort("fetched_at", descending=True).unique(
-            subset=["broker", "event_type", "event_id"], keep="first"
-        )
-        after = df.height
-        if before > after:
-            logger.info(
-                "CDC consolidate dedup: removed %d duplicate events (%d → %d)",
-                before - after,
-                before,
-                after,
-            )
+    assert isinstance(df, pl.DataFrame)  # pl.from_arrow(pa.Table) -> DataFrame
+    df = dedup_cdc_events(
+        df,
+        subset=["broker", "event_type", "event_id"],
+        label="CDC consolidate",
+    )
 
     output_path = config.normalized_path("cdc_events")
     config.backend.ensure_parent(output_path)
