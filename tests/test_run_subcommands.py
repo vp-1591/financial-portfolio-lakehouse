@@ -8,22 +8,28 @@ the ``cmd_full`` docker-mode orchestrator (parallel connectors + consolidate).
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import boto3
 import pytest
 
+import pipeline.sfn as sfn_mod
+from pipeline import run as run_module
+from pipeline import storage as storage_mod
 from pipeline.connectors.registry import get
 from pipeline.crypto import generate_key
 from pipeline.run import (
     FetchResult,
+    _run_connectors_parallel,
     cmd_full,
     cmd_run_connector,
     cmd_run_consolidate_analytics,
     fetch_connector,
     transform_connector,
 )
-from pipeline.secrets import reset_mode
+from pipeline.secrets import reset_mode, set_mode
 
 # ---------------------------------------------------------------------------
 # Argparse dispatch
@@ -41,9 +47,6 @@ class TestArgparseDispatch:
         (key removed from the commands dict) would raise KeyError instead of
         returning 99, failing this test.
         """
-        import sys
-
-        from pipeline import run as run_module
 
         called: dict[str, bool] = {}
 
@@ -65,10 +68,6 @@ class TestArgparseDispatch:
         bytecode/callable checks pass under that mutation; this real dispatch
         invocation does not.
         """
-        import sys
-
-        from pipeline import run as run_module
-        from pipeline import storage as storage_mod
 
         called: dict[str, bool] = {}
 
@@ -482,7 +481,6 @@ class TestCmdFullDockerMode:
         monkeypatch,
     ) -> None:
         """cmd_full --mode docker calls _run_connectors_parallel then cmd_run_consolidate_analytics."""
-        from pipeline.secrets import set_mode
 
         set_mode("docker")
         args = argparse.Namespace(
@@ -509,7 +507,6 @@ class TestCmdFullDockerMode:
         monkeypatch,
     ) -> None:
         """If _run_connectors_parallel returns non-zero, consolidate is not called."""
-        from pipeline.secrets import set_mode
 
         set_mode("docker")
         args = argparse.Namespace(
@@ -547,7 +544,6 @@ class TestCmdFullSfnTrigger:
         return argparse.Namespace(**defaults)
 
     def _stub_session(self, monkeypatch, has_creds: bool = True) -> MagicMock:
-        import boto3
 
         sess = MagicMock()
         sess.get_credentials.return_value = MagicMock() if has_creds else None
@@ -564,7 +560,6 @@ class TestCmdFullSfnTrigger:
         wait_raises: Exception | None = None,
         details: str = "DETAILS",
     ) -> MagicMock:
-        import pipeline.sfn as sfn_mod
 
         start = MagicMock(return_value="arn:exec")
         monkeypatch.setattr(
@@ -602,7 +597,6 @@ class TestCmdFullSfnTrigger:
     def test_staging_starts_execution(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch)
@@ -620,7 +614,6 @@ class TestCmdFullSfnTrigger:
     def test_prod_starts_execution(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("prod")
         self._stub_session(monkeypatch)
@@ -632,7 +625,6 @@ class TestCmdFullSfnTrigger:
         reset_mode()
 
     def test_with_xtb_errors(self, monkeypatch, capsys: pytest.CaptureFixture) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch)
@@ -645,7 +637,6 @@ class TestCmdFullSfnTrigger:
         reset_mode()
 
     def test_xtb_file_errors(self, monkeypatch, capsys: pytest.CaptureFixture) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch)
@@ -659,7 +650,6 @@ class TestCmdFullSfnTrigger:
     def test_aws_creds_missing_errors(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch, has_creds=False)
@@ -674,7 +664,6 @@ class TestCmdFullSfnTrigger:
     def test_state_machine_not_found_errors(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch)
@@ -689,7 +678,6 @@ class TestCmdFullSfnTrigger:
     def test_wait_succeeded_returns_zero(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch)
@@ -703,7 +691,6 @@ class TestCmdFullSfnTrigger:
     def test_wait_failed_prints_details(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch)
@@ -719,7 +706,6 @@ class TestCmdFullSfnTrigger:
     def test_wait_timeout_returns_one(
         self, monkeypatch, capsys: pytest.CaptureFixture
     ) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("staging")
         self._stub_session(monkeypatch)
@@ -737,7 +723,6 @@ class TestRunConnectorsParallel:
     @patch("pipeline.run.cmd_run_connector", return_value=0)
     @patch("pipeline.run.all_connectors")
     def test_all_connectors_succeed(self, mock_all, mock_rc) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("docker")
         mock_all.return_value = [get("ibkr"), get("trading212")]
@@ -749,7 +734,6 @@ class TestRunConnectorsParallel:
             xtb_file=None,
             mode="docker",
         )
-        from pipeline.run import _run_connectors_parallel
 
         rc = _run_connectors_parallel(args)
         assert rc == 0
@@ -759,7 +743,6 @@ class TestRunConnectorsParallel:
     @patch("pipeline.run.cmd_run_connector", return_value=1)
     @patch("pipeline.run.all_connectors")
     def test_connector_failure_returns_nonzero(self, mock_all, mock_rc, capsys) -> None:
-        from pipeline.secrets import set_mode
 
         set_mode("docker")
         mock_all.return_value = [get("ibkr")]
@@ -771,7 +754,6 @@ class TestRunConnectorsParallel:
             xtb_file=None,
             mode="docker",
         )
-        from pipeline.run import _run_connectors_parallel
 
         rc = _run_connectors_parallel(args)
         assert rc == 1
