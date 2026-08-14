@@ -215,6 +215,39 @@ class TestPositionsChart:
         assert len(bar.y) == 1
         assert bar.y[0] == "VOO"
 
+    def test_same_ticker_across_brokers_is_summed(self) -> None:
+        """Same ticker held at multiple brokers sums into one bar.
+
+        Regression guard for the overlay bug: CASH PLN held at Trading 212
+        (+0.237%) and IBKR (-0.0016%) used to render as two bars on the same
+        y-label. After aggregation it must be a single bar with the net
+        weight (0.2354%).
+        """
+        df = _holdings_with_positions(
+            [
+                {"ticker": "AAPL", "percentage": 50.0, "position_type": "EQUITY"},
+                {"ticker": "CASH PLN", "percentage": 0.237, "position_type": "CASH"},
+                {"ticker": "CASH PLN", "percentage": -0.0016, "position_type": "CASH"},
+            ]
+        )
+        fig = positions_chart(df)
+        bar = fig.data[0]
+
+        # One bar per unique ticker — the duplicated ticker is not overlaid
+        assert len(bar.y) == 2
+        assert list(bar.y) == ["AAPL", "CASH PLN"]  # sorted by percentage desc
+
+        # The summed net weight is plotted, not the two raw values
+        cash_pln_x = bar.x[list(bar.y).index("CASH PLN")]
+        assert round(cash_pln_x, 4) == round(0.237 + (-0.0016), 4)
+        # Neither raw value appears as its own bar
+        assert 0.237 not in list(bar.x)
+        assert -0.0016 not in list(bar.x)
+
+        # The annotation reflects the summed value
+        cash_pln_text = bar.text[list(bar.y).index("CASH PLN")]
+        assert cash_pln_text == "0.2%"
+
 
 # ---------------------------------------------------------------------------
 # allocation_by_currency – donut chart (security_ccy grouping)

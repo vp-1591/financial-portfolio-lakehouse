@@ -47,8 +47,18 @@ def positions_chart(holdings: pl.DataFrame) -> go.Figure:
     if holdings.is_empty():
         return _empty_figure("Positions")
 
-    df = holdings.select("ticker", "percentage", "position_type").sort(
-        "percentage", descending=True
+    # Sum same-ticker rows across brokers so a position held at multiple
+    # brokers shows as a single bar with its net portfolio weight. Without
+    # this, one row per (broker, ticker) overlays multiple bars on the same
+    # y-label (e.g. CASH PLN at +0.2% and -0.0%). A given ticker is the same
+    # instrument across brokers, so position_type is consistent per ticker.
+    df = (
+        holdings.group_by("ticker")
+        .agg(
+            pl.col("percentage").sum(),
+            pl.col("position_type").first(),
+        )
+        .sort("percentage", descending=True)
     )
 
     # Green for EQUITY, amber for CASH, gray for any unknown type
