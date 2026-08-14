@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import pipeline.secrets
 from pipeline.crypto import generate_key
 from pipeline.storage import StorageConfig, use_storage
 from tests.local_backend import LocalBackend
@@ -60,9 +61,6 @@ def _isolate_pipeline_env(monkeypatch, tmp_path):
     # set after its test: ``_config = None`` and ``reset_mode()`` run before
     # AND after every test, so a test running after a docker-mode test always
     # observes the default (None) mode (A2 mechanics 1-2, A3 F4, A7 F36).
-    import pipeline.secrets
-    import pipeline.storage
-
     pipeline.storage._config = None
     pipeline.secrets.reset_mode()
     yield
@@ -85,8 +83,6 @@ def docker_mode():
     after each test, so this fixture is only needed for tests that
     exercise code that calls get_mode() / is_demo() / resolve_storage().
     """
-    import pipeline.secrets
-
     pipeline.secrets.set_mode("docker")
     yield
     pipeline.secrets.reset_mode()

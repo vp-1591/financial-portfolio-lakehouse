@@ -7,6 +7,7 @@ matching the actual schemas used by the XTB connector.
 from __future__ import annotations
 
 import hashlib
+import io
 import zipfile
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -24,7 +25,6 @@ def _build_minimal_xlsx_bytes() -> bytes:
     Creates a workbook with OPEN POSITION and CASH OPERATION sheets
     containing enough data for the XTB parser to produce positions.
     """
-    import io
 
     def _cell(ref: str, value: object) -> str:
         if isinstance(value, (int, float)):

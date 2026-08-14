@@ -10,7 +10,10 @@ Covers bugs found during end-to-end runs:
 
 from __future__ import annotations
 
-from datetime import UTC
+import base64
+import json
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,11 +21,29 @@ import pyarrow as pa
 import pytest
 from deltalake import write_deltalake
 
+from pipeline import run as run_module
+from pipeline.connectors.registry import get
+from pipeline.connectors.trading212.client import Trading212Client, basic_auth_header
+from pipeline.connectors.trading212.transform import (
+    transform_snapshot as t212_transform_snapshot,
+)
+from pipeline.connectors.xtb.transform import (
+    transform_snapshot as xtb_transform_snapshot,
+)
 from pipeline.crypto import encrypt, encrypt_float, generate_key
-from pipeline.raw.ingest import encrypt_raw_payloads
+from pipeline.normalized.consolidate import (
+    CurrencyConverter,
+    Holding,
+    consolidate_holdings,
+)
+from pipeline.normalized.models import snapshot_normalized_schema
+from pipeline.query import clear_table_cache, refresh
+from pipeline.raw.ingest import encrypt_raw_payloads, ingest_raw
 from pipeline.raw.models import RAW_SCHEMA
+from pipeline.secrets import reset_mode
 from pipeline.storage import StorageConfig, use_storage
 from tests.local_backend import LocalBackend
+from tests.test_xtb_connector import _build_xlsx_bytes
 
 
 class TestEncryptRawPayloadsSetColumn:
@@ -83,7 +104,6 @@ class TestT212CdcKwargsSeparation:
     def test_cdc_and_snapshot_use_same_kwargs(
         self, mock_snapshot: MagicMock, mock_cdc: MagicMock
     ) -> None:
-        from pipeline.connectors.registry import get
 
         connector = get("trading212")
 
@@ -138,18 +158,12 @@ class TestT212BasicAuth:
     """
 
     def test_basic_auth_header_format(self) -> None:
-        import base64
-
-        from pipeline.connectors.trading212.client import basic_auth_header
 
         result = basic_auth_header("my-api-key", "my-api-secret")
         expected = base64.b64encode(b"my-api-key:my-api-secret").decode("ascii")
         assert result == f"Basic {expected}"
 
     def test_basic_auth_header_strips_whitespace(self) -> None:
-        import base64
-
-        from pipeline.connectors.trading212.client import basic_auth_header
 
         result = basic_auth_header("  test-key-123  ", "  test-secret-456  ")
         expected = base64.b64encode(b"test-key-123:test-secret-456").decode("ascii")
@@ -162,9 +176,6 @@ class TestT212BasicAuth:
         The real cause was an IP-restricted API key. This test ensures
         the auth method stays as HTTP Basic with key:secret encoding.
         """
-        import base64
-
-        from pipeline.connectors.trading212.client import basic_auth_header
 
         header = basic_auth_header("mykey", "mysecret")
         # Must start with "Basic " — never "Bearer " or a raw key
@@ -174,9 +185,6 @@ class TestT212BasicAuth:
 
     @patch("urllib.request.urlopen")
     def test_client_sends_basic_auth(self, mock_urlopen: MagicMock) -> None:
-        import base64
-
-        from pipeline.connectors.trading212.client import Trading212Client
 
         # Mock the response
         mock_response = MagicMock()
@@ -209,10 +217,7 @@ class TestTransformDecryptsPayloads:
 
     def test_xtb_transform_decrypts_encrypted_payload(self) -> None:
         """XTB transform_snapshot must decrypt .xlsx payloads from raw Delta tables."""
-        from pipeline.connectors.xtb.transform import transform_snapshot
-
         key = generate_key()
-        from tests.test_xtb_connector import _build_xlsx_bytes
 
         xlsx_bytes = _build_xlsx_bytes(include_isin=True)
         encrypted_payload = encrypt(xlsx_bytes, key)
@@ -229,18 +234,14 @@ class TestTransformDecryptsPayloads:
             schema=RAW_SCHEMA,
         )
 
-        result = transform_snapshot(raw, key)
+        result = xtb_transform_snapshot(raw, key)
         assert result.num_rows >= 1, (
             "XTB transform should produce rows from encrypted .xlsx payload"
         )
 
     def test_t212_transform_decrypts_encrypted_payload(self) -> None:
         """T212 transform_snapshot must decrypt payloads from raw Delta tables."""
-        from pipeline.connectors.trading212.transform import transform_snapshot
-
         key = generate_key()
-        import json
-        from datetime import datetime
 
         summary = {"currencyCode": "EUR", "total": 100.0}
         positions = [{"ticker": "VUAA", "quantity": 1, "currentPrice": 100.0}]
@@ -260,7 +261,7 @@ class TestTransformDecryptsPayloads:
             schema=RAW_SCHEMA,
         )
 
-        result = transform_snapshot(raw, key)
+        result = t212_transform_snapshot(raw, key)
         assert result.num_rows >= 1, (
             "T212 transform should produce rows from encrypted payload"
         )
@@ -277,8 +278,6 @@ class TestDirectoryCreation:
     def test_ingest_raw_creates_parent_dirs(
         self, tmp_path: Path, tmp_data_dir, docker_mode
     ) -> None:
-
-        from pipeline.raw.ingest import ingest_raw
 
         key = generate_key()
         table_path = str(tmp_path / "raw" / "test_broker" / "snapshot")
@@ -303,11 +302,6 @@ class TestDirectoryCreation:
     def test_consolidate_creates_parent_dirs(
         self, tmp_path: Path, tmp_data_dir, docker_mode
     ) -> None:
-        from pipeline.normalized.consolidate import (
-            CurrencyConverter,
-            Holding,
-            consolidate_holdings,
-        )
 
         key = generate_key()
         table_path = str(tmp_path / "normalized" / "consolidated_holdings")
@@ -342,9 +336,6 @@ class TestCliDispatchIntegration:
 
     def _write_ibkr_normalized(self, data: Path, key: bytes) -> None:
         """Write a one-row IBKR normalized Delta table for query tests."""
-        from datetime import datetime
-
-        from pipeline.normalized.models import snapshot_normalized_schema
 
         now = datetime.now(UTC)
         table = pa.table(
@@ -377,11 +368,6 @@ class TestCliDispatchIntegration:
         ``main()`` dispatches to the real ``cmd_query`` (not a stub), which
         queries a real Delta table via DuckDB and prints results.
         """
-        import sys
-
-        from pipeline import run as run_module
-        from pipeline.query import clear_table_cache, refresh
-        from pipeline.secrets import reset_mode
 
         key = generate_key()
         data = tmp_path / "data"
@@ -445,11 +431,6 @@ class TestCliDispatchIntegration:
         50000) fails this test because ``"5000.0"`` is not a substring of
         ``"50000.0"``.
         """
-        import sys
-
-        from pipeline import run as run_module
-        from pipeline.query import clear_table_cache, refresh
-        from pipeline.secrets import reset_mode
 
         key = generate_key()
         data = tmp_path / "data"

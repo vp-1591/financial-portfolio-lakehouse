@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import json
 import urllib.error
 from unittest.mock import MagicMock, patch
 
@@ -172,7 +173,6 @@ class TestRequestJsonRetry:
 
     def _mock_ok_response(self, data: dict | None = None) -> MagicMock:
         """Create a mock urllib response that returns JSON data."""
-        import json
 
         response = MagicMock()
         response.read.return_value = json.dumps(

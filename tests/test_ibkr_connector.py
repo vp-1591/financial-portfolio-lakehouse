@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
+import polars as pl
 import pyarrow as pa
 import pytest
-
-if TYPE_CHECKING:
-    import polars as pl
 
 from pipeline.connectors.ibkr import transform
 from pipeline.connectors.ibkr.client import (
@@ -22,8 +22,19 @@ from pipeline.connectors.ibkr.client import (
     parse_conversion_rates,
     parse_positions,
 )
-from pipeline.crypto import encrypt, generate_key
+from pipeline.connectors.ibkr.fetch import fetch_cdc_via_flex
+from pipeline.connectors.ibkr.transform import (
+    _classify_ibkr_cash_type,
+    _deterministic_event_id,
+    _inject_demo_deposit,
+    _normalize_ibkr_datetime,
+    transform_cdc,
+)
+from pipeline.connectors.registry import get
+from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.raw.models import RAW_SCHEMA
+from pipeline.secrets import reset_mode, set_mode
+from tests.fixtures.ibkr import ibkr_raw_cdc, ibkr_raw_positions
 
 
 class TestClientParsing:
@@ -212,7 +223,6 @@ class TestClientParsing:
   <ErrorMessage>Token is invalid.</ErrorMessage>
 </FlexStatementResponse>
 """
-        from pipeline.connectors.ibkr.client import IbkrError
 
         client = IbkrFlexClient(token="bad-token", query_id="999999")
         client._request = lambda path, params: response_xml  # type: ignore[assignment]
@@ -499,7 +509,6 @@ class TestFlexTransformSnapshot:
         fernet_key: bytes | None = None,
     ) -> pa.Table:
         """Build a raw-layer table with a Flex XML payload."""
-        import hashlib
 
         key = fernet_key or self._fernet_key
 
@@ -639,7 +648,6 @@ class TestFlexTransformSnapshot:
         self, fernet_key: bytes
     ) -> None:
         """When only BASE_SUMMARY exists (no per-currency entries), a CASH row is produced."""
-        from pipeline.crypto import decrypt_float
 
         xml_str = (
             '<FlexQueryResponse queryName="test" type="AF">'
@@ -750,9 +758,6 @@ class TestConnectorFlexDispatch:
 
     def test_fetch_snapshot_uses_flex_when_token_provided(self) -> None:
         """When flex_token is provided, IbkrConnector should use fetch_snapshot_via_flex."""
-        from unittest.mock import MagicMock, patch
-
-        from pipeline.connectors.registry import get
 
         with patch(
             "pipeline.connectors.ibkr.fetch.fetch_snapshot_via_flex"
@@ -779,7 +784,6 @@ class TestConnectorFlexDispatch:
         self, fernet_key: bytes
     ) -> None:
         """IbkrConnector.transform_snapshot should use Flex transform for flex source data."""
-        from pipeline.connectors.registry import get
 
         xml_str = (
             '<FlexQueryResponse queryName="test" type="AF">'
@@ -794,7 +798,6 @@ class TestConnectorFlexDispatch:
             "</FlexStatements>"
             "</FlexQueryResponse>"
         )
-        import hashlib
 
         xml_bytes = xml_str.encode("utf-8")
         encrypted_payload = encrypt(xml_bytes, fernet_key)
@@ -831,9 +834,6 @@ class TestIbkrExtractHoldingsValue:
 
     @staticmethod
     def _to_decrypted_df(table: pa.Table, fernet_key: bytes) -> pl.DataFrame:
-        import polars as pl
-
-        from pipeline.crypto import decrypt_float
 
         # Convert the Arrow table to a polars DataFrame and add the
         # security_value_decrypted column that extract_holdings reads.
@@ -849,10 +849,6 @@ class TestIbkrExtractHoldingsValue:
 
     def test_extract_holdings_value_matches_fixture(self) -> None:
         """extract_holdings produces Holding.value matching known fixture amounts."""
-
-        from pipeline.connectors.registry import get
-        from pipeline.crypto import generate_key
-        from tests.fixtures.ibkr import ibkr_raw_positions
 
         fernet_key = generate_key()
         raw = ibkr_raw_positions(fernet_key=fernet_key)
@@ -893,9 +889,6 @@ class TestIbkrExtractHoldingsValue:
         Without the transform.py fix (``assetCategory`` instead of
         ``assetClass``), this defaults to 'STK'.
         """
-        from pipeline.connectors.registry import get
-        from pipeline.crypto import generate_key
-        from tests.fixtures.ibkr import ibkr_raw_positions
 
         fernet_key = generate_key()
         raw = ibkr_raw_positions(fernet_key=fernet_key)
@@ -914,9 +907,6 @@ class TestIbkrExtractHoldingsValue:
         Without the transform.py fix (``position`` instead of ``quantity``),
         the fallback yields 0 and the position is silently dropped.
         """
-        from pipeline.connectors.registry import get
-        from pipeline.crypto import generate_key
-        from tests.fixtures.ibkr import ibkr_raw_positions
 
         fernet_key = generate_key()
         raw = ibkr_raw_positions(fernet_key=fernet_key)
@@ -934,9 +924,6 @@ class TestCdcFetch:
 
     def test_fetch_cdc_produces_raw_table_with_flex_cdc_source(self) -> None:
         """fetch_cdc_via_flex produces a raw table with source='flex_cdc'."""
-        from unittest.mock import MagicMock, patch
-
-        from pipeline.connectors.ibkr.fetch import fetch_cdc_via_flex
 
         # Build a minimal Flex XML response
         xml_str = (
@@ -979,8 +966,6 @@ class TestCdcFetch:
 
     def test_fetch_cdc_kwargs_with_dedicated_query_id(self, monkeypatch) -> None:
         """When IBKR_FLEX_CDC_QUERY_ID is set, it takes precedence."""
-        from pipeline.connectors.registry import get
-        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
@@ -997,8 +982,6 @@ class TestCdcFetch:
         self, monkeypatch
     ) -> None:
         """When IBKR_FLEX_CDC_QUERY_ID is not set, fall back to IBKR_FLEX_QUERY_ID."""
-        from pipeline.connectors.registry import get
-        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
@@ -1013,8 +996,6 @@ class TestCdcFetch:
 
     def test_fetch_cdc_kwargs_returns_empty_when_no_token(self, monkeypatch) -> None:
         """When IBKR_FLEX_TOKEN is not set, returns empty dict."""
-        from pipeline.connectors.registry import get
-        from pipeline.secrets import reset_mode, set_mode
 
         connector = get("ibkr")
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
@@ -1036,8 +1017,6 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """IBKR CDC transform produces TRADE and DIVIDEND events from Flex XML."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -1060,8 +1039,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_event_id_stability(self, fernet_key: bytes) -> None:
         """Deterministic event IDs are consistent across repeated transforms."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result1 = transform_cdc(raw, fernet_key)
@@ -1082,11 +1059,6 @@ class TestCdcTransform:
         proving the fix. (Demo bronze was not queried here; the fixture's
         canonical IDs stand in for real data per the F1 acceptance note.)
         """
-        from pipeline.connectors.ibkr.transform import (
-            _deterministic_event_id,
-            transform_cdc,
-        )
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -1130,9 +1102,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_encrypts_value_columns(self, fernet_key: bytes) -> None:
         """IBKR CDC transform encrypts value columns correctly."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from pipeline.crypto import decrypt_float
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -1149,8 +1118,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_skips_snapshot_source(self, fernet_key: bytes) -> None:
         """IBKR CDC transform skips rows with source='flex' (snapshot data)."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from tests.fixtures.ibkr import ibkr_raw_positions
 
         raw = ibkr_raw_positions(fernet_key=fernet_key)  # source="flex"
         result = transform_cdc(raw, fernet_key)
@@ -1161,13 +1128,10 @@ class TestCdcTransform:
         self, fernet_key: bytes
     ) -> None:
         """When multiple raw payloads contain the same IBKR events, dedup by event_id."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         # Duplicate the payload row with a different fetched_at — simulates
         # two pipeline runs fetching the same Flex history.
-        import pyarrow as pa
 
         duplicated = pa.concat_tables([raw, raw])
 
@@ -1181,8 +1145,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_normalises_compact_datetime(self, fernet_key: bytes) -> None:
         """IBKR compact datetime formats are normalised to ISO 8601."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -1196,8 +1158,6 @@ class TestCdcTransform:
 
     def test_transform_cdc_settle_date_normalized(self, fernet_key: bytes) -> None:
         """IBKR settle_date compact formats are normalised to ISO 8601."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         raw = ibkr_raw_cdc(fernet_key=fernet_key)
         result = transform_cdc(raw, fernet_key)
@@ -1213,34 +1173,28 @@ class TestNormalizeIbkrDatetime:
     """Tests for _normalize_ibkr_datetime helper."""
 
     def test_compact_date(self) -> None:
-        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert _normalize_ibkr_datetime("20260204") == "2026-02-04T00:00:00Z"
 
     def test_compact_datetime_with_semicolon(self) -> None:
-        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert _normalize_ibkr_datetime("20260702;022904") == "2026-07-02T02:29:04Z"
 
     def test_iso_datetime_unchanged(self) -> None:
-        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert _normalize_ibkr_datetime("2026-01-15 10:30:00") == "2026-01-15 10:30:00"
 
     def test_iso_date_unchanged(self) -> None:
-        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert _normalize_ibkr_datetime("2026-03-01") == "2026-03-01"
 
     def test_iso_with_tz_unchanged(self) -> None:
-        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert (
             _normalize_ibkr_datetime("2026-01-15T10:30:00Z") == "2026-01-15T10:30:00Z"
         )
 
     def test_empty_string_unchanged(self) -> None:
-        from pipeline.connectors.ibkr.transform import _normalize_ibkr_datetime
 
         assert _normalize_ibkr_datetime("") == ""
 
@@ -1292,9 +1246,6 @@ class TestIbkrFeeConversion:
 
     def _build_raw_table(self, xml_str: str, fernet_key: bytes) -> pa.Table:
         """Build a raw-layer table with a Flex XML payload."""
-        import hashlib
-
-        from pipeline.crypto import encrypt
 
         xml_bytes = xml_str.encode("utf-8")
         encrypted_payload = encrypt(xml_bytes, fernet_key)
@@ -1315,8 +1266,6 @@ class TestIbkrFeeConversion:
 
     def test_trade_fee_same_currency(self, fernet_key: bytes) -> None:
         """When ibCommissionCurrency matches trade currency, fee is unchanged."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from pipeline.crypto import decrypt_float
 
         xml_str = self._build_trade_xml(
             trade_currency="USD",
@@ -1333,8 +1282,6 @@ class TestIbkrFeeConversion:
 
     def test_trade_fee_commission_in_base_currency(self, fernet_key: bytes) -> None:
         """When commission currency matches base currency, fee is converted via 1/fxRateToBase."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from pipeline.crypto import decrypt_float
 
         # EUR account, USD trade, commission in EUR (base), fxRateToBase=0.9 (USD→EUR)
         # fee_amount = 1.0 EUR / 0.9 = 1.111... USD
@@ -1355,10 +1302,6 @@ class TestIbkrFeeConversion:
 
     def test_trade_fee_cross_currency_warning(self, fernet_key: bytes, caplog) -> None:
         """When commission currency differs from both trade and base, fee is left unconverted with a warning."""
-        import logging
-
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from pipeline.crypto import decrypt_float
 
         # EUR account, USD trade, commission in GBP (neither trade nor base currency)
         xml_str = self._build_trade_xml(
@@ -1390,87 +1333,70 @@ class TestClassifyIbkrCashType:
     """Tests for IBKR CashTransaction type → normalized event_type mapping."""
 
     def test_dividends(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Dividends", 42.5) == "DIVIDEND"
 
     def test_payment_in_lieue(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("PaymentInLieue", 10.0) == "DIVIDEND"
 
     def test_withholding_tax(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Withholding Tax", -5.0) == "TAX"
 
     def test_871m_withholding(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("871(m) Withholding", -3.0) == "TAX"
 
     def test_deposits_positive_is_deposit(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Deposits/Withdrawals", 1000.0) == "DEPOSIT"
 
     def test_deposits_zero_is_deposit(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Deposits/Withdrawals", 0.0) == "DEPOSIT"
 
     def test_deposits_negative_is_withdrawal(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Deposits/Withdrawals", -500.0) == "WITHDRAWAL"
 
     def test_broker_interest_received(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Broker Interest Received", 12.0) == "INTEREST"
 
     def test_broker_interest_paid(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Broker Interest Paid", -5.0) == "INTEREST"
 
     def test_bond_interest_received(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Bond Interest Received", 25.0) == "INTEREST"
 
     def test_bond_interest_paid(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Bond Interest Paid", -5.0) == "INTEREST"
 
     def test_broker_fees(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Broker Fees", -2.0) == "FEE"
 
     def test_other_fees(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Other Fees", -1.0) == "FEE"
 
     def test_commission_adjustments(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Commission Adjustments", -0.5) == "FEE"
 
     def test_other_income(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Other Income", 5.0) == "ADJUSTMENT"
 
     def test_price_adjustments(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("Price Adjustments", 10.0) == "ADJUSTMENT"
 
     def test_unknown_type_falls_through(self) -> None:
-        from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
         assert _classify_ibkr_cash_type("SomeNewType", 42.0) == "UNKNOWN"
 
@@ -1507,7 +1433,6 @@ class TestInjectDemoDeposit:
 
     def test_no_injection_when_not_demo(self) -> None:
         """When is_demo=False, records are returned unchanged."""
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
         result = _inject_demo_deposit(
@@ -1518,7 +1443,6 @@ class TestInjectDemoDeposit:
 
     def test_injection_adds_deposit_when_demo(self) -> None:
         """When is_demo=True, a DEPOSIT record is added for each account."""
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
         result = _inject_demo_deposit(
@@ -1539,7 +1463,6 @@ class TestInjectDemoDeposit:
 
     def test_deposit_date_before_earliest_event(self) -> None:
         """The deposit date is one day before the earliest event_datetime."""
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records(event_datetime="2026-06-15T10:30:00Z")
         result = _inject_demo_deposit(
@@ -1552,7 +1475,6 @@ class TestInjectDemoDeposit:
 
     def test_deposit_date_with_compact_datetime(self) -> None:
         """Deposit date calculation works with IBKR compact datetime format."""
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records(event_datetime="20260301")
         # After normalization this becomes 2026-03-01T00:00:00Z
@@ -1567,7 +1489,6 @@ class TestInjectDemoDeposit:
 
     def test_fallback_date_when_no_records(self) -> None:
         """When no records exist but accounts are known, deposit still gets injected."""
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         result = _inject_demo_deposit(
             [], is_demo=True, base_currency_by_account={"U999": "EUR"}
@@ -1585,7 +1506,6 @@ class TestInjectDemoDeposit:
         This is critical: account U111 trades USD stocks but its base
         currency is EUR — the deposit must be EUR.
         """
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         now = datetime.now(UTC)
         records = [
@@ -1655,7 +1575,6 @@ class TestInjectDemoDeposit:
         base_currency_by_account explicitly so deposits always use the
         account's true base currency.
         """
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         # Account U999 is EUR-based but its only trade is in USD.
         records = self._make_records(account_id="U999", security_ccy="USD")
@@ -1674,7 +1593,6 @@ class TestInjectDemoDeposit:
 
     def test_deterministic_event_id_is_stable(self) -> None:
         """Calling _inject_demo_deposit twice produces the same event_ids."""
-        from pipeline.connectors.ibkr.transform import _inject_demo_deposit
 
         records = self._make_records()
         bca = {"U123456": "EUR"}
@@ -1692,8 +1610,6 @@ class TestInjectDemoDeposit:
 
     def test_transform_cdc_with_demo_flag(self) -> None:
         """transform_cdc with is_demo=True injects a synthetic deposit."""
-        from pipeline.connectors.ibkr.transform import transform_cdc
-        from tests.fixtures.ibkr import ibkr_raw_cdc
 
         fernet_key = generate_key()
         raw = ibkr_raw_cdc(fernet_key=fernet_key)

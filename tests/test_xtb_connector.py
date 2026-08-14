@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import tempfile
 import uuid
 import zipfile
 from collections.abc import Mapping
@@ -12,6 +13,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
+from pipeline.connectors.xtb.fetch import _read_file_bytes, fetch_cdc, fetch_snapshot
 from pipeline.connectors.xtb.parser import (
     XtbError,
     XtbPosition,
@@ -180,7 +182,6 @@ def _build_xlsx_bytes(
     include_isin: bool = False, include_cash_ops: bool = False
 ) -> bytes:
     """Build minimal .xlsx bytes for transform tests."""
-    import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / f"test-{uuid.uuid4().hex}.xlsx"
@@ -380,8 +381,6 @@ class TestFetchFromS3:
             lambda uri: (xlsx_bytes, "report.xlsx"),
         )
 
-        from pipeline.connectors.xtb.fetch import fetch_snapshot
-
         table = fetch_snapshot("s3://bucket/pipeline/staging/xtb/report.xlsx")
         assert table.num_rows == 1
         assert table.column("source_file")[0].as_py() == "report.xlsx"
@@ -394,8 +393,6 @@ class TestFetchFromS3:
             lambda uri: (xlsx_bytes, "cash_ops.xlsx"),
         )
 
-        from pipeline.connectors.xtb.fetch import fetch_cdc
-
         table = fetch_cdc("s3://bucket/pipeline/staging/xtb/cash_ops.xlsx")
         assert table.num_rows == 1
         assert table.column("source_file")[0].as_py() == "cash_ops.xlsx"
@@ -403,7 +400,6 @@ class TestFetchFromS3:
 
     def test_fetch_snapshot_local_path_still_works(self, tmp_path: Path) -> None:
         """Local file paths are not affected by S3 support."""
-        from pipeline.connectors.xtb.fetch import fetch_snapshot
 
         report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report)
@@ -415,7 +411,6 @@ class TestFetchFromS3:
     def test_read_file_bytes_s3_extracts_filename(
         self, xlsx_bytes: bytes, monkeypatch
     ) -> None:
-        from pipeline.connectors.xtb.fetch import _read_file_bytes
 
         monkeypatch.setattr(
             "pipeline.s3.read_s3_bytes",
@@ -429,7 +424,6 @@ class TestFetchFromS3:
         assert filename == "nested_report.xlsx"
 
     def test_read_file_bytes_local_path(self, tmp_path: Path) -> None:
-        from pipeline.connectors.xtb.fetch import _read_file_bytes
 
         report = tmp_path / "xtb-test.xlsx"
         write_xtb_workbook(report)
@@ -443,7 +437,6 @@ class TestFetchFromS3:
         self, xlsx_bytes: bytes, monkeypatch
     ) -> None:
         """EventBridge delivers percent-encoded S3 keys; _read_file_bytes decodes them."""
-        from pipeline.connectors.xtb.fetch import _read_file_bytes
 
         captured_uris: list[str] = []
 
@@ -465,7 +458,6 @@ class TestFetchFromS3:
         self, xlsx_bytes: bytes, monkeypatch
     ) -> None:
         """A key with a literal % should not be double-decoded."""
-        from pipeline.connectors.xtb.fetch import _read_file_bytes
 
         captured_uris: list[str] = []
 
@@ -483,7 +475,6 @@ class TestFetchFromS3:
         self, xlsx_bytes: bytes, monkeypatch
     ) -> None:
         """Multiple percent-encoded characters in a single key are all decoded."""
-        from pipeline.connectors.xtb.fetch import _read_file_bytes
 
         captured_uris: list[str] = []
 

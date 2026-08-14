@@ -17,6 +17,7 @@ from deltalake import DeltaTable, write_deltalake
 
 from pipeline.connectors.transform_utils import build_normalized_table
 from pipeline.crypto import generate_key
+from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.local_backend import LocalBackend
@@ -110,7 +111,6 @@ class TestConsolidateCdc:
 
     def test_consolidate_merges_all_brokers(self, fernet_key: bytes) -> None:
         """Consolidation merges rows from required + optional broker CDC tables."""
-        from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -180,7 +180,6 @@ class TestConsolidateCdc:
         self, fernet_key: bytes
     ) -> None:
         """Consolidation raises RuntimeError when a required broker CDC table is missing."""
-        from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -227,7 +226,6 @@ class TestConsolidateCdc:
         self, fernet_key: bytes
     ) -> None:
         """Consolidation raises RuntimeError when a required broker CDC table is empty."""
-        from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -271,7 +269,6 @@ class TestConsolidateCdc:
 
     def test_consolidate_skips_xtb_when_missing(self, fernet_key: bytes) -> None:
         """XTB CDC table is optional: consolidation succeeds even if it's missing."""
-        from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -332,7 +329,6 @@ class TestConsolidateCdc:
 
     def test_consolidate_skips_xtb_when_empty(self, fernet_key: bytes) -> None:
         """XTB CDC table is optional: consolidation succeeds even if it's empty."""
-        from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -403,7 +399,6 @@ class TestConsolidateCdc:
         alongside the new rows (append).  Catches the
         ``mode="overwrite" -> "append"`` mutation (A2 D2).
         """
-        from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
         storage = self._real_storage(tmp_path)
 
@@ -496,7 +491,6 @@ class TestConsolidateCdc:
         event schema is identical to every other broker's, so no F3 fixture
         is required.
         """
-        from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
 
         self._real_storage(tmp_path)
 

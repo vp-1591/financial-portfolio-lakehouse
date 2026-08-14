@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 import pyarrow as pa
 import pytest
+from deltalake import DeltaTable, write_deltalake
 
 from pipeline.connectors.transform_utils import build_normalized_table
 from pipeline.crypto import decrypt_float, generate_key
+from pipeline.normalized.consolidate import CurrencyConverter
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.normalized.normalize import normalize_currency
+from pipeline.secrets import set_mode
 
 
 def _make_cdc_table(
@@ -18,7 +21,6 @@ def _make_cdc_table(
     fernet_key: bytes,
 ) -> pa.Table:
     """Build a CDC events table from event dicts."""
-    from datetime import datetime
 
     now = datetime.now(UTC)
     records = []
@@ -70,7 +72,6 @@ class TestNormalizeCurrency:
     @pytest.fixture(autouse=True)
     def _setup_storage(self, tmp_data_dir):
         """Set up storage config and mode for all normalize_currency tests."""
-        from pipeline.secrets import set_mode
 
         set_mode("docker")
 
@@ -83,12 +84,9 @@ class TestNormalizeCurrency:
         )
 
         # Write the Delta table
-        from deltalake import write_deltalake
 
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
 
@@ -123,12 +121,8 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        from deltalake import write_deltalake
-
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
 
@@ -160,12 +154,8 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        from deltalake import write_deltalake
-
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.85})
 
@@ -212,12 +202,8 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        from deltalake import write_deltalake
-
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.90, "GBP": 1.15})
 
@@ -281,12 +267,8 @@ class TestNormalizeCurrency:
             schema=cdc_events_normalized_schema,
         )
 
-        from deltalake import write_deltalake
-
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, empty_table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         converter = CurrencyConverter("EUR")
 
@@ -302,8 +284,6 @@ class TestNormalizeCurrency:
         """When CDC events table doesn't exist, raises FileNotFoundError."""
         fernet_key = generate_key()
 
-        from pipeline.normalized.consolidate import CurrencyConverter
-
         converter = CurrencyConverter("EUR")
 
         with pytest.raises(FileNotFoundError, match="CDC events table not found"):
@@ -316,8 +296,6 @@ class TestNormalizeCurrency:
     def test_null_cash_amount_handled_gracefully(self, tmp_path) -> None:
         """Rows with null cash_amount get null target_value and target_fx_rate."""
         fernet_key = generate_key()
-
-        from datetime import datetime
 
         now = datetime.now(UTC)
         records = [
@@ -349,8 +327,6 @@ class TestNormalizeCurrency:
         ]
 
         # Build a table with null cash_amount manually
-        from pipeline.connectors.transform_utils import build_normalized_table
-
         table = build_normalized_table(
             records,
             cdc_events_normalized_schema,
@@ -358,12 +334,8 @@ class TestNormalizeCurrency:
             encrypt_columns=["cash_amount"],
         )
 
-        from deltalake import write_deltalake
-
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
 
@@ -398,12 +370,8 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        from deltalake import write_deltalake
-
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         # GBP→EUR rate of 1.17 means GBX→EUR rate of 0.0117
         converter = CurrencyConverter("EUR", manual_rates={"GBP": 1.17})
@@ -431,7 +399,6 @@ class TestNormalizeCurrency:
         accumulated).  Catches the ``mode="overwrite" -> "append"`` mutation
         (A2 D3).
         """
-        from deltalake import DeltaTable, write_deltalake
 
         fernet_key = generate_key()
         table = _make_cdc_table(
@@ -441,8 +408,6 @@ class TestNormalizeCurrency:
 
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
-
-        from pipeline.normalized.consolidate import CurrencyConverter
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
 

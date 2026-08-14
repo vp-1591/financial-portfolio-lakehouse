@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import pipeline.storage
 from pipeline.secrets import (
     REQUIRED_SECRETS,
     REQUIRED_SECRETS_S3,
@@ -27,13 +28,11 @@ class TestInjectSecrets:
 
     def setup_method(self):
         """Reset module-level state before each test."""
-        import pipeline.storage
 
         pipeline.storage._config = None
 
     def teardown_method(self):
         """Clean up env vars after each test."""
-        import pipeline.storage
 
         pipeline.storage._config = None
 
@@ -109,13 +108,11 @@ class TestLoadEnv:
 
     def setup_method(self):
         """Reset module-level state before each test."""
-        import pipeline.storage
 
         pipeline.storage._config = None
 
     def teardown_method(self):
         """Clean up env vars after each test."""
-        import pipeline.storage
 
         pipeline.storage._config = None
 
@@ -326,12 +323,10 @@ class TestInjectSecretsS3Validation:
     """Test that inject_secrets validates S3 secrets only for staging/prod modes."""
 
     def setup_method(self):
-        import pipeline.storage
 
         pipeline.storage._config = None
 
     def teardown_method(self):
-        import pipeline.storage
 
         pipeline.storage._config = None
 

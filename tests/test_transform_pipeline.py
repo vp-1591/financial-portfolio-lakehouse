@@ -11,10 +11,11 @@ from typing import ClassVar
 
 import pyarrow as pa
 import pytest
-from deltalake import write_deltalake
+from deltalake import DeltaTable, write_deltalake
 
 from pipeline.connectors.registry import get
 from pipeline.crypto import decrypt_float, generate_key
+from pipeline.normalized.models import snapshot_normalized_schema
 from pipeline.storage import StorageConfig, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot, ibkr_raw_positions
 from tests.fixtures.trading212 import t212_normalized_snapshot, t212_raw_snapshot
@@ -71,7 +72,6 @@ class TestIBKRTransform:
         raw_table = ibkr_raw_positions(fernet_key=fernet_key)
         connector = get("ibkr")
         result = connector.transform_snapshot(raw_table, fernet_key)
-        from pipeline.normalized.models import snapshot_normalized_schema
 
         assert result.schema.equals(snapshot_normalized_schema)
 
@@ -127,7 +127,6 @@ class TestT212Transform:
         raw_table = t212_raw_snapshot(fernet_key=fernet_key)
         connector = get("trading212")
         result = connector.transform_snapshot(raw_table, fernet_key)
-        from pipeline.normalized.models import snapshot_normalized_schema
 
         assert result.schema.equals(snapshot_normalized_schema)
 
@@ -170,7 +169,6 @@ class TestXTBTransform:
         raw_table = xtb_raw_snapshot(fernet_key=fernet_key)
         connector = get("xtb")
         result = connector.transform_snapshot(raw_table, fernet_key)
-        from pipeline.normalized.models import snapshot_normalized_schema
 
         assert result.schema.equals(snapshot_normalized_schema)
 
@@ -193,8 +191,6 @@ class TestNormalizedFixtureWrite:
         table = snapshot_factory(fernet_key=fernet_key)
         path = str(tmp_path / "data" / "normalized" / f"{broker}_snapshot")
         write_deltalake(path, table, mode="overwrite")
-
-        from deltalake import DeltaTable
 
         dt = DeltaTable(path)
         read_back = dt.to_pyarrow_table()
