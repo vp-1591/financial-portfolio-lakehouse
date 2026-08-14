@@ -16,6 +16,7 @@ import pyarrow as pa
 import pytest
 from deltalake import DeltaTable, write_deltalake
 
+import pipeline.migrations.migrate_snapshot_schema_unify as mod
 from pipeline.migrations.migrate_snapshot_schema_unify import (
     rename_name_to_description,
 )
@@ -134,7 +135,6 @@ def test_rename_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> N
     """An auth/region/permission error opening an existing table is NOT
     swallowed as 'absent' (only TableNotFoundError is) -- it propagates so
     main() exits non-zero, the signal a pre-deploy gate needs."""
-    import pipeline.migrations.migrate_snapshot_schema_unify as mod
 
     def _boom(*args: object, **kwargs: object) -> object:
         raise OSError("simulated S3 auth/region error")

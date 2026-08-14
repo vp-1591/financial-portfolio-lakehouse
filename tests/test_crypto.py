@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from pipeline import storage
 from pipeline.crypto import (
     decrypt,
     decrypt_float,
@@ -16,6 +19,7 @@ from pipeline.crypto import (
     generate_key,
     load_key,
 )
+from pipeline.keygen import main
 from pipeline.secrets import reset_mode, set_mode
 
 
@@ -98,8 +102,6 @@ class TestLoadKey:
 
     def test_raises_when_missing(self, tmp_path: Path) -> None:
         # Clear any env var to force file lookup
-        import os
-
         os.environ.pop("ENCRYPTION_KEY", None)
         set_mode("docker")
         with pytest.raises(
@@ -112,8 +114,6 @@ class TestLoadKey:
     def test_env_var_takes_precedence_over_file(
         self, tmp_path: Path, fernet_key: bytes
     ) -> None:
-        import os
-
         os.environ["ENCRYPTION_KEY"] = fernet_key.decode("utf-8")
         # Even though file doesn't exist, env var should work
         set_mode("docker")
@@ -138,8 +138,6 @@ class TestLoadKey:
 
     def test_staging_mode_uses_key_when_set(self, monkeypatch, tmp_path):
         """In staging mode, ENCRYPTION_KEY is used."""
-        from pipeline.crypto import generate_key
-
         key = generate_key()
         monkeypatch.setenv("ENCRYPTION_KEY", key.decode("utf-8"))
         set_mode("staging")
@@ -168,10 +166,6 @@ class TestLoadKey:
         ``test_production_mode_falls_back_to_file`` skips by passing an explicit
         ``key_file``. A bug in this resolution path would go undetected otherwise.
         """
-        from types import SimpleNamespace
-
-        from pipeline import storage
-
         monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
         set_mode("prod")
 
@@ -193,10 +187,6 @@ class TestLoadKey:
     ):
         """load_key(path=None) via storage fallback raises FileNotFoundError with the
         ENCRYPTION_KEY guidance message when the resolved key file does not exist."""
-        from types import SimpleNamespace
-
-        from pipeline import storage
-
         monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
         set_mode("prod")
 
@@ -219,8 +209,6 @@ class TestKeygenMain:
     """Cover pipeline.keygen.main() — previously 0% coverage."""
 
     def test_main_prints_guidance_and_generates_key(self, capsys):
-        from pipeline.keygen import main
-
         main()
         captured = capsys.readouterr()
         assert "ENCRYPTION_KEY" in captured.out
