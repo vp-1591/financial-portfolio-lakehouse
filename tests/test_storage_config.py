@@ -2,8 +2,8 @@
 
 Verifies that:
 - ``resolve_storage`` uses execution mode (``set_mode``) to select backend
-- ``resolve_storage`` requires ``S3_BUCKET`` in docker/prod modes
-- ``resolve_storage`` uses ``S3_BUCKET`` in staging mode
+- ``resolve_storage`` requires ``S3_BUCKET`` in docker/staging modes
+- ``resolve_storage`` defaults ``S3_BUCKET`` in prod mode
 - ``use_storage`` injects custom configs
 - ``get_storage`` returns the active config
 - ``pipeline.paths`` module delegates to the active ``StorageConfig``
@@ -22,6 +22,7 @@ import pytest
 from pipeline.secrets import reset_mode, resolve_aws_credentials, set_mode
 from pipeline.storage import (
     S3_DEFAULT_PREFIX,
+    S3_DEFAULT_PROD_BUCKET,
     S3Backend,
     StorageConfig,
     get_storage,
@@ -178,12 +179,23 @@ class TestResolveStorage:
         assert config.normalized_dir == "s3://prod-bucket/custom-prefix/normalized"
         assert config.analytics_dir == "s3://prod-bucket/custom-prefix/analytics"
 
-    def test_prod_mode_requires_s3_bucket(self, monkeypatch):
-        """Prod mode raises ValueError when S3_BUCKET is not set."""
+    def test_prod_mode_defaults_bucket(self, monkeypatch):
+        """Prod mode defaults S3_BUCKET to S3_DEFAULT_PROD_BUCKET when unset."""
         monkeypatch.delenv("S3_BUCKET", raising=False)
         set_mode("prod")
-        with pytest.raises(ValueError, match="S3_BUCKET is required"):
-            resolve_storage()
+        config = resolve_storage()
+        assert isinstance(config.backend, S3Backend)
+        assert config.backend.bucket == S3_DEFAULT_PROD_BUCKET
+        assert config.backend.prefix == "pipeline"
+        assert config.data_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline"
+        assert config.raw_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline/raw"
+        assert (
+            config.normalized_dir
+            == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline/normalized"
+        )
+        assert (
+            config.analytics_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline/analytics"
+        )
 
     def test_prod_prefix_empty_falls_back(self, monkeypatch):
         """Empty S3_PREFIX falls back to 'pipeline'."""

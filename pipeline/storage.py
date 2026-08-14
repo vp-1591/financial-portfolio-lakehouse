@@ -47,6 +47,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # Default S3 prefix within the bucket.
 S3_DEFAULT_PREFIX = "pipeline"
 
+# Default production S3 bucket used when S3_BUCKET is not set in prod mode.
+S3_DEFAULT_PROD_BUCKET = "investment-portfolio-pipeline"
+
 
 # ---------------------------------------------------------------------------
 # Storage backend protocol
@@ -227,7 +230,8 @@ def resolve_storage() -> StorageConfig:
     - **staging** — :class:`S3Backend` with the demo S3 bucket
       (``S3_BUCKET``, prefix ``pipeline_demo``).
     - **prod** — :class:`S3Backend` with the production S3 bucket
-      (``S3_BUCKET``, prefix ``pipeline``).
+      (``S3_BUCKET``, prefix ``pipeline``). If ``S3_BUCKET`` is not set it
+      defaults to :data:`S3_DEFAULT_PROD_BUCKET`.
 
     Tests must call :func:`use_storage` with a ``tmp_path``-based
     config to prevent accidental writes to the project's ``data/``
@@ -285,10 +289,8 @@ def resolve_storage() -> StorageConfig:
     elif mode == "prod":
         # Production S3 bucket.
         if not s3_bucket:
-            raise ValueError(
-                "S3_BUCKET is required in prod mode. "
-                "Set S3_BUCKET in .env or environment."
-            )
+            s3_bucket = S3_DEFAULT_PROD_BUCKET
+            logger.info("S3_BUCKET not set in prod mode; defaulting to '%s'", s3_bucket)
         prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
         backend = S3Backend(bucket=s3_bucket, prefix=prefix)
         base = f"s3://{backend.bucket}/{prefix}"
