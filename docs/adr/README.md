@@ -98,7 +98,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0085 | Gold Schema Migration and Analytics Error Propagation | 2026-07-16 | active | — |
 | 0086 | Add Pyright Static Type Checking | 2026-07-17 | active | — |
 | 0087 | Make CDC Mandatory and Fail on Empty Silver CDC Tables | 2026-07-21 | active | — |
-| 0088 | Raise on Missing AWS Credentials for DuckDB S3 | 2026-07-22 | active | — |
+| 0088 | Raise on Missing AWS Credentials for DuckDB S3 | 2026-07-22 | superseded | 0103 |
 | 0089 | Fail Loudly on Missing Broker Credentials | 2026-07-22 | active | — |
 | 0090 | Replace DEMO and STORAGE_TYPE with --mode Flag | 2026-07-23 | active | — |
 | 0091 | Trigger Step Functions in cmd_full for staging/prod | 2026-07-23 | active | — |
@@ -113,6 +113,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0100 | Fix Snapshot Dedup Per Source and T212 Snapshot Encryption | 2026-08-03 | active | — |
 | 0101 | Fix IBKR Flex Attribute Names for CDC event_id Dedup | 2026-08-03 | active | — |
 | 0102 | Standardize Snapshot Schemas and Fix T212 security_ccy to Instrument Currency | 2026-08-14 | active | — |
+| 0103 | Prod boto3 Default-Chain Credential Fallback | 2026-08-14 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

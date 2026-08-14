@@ -46,35 +46,35 @@ from __future__ import annotations
 
 import argparse
 
-import boto3
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import TableNotFoundError
 
 from pipeline.normalized.models import snapshot_normalized_schema
+from pipeline.secrets import _boto3_default_chain_credentials
 from pipeline.storage import get_storage
 
 
 def _get_storage_options_with_credentials() -> dict[str, str]:
-    """Resolve storage options using boto3 for credential discovery.
+    """Resolve storage options, injecting AWS credentials via boto3.
 
     The deltalake Rust backend (object_store) cannot read AWS credential
-    files on all platforms.  Use boto3 (which handles credential chains
-    correctly) to discover credentials and pass them explicitly.
+    files on all platforms.  Use
+    :func:`pipeline.secrets._boto3_default_chain_credentials` (boto3's
+    default chain) to discover credentials and pass them explicitly
+    when not already present in the storage options.
     """
     storage = get_storage()
     opts = dict(storage.storage_options or {})
 
     if "aws_access_key_id" not in opts:
-        session = boto3.Session(region_name=opts.get("aws_region", "eu-west-1"))
-        creds = session.get_credentials()
-        if creds:
-            frozen = creds.get_frozen_credentials()
-            if frozen.access_key and frozen.secret_key:
-                opts["aws_access_key_id"] = frozen.access_key
-                opts["aws_secret_access_key"] = frozen.secret_key
-                if frozen.token:
-                    opts["aws_session_token"] = frozen.token
+        boto = _boto3_default_chain_credentials(opts.get("aws_region", "eu-west-1"))
+        if boto is not None:
+            key_id, secret_key, token = boto
+            opts["aws_access_key_id"] = key_id
+            opts["aws_secret_access_key"] = secret_key
+            if token:
+                opts["aws_session_token"] = token
 
     return opts
 

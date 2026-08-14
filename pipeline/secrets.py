@@ -281,6 +281,7 @@ class AwsCredentials:
     region: str
     endpoint_url: str | None
     allow_http: bool
+    session_token: str | None = None
 
     def to_storage_options(self) -> dict[str, str]:
         """Return deltalake/object_store-compatible storage options dict.
@@ -295,6 +296,10 @@ class AwsCredentials:
         (with the missing one as an empty string) to prevent the SDK
         from silently falling back to environment variables that may
         contain credentials from a different environment.
+
+        ``session_token`` is included (as ``aws_session_token``) only
+        when present — temporary/SSO credentials carry one, static
+        ``~/.aws/credentials`` keys do not.
         """
         opts: dict[str, str] = {
             "aws_region": self.region,
@@ -302,6 +307,8 @@ class AwsCredentials:
         if self.key_id is not None or self.secret_key is not None:
             opts["aws_access_key_id"] = self.key_id or ""
             opts["aws_secret_access_key"] = self.secret_key or ""
+        if self.session_token:
+            opts["aws_session_token"] = self.session_token
         if self.endpoint_url:
             opts["aws_endpoint_url"] = self.endpoint_url
         if self.allow_http:
@@ -328,6 +335,8 @@ class AwsCredentials:
         if self.key_id is not None or self.secret_key is not None:
             kwargs["access_key"] = self.key_id or ""
             kwargs["secret_key"] = self.secret_key or ""
+        if self.session_token:
+            kwargs["session_token"] = self.session_token
         if self.endpoint_url:
             from urllib.parse import urlparse
 
@@ -362,6 +371,9 @@ class AwsCredentials:
             f"SECRET '{safe_secret}'",
             f"REGION '{safe_region}'",
         ]
+        if self.session_token:
+            safe_token = self.session_token.replace("'", "''")
+            parts.append(f"SESSION_TOKEN '{safe_token}'")
         if self.endpoint_url:
             from urllib.parse import urlparse
 
@@ -375,6 +387,34 @@ class AwsCredentials:
             parts.append("USE_SSL false")
             parts.append("URL_STYLE path")
         return parts
+
+
+def _boto3_default_chain_credentials(
+    region: str,
+) -> tuple[str, str, str | None] | None:
+    """Discover AWS credentials via boto3's default credential chain.
+
+    Reaches environment variables, ``~/.aws/credentials``,
+    ``~/.aws/config`` (named profiles / AWS SSO), and instance metadata
+    (IMDS).  DuckDB's ``delta_scan()`` extension cannot read these
+    sources on its own, so callers inject the returned credentials
+    explicitly into the data-plane (DuckDB SECRET / ``object_store`` /
+    PyArrow).
+
+    Returns ``(key_id, secret_key, session_token)`` when boto3 finds
+    usable credentials, otherwise ``None``.  ``session_token`` is
+    ``None`` for static keys and set for temporary/SSO credentials.
+    """
+    import boto3
+
+    session = boto3.Session(region_name=region)
+    creds = session.get_credentials()
+    if creds is None:
+        return None
+    frozen = creds.get_frozen_credentials()
+    if not (frozen.access_key and frozen.secret_key):
+        return None
+    return frozen.access_key, frozen.secret_key, frozen.token or None
 
 
 @cache
@@ -391,6 +431,18 @@ def resolve_aws_credentials() -> AwsCredentials:
     configuration (not secrets) and are read directly from the
     environment.
 
+    **Prod boto3 fallback.**  When both AWS credentials are absent from
+    the environment **and** the active mode is ``prod``, credentials are
+    discovered via :func:`_boto3_default_chain_credentials` (boto3's
+    default chain: ``~/.aws/credentials``, AWS SSO, IMDS).  This lets
+    ``pipeline report``/``query``/``validate`` run in prod with AWS
+    config/SSO set up but no explicit env vars, matching the behaviour
+    of the ``full`` subcommand.  The fallback is gated to ``prod`` so
+    staging/demo isolation (empty-SECRET branch, ADR 0088) and
+    docker/MinIO (which uses ``S3_ENDPOINT_URL`` + MinIO keys, never AWS
+    creds) are unaffected.  The ``session_token`` from temporary/SSO
+    credentials is threaded through to all data-plane adapters.
+
     Results are cached (``functools.cache``) so that multiple call sites
     during connection setup (``_configure_s3``, ``_discover_tables_s3``)
     do not produce duplicate warnings for missing credentials.
@@ -400,6 +452,18 @@ def resolve_aws_credentials() -> AwsCredentials:
     region = get_env("AWS_REGION", "eu-west-1")
     endpoint_url = get_env("S3_ENDPOINT_URL")
     allow_http = os.environ.get("S3_ALLOW_HTTP", "").lower() in ("1", "true", "yes")
+    session_token: str | None = None
+
+    # Decision: docs/adr/0103-prod-boto3-default-chain-credential-fallback.md
+    # Prod-only fallback: DuckDB's delta_scan() cannot read ~/.aws/credentials
+    # or AWS SSO, so when explicit env vars are absent, discover credentials
+    # via boto3's default chain and inject them explicitly.  Gated to prod
+    # to preserve staging/demo isolation (ADR 0088 demo branch) and docker/MinIO.
+    if key_id is None and secret_key is None and get_mode() == "prod":
+        boto = _boto3_default_chain_credentials(region)
+        if boto is not None:
+            key_id, secret_key, session_token = boto
+            logger.info("Resolved AWS credentials via boto3 default chain")
 
     return AwsCredentials(
         key_id=key_id,
@@ -407,4 +471,5 @@ def resolve_aws_credentials() -> AwsCredentials:
         region=region,
         endpoint_url=endpoint_url,
         allow_http=allow_http,
+        session_token=session_token,
     )
