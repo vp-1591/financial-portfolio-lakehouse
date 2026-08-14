@@ -858,10 +858,11 @@ class TestCdcTransform:
         events: list[dict] | dict,
         source: str,
         fernet_key: bytes,
+        fetched_at: datetime | None = None,
     ) -> pa.Table:
         """Build a raw-layer table with encrypted CDC event payloads."""
 
-        now = datetime.now(UTC)
+        now = fetched_at if fetched_at is not None else datetime.now(UTC)
         raw_payloads = [json.dumps(events).encode("utf-8")]
         encrypted_payloads = [encrypt(p, fernet_key) for p in raw_payloads]
 
@@ -1031,6 +1032,43 @@ class TestCdcTransform:
         assert len(keys) == len(set(keys)), f"Duplicate keys found: {keys}"
         assert ("TRADE", "12345") in keys
         assert ("DIVIDEND", "12345") in keys
+
+    def test_transform_cdc_dedup_keeps_latest_fetched_version(
+        self, fernet_key: bytes
+    ) -> None:
+        """When an event is re-fetched with a corrected value, the latest wins.
+
+        unique()'s default keep="any" is non-deterministic and does not
+        guarantee the row kept after a descending fetched_at sort is the
+        newest.  keep="first" honors that sort so a field correction in a
+        later fetch survives.  This is the load-bearing guard for ADR 0105's
+        "latest fetched_at wins" decision.
+        """
+        earlier = datetime(2024, 1, 1, 10, 0, tzinfo=UTC)
+        later = datetime(2024, 1, 2, 10, 0, tzinfo=UTC)
+
+        stale_event = self._make_order_event()
+        stale_event["fill"]["walletImpact"]["netValue"] = 1500.0
+        corrected_event = self._make_order_event()
+        corrected_event["fill"]["walletImpact"]["netValue"] = 2000.0
+        raw_stale = self._build_raw_cdc_table(
+            [stale_event], "/equity/history/orders", fernet_key, fetched_at=earlier
+        )
+        raw_corrected = self._build_raw_cdc_table(
+            [corrected_event],
+            "/equity/history/orders",
+            fernet_key,
+            fetched_at=later,
+        )
+        raw = pa.concat_tables([raw_stale, raw_corrected])
+
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        assert result.column("event_id")[0].as_py() == "12345"
+        cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
+        # BUY = outflow -> negative; latest correction (netValue 2000.0) must win.
+        assert cash == pytest.approx(-2000.0)
 
     def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
         """T212 orders with walletImpact.taxes correctly split fees and taxes."""

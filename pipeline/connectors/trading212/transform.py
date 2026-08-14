@@ -302,7 +302,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     before = result.height
     result = (
         result.sort("fetched_at", descending=True)
-        .unique(subset=["event_type", "event_id"])
+        .unique(subset=["event_type", "event_id"], keep="first")
         .sort(["event_type", "event_id"])
     )
     after = result.height

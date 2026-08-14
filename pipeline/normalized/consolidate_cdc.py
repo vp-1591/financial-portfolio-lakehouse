@@ -85,12 +85,14 @@ def consolidate_cdc_events() -> pa.Table:
     # check guards against future brokers that skip transform-level dedup and
     # against raw-layer replays that bypass the transform contract.  It also
     # catches the T212 full-history re-fetch class of bug regardless of broker.
+    # keep="first" honors the descending fetched_at sort so the latest version
+    # of each event wins (unique()'s default keep="any" is non-deterministic).
     # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
-    if result.num_rows > 0:
-        df = pl.from_arrow(result)
+    df = pl.from_arrow(result)
+    if df.height > 0:
         before = df.height
         df = df.sort("fetched_at", descending=True).unique(
-            subset=["broker", "event_type", "event_id"]
+            subset=["broker", "event_type", "event_id"], keep="first"
         )
         after = df.height
         if before > after:
@@ -100,15 +102,17 @@ def consolidate_cdc_events() -> pa.Table:
                 before,
                 after,
             )
-        result = df.to_arrow()
 
     output_path = config.normalized_path("cdc_events")
     config.backend.ensure_parent(output_path)
     write_deltalake(
         str(output_path),
-        result,
+        df,
         mode="overwrite",
         storage_options=storage_opts,
     )
-    logger.info("Consolidated CDC events: %d rows", result.num_rows)
-    return result
+    logger.info("Consolidated CDC events: %d rows", df.height)
+    # Return an Arrow table to honor the -> pa.Table contract (callers and
+    # tests access result.num_rows / result.column(...)); write_deltalake
+    # receives the Polars frame directly per the repo rule (no pa.Table write).
+    return df.to_arrow()
