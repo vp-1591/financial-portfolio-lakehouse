@@ -1,5 +1,7 @@
 # 0069 — Fix IBKR CDC Triplication and Date Parsing
 
+> **Superseded by [ADR 0105](./0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md)** — the "T212/XTB have truly incremental CDC data" constraint (§Constraints) was incorrect for T212, which fetches full history on every run; 0105 adds T212 CDC event_id dedup and a consolidate boundary dedup. IBKR `event_datetime` normalization and IBKR `event_id` dedup carry forward unchanged, see 0105 §Decision.
+
 ## Context
 
 Two bugs caused the Passive Income Timeline chart to render empty:

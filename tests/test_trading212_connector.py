@@ -960,6 +960,78 @@ class TestCdcTransform:
         assert result.column("target_value")[0].as_py() is None
         assert result.column("target_ccy")[0].as_py() is None
 
+    def test_transform_cdc_deduplicates_across_payloads(
+        self, fernet_key: bytes
+    ) -> None:
+        """Re-fetched T212 CDC payloads are deduped by (event_type, event_id).
+
+        T212 fetches full history on every run, so repeated pipeline runs
+        re-append the same orders to the raw layer.  Mirrors the IBKR dedup
+        test at test_ibkr_connector.py::test_transform_cdc_deduplicates_across_payloads.
+        """
+        events = [self._make_order_event()]
+        raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
+        duplicated = pa.concat_tables([raw, raw])
+
+        result = transform_cdc(duplicated, fernet_key)
+
+        # The same order should appear exactly once, not twice.
+        assert result.num_rows == 1
+        keys = list(
+            zip(
+                result.column("event_type").to_pylist(),
+                result.column("event_id").to_pylist(),
+            )
+        )
+        assert len(keys) == len(set(keys)), f"Duplicate keys found: {keys}"
+
+    def test_transform_cdc_dedup_scopes_by_event_type(self, fernet_key: bytes) -> None:
+        """An order and a dividend sharing event_id "12345" are kept distinct.
+
+        order.id is an integer cast to string; dividend.reference is a separate
+        string ID space.  Dedup must be scoped by event_type, not event_id alone,
+        or an order and dividend with the same numeric string id would collide.
+        """
+        order_event = self._make_order_event()  # order.id 12345 -> event_id "12345"
+        dividend_event = {
+            "reference": "12345",  # same string as the order id
+            "ticker": "AAPL_US_EQ",
+            "instrument": {
+                "ticker": "AAPL_US_EQ",
+                "isin": "US0378331007",
+                "name": "Apple Inc.",
+                "currency": "USD",
+            },
+            "amount": 10.0,
+            "currency": "USD",
+            "grossAmountPerShare": 0.10,
+            "paidOn": "2024-02-15",
+            "quantity": 100,
+            "tickerCurrency": "USD",
+            "type": "ORDINARY",
+        }
+        raw_orders = self._build_raw_cdc_table(
+            [order_event], "/equity/history/orders", fernet_key
+        )
+        raw_dividends = self._build_raw_cdc_table(
+            [dividend_event], "/equity/history/dividends", fernet_key
+        )
+        raw = pa.concat_tables([raw_orders, raw_dividends])
+
+        result = transform_cdc(raw, fernet_key)
+
+        # Both events survive — event_type scopes the uniqueness.
+        assert result.num_rows == 2
+        keys = list(
+            zip(
+                result.column("event_type").to_pylist(),
+                result.column("event_id").to_pylist(),
+            )
+        )
+        assert len(keys) == len(set(keys)), f"Duplicate keys found: {keys}"
+        assert ("TRADE", "12345") in keys
+        assert ("DIVIDEND", "12345") in keys
+
     def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
         """T212 orders with walletImpact.taxes correctly split fees and taxes."""
 

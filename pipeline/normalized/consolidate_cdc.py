@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+import polars as pl
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
@@ -78,6 +79,28 @@ def consolidate_cdc_events() -> pa.Table:
 
     # tables is guaranteed non-empty because all required brokers contributed.
     result = pa.concat_tables(tables, schema=cdc_events_normalized_schema)
+
+    # Defense-in-depth: dedup across brokers on (broker, event_type, event_id).
+    # Each broker's transform already dedups its own events, but this boundary
+    # check guards against future brokers that skip transform-level dedup and
+    # against raw-layer replays that bypass the transform contract.  It also
+    # catches the T212 full-history re-fetch class of bug regardless of broker.
+    # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
+    if result.num_rows > 0:
+        df = pl.from_arrow(result)
+        before = df.height
+        df = df.sort("fetched_at", descending=True).unique(
+            subset=["broker", "event_type", "event_id"]
+        )
+        after = df.height
+        if before > after:
+            logger.info(
+                "CDC consolidate dedup: removed %d duplicate events (%d → %d)",
+                before - after,
+                before,
+                after,
+            )
+        result = df.to_arrow()
 
     output_path = config.normalized_path("cdc_events")
     config.backend.ensure_parent(output_path)

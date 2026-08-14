@@ -291,6 +291,29 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         )
 
     result = pl.concat(dfs)
+
+    # T212 CDC fetches the full order/dividend/transaction history on every
+    # run.  Re-fetched pages produce raw payloads with different byte content
+    # (and therefore different SHA-256 hashes), so the raw layer re-appends
+    # them.  Dedup by (event_type, event_id) -- order.id is an integer cast to
+    # string while dividend/transaction reference is a separate string ID
+    # space, so event_type scopes the uniqueness -- keeping the version from
+    # the latest fetched_at.  Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
+    before = result.height
+    result = (
+        result.sort("fetched_at", descending=True)
+        .unique(subset=["event_type", "event_id"])
+        .sort(["event_type", "event_id"])
+    )
+    after = result.height
+    if before > after:
+        logger.info(
+            "T212 CDC dedup: removed %d duplicate events (%d → %d)",
+            before - after,
+            before,
+            after,
+        )
+
     return finalize_table(
         result, cdc_events_normalized_schema, fernet_key, _CDC_ENCRYPT_COLUMNS
     )
@@ -399,7 +422,10 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
             [order.struct.field("createdAt"), fill.struct.field("filledAt")]
         ),
         security_ccy=security_ccy,
-        instrument_ccy=pl.lit(None),
+        # Cast to Utf8 so orders/transactions match dividends' String-typed
+        # instrument_ccy; otherwise pl.concat across endpoints fails (Null vs
+        # String). Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
+        instrument_ccy=pl.lit(None).cast(pl.Utf8),
         cash_amount=cash_amount_security_ccy,
         settle_date=pl.coalesce(
             [fill.struct.field("filledAt"), order.struct.field("createdAt")]
@@ -520,7 +546,7 @@ def _transform_transactions(
         raw_event_type=raw_type,
         event_datetime=pl.col("dateTime").cast(pl.Utf8),
         security_ccy=pl.col("currency").cast(pl.Utf8),
-        instrument_ccy=pl.lit(None),
+        instrument_ccy=pl.lit(None).cast(pl.Utf8),
         cash_amount=amount,
         settle_date=pl.lit(""),
         ticker=pl.lit(""),
