@@ -406,8 +406,16 @@ def position_currency(
 def position_security_currency(
     position: dict[str, Any],
     instrument_currencies: dict[str, str],
-    fallback: str,
-) -> str:
+) -> str | None:
+    """Resolve the position's INSTRUMENT currency, or None when unresolvable.
+
+    Tries, in order: ``instrument.currencyCode``/``currency``, the ticker looked
+    up in ``instrument_currencies``, a top-level ``currencyCode``/``currency``,
+    then the ticker again. Returns ``None`` when none of these resolve a
+    currency, signalling the caller to fall back to the wallet-currency value/ccy
+    pairing so an inconsistent (instrument-value, wallet-ccy) row is never emitted
+    (ADR 0102).
+    """
     instrument = nested_dict(position, "instrument")
     currency = first_value(instrument, ("currencyCode", "currency"))
     if currency:
@@ -425,7 +433,7 @@ def position_security_currency(
     if ticker and str(ticker) in instrument_currencies:
         return instrument_currencies[str(ticker)]
 
-    return fallback
+    return None
 
 
 def position_security_value(position: dict[str, Any]) -> float | None:

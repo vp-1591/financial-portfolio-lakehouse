@@ -425,13 +425,6 @@ def cmd_analytics(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_run_migration(args: argparse.Namespace) -> int:
-    """Run schema migrations for existing Delta tables."""
-    from pipeline.migrations.migrate_001_encrypt_gold_values import run_migration
-
-    return run_migration()
-
-
 def get_raw_path(connector_name: str, layer: str) -> str:
     """Get the raw data path for a connector and layer.
 
@@ -1018,12 +1011,6 @@ def main() -> int:
         help="CSV file with ticker,isin columns",
     )
 
-    subparsers.add_parser(
-        "run-migration",
-        parents=[common_parser, mode_parser],
-        help="Run schema migrations for existing Delta tables",
-    )
-
     args = parser.parse_args()
 
     # keygen is a standalone utility that generates an encryption key without
@@ -1052,7 +1039,6 @@ def main() -> int:
         "upload-xtb": cmd_upload_xtb,
         "run-connector": cmd_run_connector,
         "run-consolidate-analytics": cmd_run_consolidate_analytics,
-        "run-migration": cmd_run_migration,
     }
 
     return commands[args.command](args)

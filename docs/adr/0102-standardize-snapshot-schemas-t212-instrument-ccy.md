@@ -37,15 +37,18 @@ the three from drifting apart. The CDC path already avoided this by sharing one
 ## Decision
 
 1. **T212 snapshot uses instrument currency.** In `transform_snapshot()`, equity
-   `security_value`/`security_ccy` are now computed from the instrument-currency pairing —
-   `position_security_value()` (`currentPrice × quantity`, a new helper in `trading212/client.py`)
+   `security_value`/`security_ccy` are computed from the instrument-currency pairing —
+   `position_security_value()` (`currentPrice × quantity`, a helper in `trading212/client.py`)
    paired with `position_security_currency()` (instrument currency) — with a **wallet-currency
-   fallback** (`position_value()` + `position_currency()`) only when `currentPrice`/`quantity` are
-   missing, so an inconsistent (instrument-value, wallet-ccy) row is never emitted. CASH rows keep
-   wallet currency (cash is held in the wallet currency; `security_ccy = currency` is already
-   correct). This **supersedes the snapshot `security_ccy` = wallet-currency decision (Bug 1) of
-   ADR 0095**. GBX handling via `MINOR_CURRENCY_UNITS` (0095 Bug 2) remains unchanged (originally
-   decided in ADR 0095 §Decision). ADR 0097 (Yahoo removal) is unchanged.
+   fallback** (`position_value()` + `position_currency()`) when the instrument value is
+   unresolvable (`currentPrice`/`quantity` missing) **or the instrument currency is unresolvable**
+   (`position_security_currency()` returns `None` — no `instrument.currencyCode`/`currency`, ticker
+   absent from the `/metadata/instruments` map, and no top-level position currency). Both conditions
+   route to the wallet-currency pairing, so an inconsistent (instrument-value, wallet-ccy) row is
+   never emitted. CASH rows keep wallet currency (cash is held in the wallet currency; `security_ccy
+   = currency` is already correct). This **supersedes the snapshot `security_ccy` = wallet-currency
+   decision (Bug 1) of ADR 0095**. GBX handling via `MINOR_CURRENCY_UNITS` (0095 Bug 2) remains
+   unchanged (originally decided in ADR 0095 §Decision). ADR 0097 (Yahoo removal) is unchanged.
 
 2. **One shared snapshot schema.** The three per-broker snapshot schemas collapse into a single
    `snapshot_normalized_schema` (field order: `fetched_at, account_id, position_type, label,
@@ -81,7 +84,11 @@ ADR 0080 (`instrument_ccy` CDC-only).
   so a deploy's `validate` does not fail on a stale `name`-column table before the next transform.
   It does NOT recompute T212 `security_ccy`/`security_value` — that happens automatically when
   `transform_snapshot` re-runs (`mode="overwrite"`) on the next pipeline run. It is idempotent
-  (skips absent and already-migrated tables) and supports `--dry-run`.
+  (skips absent and already-migrated tables) and supports `--dry-run`. After this PR the prior
+  one-time migration scripts (`migrate_001_encrypt_gold_values`, `migrate_drop_account_id`,
+  `migrate_drop_conid`, `migrate_rename_currency_columns`, `migrate_phase2_phase3_schema`) and the
+  `run-migration` CLI subcommand were removed once confirmed applied to all environments, leaving
+  `migrate_snapshot_schema_unify.py` as the only script in `pipeline/migrations/`.
 
 ## Consequences
 
@@ -100,10 +107,15 @@ ADR 0080 (`instrument_ccy` CDC-only).
 
 ## Validation
 
-- Full suite: 731 tests pass; `pyright pipeline/ tests/` reports 0 errors; `ruff check` clean.
-- `tests/test_trading212_connector.py` adds 6 new tests: 4 unit tests for
-  `position_security_value()` and 2 transform-level tests for the instrument-ccy pairing and the
-  wallet-currency fallback when `currentPrice`/`quantity` are missing.
+- Full suite: 738 tests pass; `pyright pipeline/ tests/` reports 0 errors; `ruff check` clean.
+- `tests/test_trading212_connector.py` adds unit + transform tests for
+  `position_security_value()` / `position_security_currency()`, including the instrument-ccy
+  pairing and the wallet-currency fallback when `currentPrice`/`quantity` are missing. The
+  correction to Decision 1 is covered by `test_position_security_currency_returns_none_when_unresolvable`
+  and `test_transform_snapshot_falls_back_to_wallet_ccy_when_instrument_ccy_missing` — the latter
+  builds a position whose instrument value is resolvable (`25 × 100 = 2500.0`) but whose instrument
+  currency is not, and asserts the row uses the wallet pairing (`2200.0` PLN), not the unpaired
+  instrument value. It fails on the pre-correction guard.
 - `test_snapshot_security_ccy_uses_wallet_currency` is renamed to
   `test_snapshot_security_ccy_uses_instrument_currency`; equity assertions flipped to instrument
   currency, CASH stays wallet currency.
@@ -111,9 +123,11 @@ ADR 0080 (`instrument_ccy` CDC-only).
   (was `625.0`); AAPLu_EQ USD→EUR `1620.0` (was `450.0`); CASH PLN→EUR `375.0` (unchanged). In
   `tests/test_portfolio_holdings.py` the `total_target` is recomputed to `17145.0` and all
   percentage expectations updated.
-- Migration `pipeline/migrations/migrate_snapshot_schema_unify.py`: `--dry-run` supported,
-  idempotent, skips absent/already-migrated tables; modeled on `migrate_rename_currency_columns.py`
-  and `migrate_drop_conid.py`.
+- Migration `pipeline/migrations/migrate_snapshot_schema_unify.py` is covered by
+  `tests/test_migrate_snapshot_schema_unify.py` (4 cases: migrate + order-sensitive schema check,
+  idempotent-already-migrated, missing-table, dry-run). The order-sensitive `schema.equals`
+  assertion would have caught the column-reorder bug fixed in commit `3d2271d`. `--dry-run`
+  supported, idempotent, skips absent/already-migrated tables.
 - Staging check (manual, env populated): `SELECT label, security_ccy FROM
   trading212_snapshot_normalized` should show instrument currency (EUR/USD) for equities and PLN
   for CASH after re-running `pipeline transform` for trading212; before the fix this was PLN for
