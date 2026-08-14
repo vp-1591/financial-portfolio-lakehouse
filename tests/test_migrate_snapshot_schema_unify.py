@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
+import pytest
 from deltalake import DeltaTable, write_deltalake
 
 from pipeline.migrations.migrate_snapshot_schema_unify import (
@@ -111,3 +112,39 @@ def test_dry_run_does_not_write(tmp_path: Path) -> None:
     result = _read(table_path)
     assert "name" in result.column_names
     assert "description" not in result.column_names
+
+
+def test_rename_raises_on_unexpected_columns(tmp_path: Path) -> None:
+    """A table with `name` but an unexpected column set raises instead of
+    silently returning False, so the migration exits non-zero on a real schema
+    problem rather than reporting 'nothing to migrate'."""
+    table_path = tmp_path / "trading212_snapshot"
+    bad = _old_snapshot_table().append_column(
+        "unexpected", pa.array(["x"], type=pa.string())
+    )
+    _write(table_path, bad)
+
+    with pytest.raises(RuntimeError, match="Column set mismatch"):
+        rename_name_to_description(
+            "trading212_snapshot", str(table_path), {}, snapshot_normalized_schema
+        )
+
+
+def test_rename_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> None:
+    """An auth/region/permission error opening an existing table is NOT
+    swallowed as 'absent' (only TableNotFoundError is) -- it propagates so
+    main() exits non-zero, the signal a pre-deploy gate needs."""
+    import pipeline.migrations.migrate_snapshot_schema_unify as mod
+
+    def _boom(*args: object, **kwargs: object) -> object:
+        raise OSError("simulated S3 auth/region error")
+
+    monkeypatch.setattr(mod, "DeltaTable", _boom)
+
+    with pytest.raises(OSError, match="simulated S3 auth/region error"):
+        rename_name_to_description(
+            "trading212_snapshot",
+            str(tmp_path / "trading212_snapshot"),
+            {},
+            snapshot_normalized_schema,
+        )

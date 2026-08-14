@@ -22,6 +22,11 @@ from raw — that happens automatically when ``transform_snapshot`` re-runs
 Idempotent: skips tables that are absent and tables that already have
 ``description`` (already migrated).
 
+A genuinely absent table is skipped (exit 0). An existing but unreadable
+table (auth/region/permission/I-O error) or an unexpected schema raises and
+exits non-zero, so a pre-deploy gate cannot mistake a real failure for
+"nothing to migrate".
+
 Run this script BEFORE deploying the code that emits the unified schema. The
 connector writes the normalized snapshot with ``write_deltalake(mode="overwrite")``
 and no ``schema_mode``, so overwriting an existing ``name``-column table with a
@@ -44,6 +49,7 @@ import argparse
 import boto3
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
+from deltalake.exceptions import TableNotFoundError
 
 from pipeline.normalized.models import snapshot_normalized_schema
 from pipeline.storage import get_storage
@@ -94,9 +100,12 @@ def rename_name_to_description(
     """
     try:
         dt = DeltaTable(table_path, storage_options=storage_opts)
-    except Exception as exc:
-        print(f"  Table not found or unreadable: {table_path}")
-        print(f"  Error: {exc}")
+    except TableNotFoundError:
+        # Absent table (e.g. a broker not yet onboarded): expected, skip.
+        # Auth/region/permission/I-O errors are not TableNotFoundError and
+        # propagate so main() exits non-zero rather than silently skipping a
+        # table that exists but is unreadable.
+        print(f"  Table not found (absent), skipping: {table_path}")
         return False
 
     table = dt.to_pyarrow_table()
@@ -117,17 +126,17 @@ def rename_name_to_description(
     target_names = list(target_schema.names)
     renamed = table.rename_columns({"name": "description"})
     if set(renamed.column_names) != set(target_names):
-        print("  ERROR: column set mismatch after rename!")
-        print(f"  Expected: {target_names}")
-        print(f"  Got: {renamed.column_names}")
-        return False
+        raise RuntimeError(
+            f"Column set mismatch after renaming name->description for "
+            f"{table_path}: expected {target_names}, got {renamed.column_names}"
+        )
     new_table = renamed.select(target_names)
 
     if new_table.schema != target_schema:
-        print("  ERROR: Schema mismatch after migration!")
-        print(f"  Expected: {target_schema}")
-        print(f"  Got: {new_table.schema}")
-        return False
+        raise RuntimeError(
+            f"Schema mismatch after migrating {table_path}: "
+            f"expected {target_schema}, got {new_table.schema}"
+        )
 
     if dry_run:
         print(f"  [DRY RUN] Would overwrite with {new_table.num_rows} rows")
