@@ -456,6 +456,7 @@ def cmd_report(args: argparse.Namespace) -> int:
             output_path=args.output,
             base_currency=args.base_currency,
             open_browser=args.open,
+            mode=args.mode,
         )
     except Exception as exc:
         print(f"Error generating report: {exc}", file=sys.stderr)
@@ -883,8 +884,11 @@ def main() -> int:
     report_parser.add_argument(
         "--output",
         type=str,
-        default="data/report.html",
-        help="Output HTML file path (default: data/report.html)",
+        default=None,
+        help=(
+            "Output HTML file path "
+            "(default: data/reports/report-<timestamp>-<mode>.html)"
+        ),
     )
     report_parser.add_argument(
         "--base-currency",

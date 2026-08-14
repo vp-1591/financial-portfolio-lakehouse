@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
+_DEFAULT_REPORT_DIR = "data/reports"
+
+
+def _default_report_path(mode: str) -> str:
+    """Build a timestamped default report path under ``data/reports``.
+
+    The filename embeds the run timestamp and the execution *mode*
+    (docker/staging/prod), e.g. ``report-2026-08-14_13-30-10-docker.html``.
+
+    Uses local time so the filename reads naturally when browsing the
+    reports folder.  Colons are avoided (illegal in Windows filenames),
+    so the separators are hyphens/underscores instead of the ISO 8601
+    colons.  Each run produces a distinct file rather than overwriting a
+    fixed ``data/report.html``.
+    """
+    # Local time (aware) so filenames read naturally when browsing the folder.
+    timestamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%d_%H-%M-%S")
+    return f"{_DEFAULT_REPORT_DIR}/report-{timestamp}-{mode}.html"
+
 
 def _figures_to_html(figures: list) -> list[str]:
     """Convert Plotly figures to HTML div strings.
@@ -356,15 +375,24 @@ def render_report(output_path: str, *, base_currency: str | None = None) -> str:
 
 
 def generate_report(
-    output_path: str = "data/report.html",
+    output_path: str | None = None,
     *,
     base_currency: str | None = None,
     open_browser: bool = False,
+    mode: str = "docker",
 ) -> int:
     """Top-level entry point for the ``pipeline report`` CLI subcommand.
 
     Returns 0 on success, 1 on fatal error.
+
+    When *output_path* is ``None`` a timestamped file under
+    ``data/reports/`` is used, so repeated runs never overwrite a prior
+    report.  The *mode* (docker/staging/prod) is embedded in that default
+    filename.  An explicit *output_path* is honored verbatim.
     """
+    if output_path is None:
+        output_path = _default_report_path(mode)
+
     try:
         render_report(output_path, base_currency=base_currency)
     except RuntimeError as exc:

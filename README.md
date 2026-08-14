@@ -103,13 +103,13 @@ pip install -e ".[pipeline]"
 ### Generate report
 
 ```bash
-# Write to data/report.html
+# Write to data/reports/report-<timestamp>-<mode>.html (each run gets a new file)
 .venv/Scripts/python -m pipeline.run report --mode docker
 
 # Write and open in browser
 .venv/Scripts/python -m pipeline.run report --open --mode docker
 
-# Custom output path
+# Custom output path (overrides the timestamped default)
 .venv/Scripts/python -m pipeline.run report --output my-report.html --mode docker
 ```
 
