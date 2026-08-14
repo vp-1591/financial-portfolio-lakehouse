@@ -17,6 +17,10 @@ from pipeline.connectors.transform_utils import (
     parse_json,
 )
 from pipeline.crypto import decrypt_float, encrypt, generate_key
+from pipeline.normalized.models import (
+    cdc_events_normalized_schema,
+    snapshot_normalized_schema,
+)
 from pipeline.raw.models import RAW_SCHEMA
 
 
@@ -105,8 +109,6 @@ class TestIterRawPayloads:
         fernet_key: bytes,
     ) -> pa.Table:
         """Build a raw table with encrypted payloads."""
-        from pipeline.crypto import encrypt
-
         fetched_ats = []
         brokers = []
         sources = []
@@ -260,7 +262,6 @@ class TestBuildNormalizedTable:
     def test_empty_records_returns_empty_table_with_correct_schema(
         self, fernet_key: bytes
     ) -> None:
-        from pipeline.normalized.models import snapshot_normalized_schema
 
         result = build_normalized_table(
             [],
@@ -272,7 +273,6 @@ class TestBuildNormalizedTable:
         assert result.schema.equals(snapshot_normalized_schema)
 
     def test_single_record_with_encrypted_column(self, fernet_key: bytes) -> None:
-        from pipeline.normalized.models import snapshot_normalized_schema
 
         now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [
@@ -302,7 +302,6 @@ class TestBuildNormalizedTable:
         assert decrypt_float(encrypted_value, fernet_key) == 1000.0
 
     def test_multiple_encrypt_columns(self, fernet_key: bytes) -> None:
-        from pipeline.normalized.models import cdc_events_normalized_schema
 
         now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [
@@ -350,7 +349,6 @@ class TestBuildNormalizedTable:
         assert result.column("label")[0].as_py() == "X"
 
     def test_schema_column_ordering_preserved(self, fernet_key: bytes) -> None:
-        from pipeline.normalized.models import snapshot_normalized_schema
 
         now = datetime(2024, 1, 1, tzinfo=UTC)
         records = [

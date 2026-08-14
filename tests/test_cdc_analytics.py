@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from deltalake import write_deltalake
+from deltalake import DeltaTable, write_deltalake
 
 from pipeline.analytics.cdc_tables import (
     build_cash_flow_summary,
@@ -20,7 +20,7 @@ from pipeline.analytics.models import (
     interest_income_schema,
 )
 from pipeline.connectors.transform_utils import build_normalized_table
-from pipeline.crypto import decrypt_float, generate_key
+from pipeline.crypto import decrypt_float, encrypt_float, generate_key
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.storage import StorageConfig, use_storage
 from tests.local_backend import LocalBackend
@@ -508,7 +508,6 @@ class TestBuildDividendIncome:
         assert result.num_rows == 1
 
         # Read back from Delta
-        from deltalake import DeltaTable
 
         dt = DeltaTable(
             storage.analytics_path("dividend_income"),
@@ -748,12 +747,6 @@ class TestBuildInterestIncome:
         (cdc_tables.py:~259) for the interest_income path, which has no
         re-read test today.
         """
-        from datetime import UTC, datetime
-
-        from deltalake import DeltaTable
-
-        from pipeline.crypto import encrypt_float
-
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -1091,12 +1084,6 @@ class TestBuildCashFlowSummary:
         (cdc_tables.py:~259) for the cash_flow_summary path, which has no
         re-read test today.
         """
-        from datetime import UTC, datetime
-
-        from deltalake import DeltaTable
-
-        from pipeline.crypto import encrypt_float
-
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),

@@ -8,6 +8,7 @@ and that missing gold tables cause a non-zero exit.
 from __future__ import annotations
 
 import argparse
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,6 +17,12 @@ import pytest
 from deltalake import write_deltalake
 
 from pipeline.analytics.holdings import build_portfolio_holdings
+from pipeline.analytics.models import (
+    cash_flow_summary_schema,
+    data_quality_schema,
+    dividend_income_schema,
+    interest_income_schema,
+)
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.consolidate import (
     CurrencyConverter,
@@ -23,7 +30,9 @@ from pipeline.normalized.consolidate import (
     consolidate_holdings,
 )
 from pipeline.normalized.extract import extract_holdings
+from pipeline.report.renderer import _default_report_path
 from pipeline.run import cmd_report
+from pipeline.secrets import set_mode
 from pipeline.storage import StorageConfig, get_storage, use_storage
 from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
@@ -34,7 +43,6 @@ from tests.local_backend import LocalBackend
 @pytest.fixture(autouse=True)
 def _setup_storage(tmp_path: Path) -> None:
     """Inject a tmp_path-based StorageConfig for all report tests."""
-    from pipeline.secrets import set_mode
 
     data = tmp_path / "data"
     for subdir in [
@@ -118,7 +126,6 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
     now = datetime.now(UTC)
 
     # Minimal dividend_income
-    from pipeline.analytics.models import dividend_income_schema
 
     div_table = pa.table(
         {
@@ -145,7 +152,6 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
     )
 
     # Minimal interest_income
-    from pipeline.analytics.models import interest_income_schema
 
     int_table = pa.table(
         {
@@ -168,7 +174,6 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
     )
 
     # Minimal cash_flow_summary
-    from pipeline.analytics.models import cash_flow_summary_schema
 
     cf_table = pa.table(
         {
@@ -192,8 +197,6 @@ def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
     )
 
     # Minimal data_quality
-    from pipeline.analytics.models import data_quality_schema
-
     dq_table = pa.table(
         {
             "checked_at": [now],
@@ -306,7 +309,6 @@ class TestCmdReport:
         _write_minimal_cdc_tables(fernet_key)
 
         # Delete dividend_income to simulate partial data
-        import shutil
 
         div_path = Path(get_storage().analytics_path("dividend_income"))
         if div_path.exists():
@@ -350,7 +352,6 @@ class TestCmdReport:
 
     def test_default_output_path_is_timestamped(self):
         """_default_report_path embeds a datetime and mode the filesystem accepts."""
-        from pipeline.report.renderer import _default_report_path
 
         path = _default_report_path("prod")
         # Pattern: data/reports/report-YYYY-MM-DD_HH-MM-SS-prod.html
@@ -369,7 +370,6 @@ class TestCmdReport:
         _write_minimal_cdc_tables(fernet_key)
 
         # Overwrite data_quality with a FAIL for portfolio_holdings
-        from pipeline.analytics.models import data_quality_schema
 
         config = get_storage()
         now = datetime.now(UTC)
@@ -406,7 +406,6 @@ class TestCmdReport:
     def test_all_tables_failed_shows_only_dq(self, tmp_path: Path):
         """Report shows only the DQ section when all analytics tables are
         empty/failed."""
-        from pipeline.analytics.models import data_quality_schema
 
         config = get_storage()
         now = datetime.now(UTC)

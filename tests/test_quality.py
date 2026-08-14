@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from deltalake import write_deltalake
+from deltalake import DeltaTable, write_deltalake
 
 from pipeline.analytics.models import (
     data_quality_schema,
@@ -134,8 +134,6 @@ def _make_cdc_table(
 
 def _make_portfolio_holdings_table(fernet_key: bytes) -> pa.Table:
     """Build a minimal portfolio_holdings table with encrypted value columns."""
-    from pipeline.crypto import encrypt_float
-
     now = datetime.now(UTC)
     return pa.table(
         {
@@ -704,7 +702,6 @@ class TestDataQualityRoundTrip:
         assert exit_code == 0
 
         # Read back and verify schema
-        from deltalake import DeltaTable
 
         dq_path = storage.analytics_path("data_quality")
         dq_dt = DeltaTable(dq_path)
@@ -762,7 +759,6 @@ class TestGetPreviousRowCount:
 
         Returns (status, details).
         """
-        from deltalake import DeltaTable
 
         dq_dt = DeltaTable(storage.analytics_path("data_quality"))
         table = dq_dt.to_pyarrow_table()
@@ -974,7 +970,6 @@ class TestScopedValidation:
         assert exit_code == 0
 
         # Verify only ibkr_snapshot checks were written to data_quality
-        from deltalake import DeltaTable
 
         dq_dt = DeltaTable(storage.analytics_path("data_quality"))
         result = dq_dt.to_pyarrow_table()
@@ -991,8 +986,6 @@ class TestScopedValidation:
         )
         # WARN without fail_on_warn → exit 0
         assert exit_code == 0
-
-        from deltalake import DeltaTable
 
         storage = get_storage()
         dq_dt = DeltaTable(storage.analytics_path("data_quality"))

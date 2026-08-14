@@ -10,9 +10,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import polars as pl
 import pyarrow as pa
 import pytest
-from deltalake import write_deltalake
+from deltalake import DeltaTable, write_deltalake
 
 from pipeline.analytics.holdings import build_portfolio_holdings
 from pipeline.analytics.models import portfolio_holdings_schema
@@ -29,6 +30,7 @@ from tests.fixtures.ibkr import ibkr_normalized_snapshot
 from tests.fixtures.trading212 import t212_normalized_snapshot
 from tests.fixtures.xtb import xtb_normalized_snapshot
 from tests.local_backend import LocalBackend
+from tests.test_quality import _rows_to_table
 
 
 @pytest.fixture(autouse=True)
@@ -170,7 +172,6 @@ class TestBuildPortfolioHoldings:
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
         # Decrypt both columns and verify values are positive
-        import polars as pl
 
         df = pl.from_arrow(result)
         for col in ("security_value", "target_value"):
@@ -203,7 +204,6 @@ class TestBuildPortfolioHoldings:
 
     def test_writes_delta_table(self, tmp_path: Path):
         """Portfolio holdings table is written to the analytics layer."""
-        from deltalake import DeltaTable
 
         fernet_key = generate_key()
         _build_consolidated_holdings(fernet_key)
@@ -227,8 +227,6 @@ class TestBuildPortfolioHoldings:
         fernet_key = generate_key()
         _build_consolidated_holdings(fernet_key, brokers=("ibkr", "trading212"))
         result = build_portfolio_holdings(fernet_key=fernet_key)
-
-        import polars as pl
 
         df = pl.from_arrow(result)
         df = df.with_columns(
@@ -337,9 +335,6 @@ class TestBuildPortfolioHoldings:
         config = get_storage()
 
         # Build consolidated holdings with all-zero target values.
-        import polars as pl
-
-        from pipeline.crypto import encrypt_float
 
         rows = [
             {
@@ -367,8 +362,6 @@ class TestBuildPortfolioHoldings:
         ]
         df = pl.DataFrame(rows)
         arrow = df.to_arrow()
-
-        from pipeline.normalized.models import consolidated_holdings_schema
 
         casted = {}
         for field in consolidated_holdings_schema:
@@ -506,8 +499,6 @@ class TestGoldenPortfolioHoldings:
             },
         ]
 
-        from tests.test_quality import _rows_to_table
-
         cons_table = _rows_to_table(consolidated_rows, consolidated_holdings_schema)
         write_deltalake(
             config.normalized_path("consolidated_holdings"),
@@ -521,8 +512,6 @@ class TestGoldenPortfolioHoldings:
         assert result.schema.equals(portfolio_holdings_schema)
 
         # Decrypt value columns and build result rows for comparison
-        import polars as pl
-
         df = pl.from_arrow(result)
         df = df.with_columns(
             pl.col("security_value")
