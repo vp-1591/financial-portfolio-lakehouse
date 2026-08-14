@@ -1,13 +1,18 @@
 """Tests for S3 credential configuration in query.py."""
 
 import os
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import duckdb
 import pytest
 
 from pipeline.query import _configure_s3
-from pipeline.secrets import resolve_aws_credentials, set_mode
+from pipeline.secrets import (
+    AwsCredentials,
+    _boto3_default_chain_credentials,
+    resolve_aws_credentials,
+    set_mode,
+)
 
 
 def _secret_fields(conn: duckdb.DuckDBPyConnection) -> dict[str, str]:
@@ -255,3 +260,164 @@ class TestConfigureS3:
         )
         assert fields["region"] == "eu-west-1", f"REGION field: {fields}"
         conn.close()
+
+    def test_prod_mode_falls_back_to_boto3(self):
+        """In prod with env vars absent, _configure_s3 discovers credentials
+        via boto3's default chain (e.g. AWS SSO / ~/.aws/credentials) and
+        creates a DuckDB SECRET with them — including the SESSION_TOKEN —
+        instead of raising.
+        """
+        conn = duckdb.connect()
+        frozen = Mock()
+        frozen.access_key = "sso-key"
+        frozen.secret_key = "sso-secret"
+        frozen.token = "sso-token"
+        creds = Mock()
+        creds.get_frozen_credentials.return_value = frozen
+        session = Mock()
+        session.get_credentials.return_value = creds
+        with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
+            os.environ.pop("AWS_ACCESS_KEY_ID", None)
+            os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+            set_mode("prod")
+            with patch("boto3.Session", return_value=session):
+                _configure_s3(conn)
+
+        fields = _secret_fields(conn)
+        assert fields["key_id"] == "sso-key", (
+            f"KEY_ID should come from boto3 chain; got: {fields!r}"
+        )
+        # DuckDB redacts the SESSION_TOKEN value (like SECRET), so we can only
+        # verify the field is present here; the actual value/emission is
+        # verified in TestAwsCredentialsSessionToken.
+        assert "session_token" in fields, (
+            f"SESSION_TOKEN should be registered in the SECRET; got: {fields!r}"
+        )
+        conn.close()
+
+    def test_prod_mode_raises_when_boto3_also_empty(self):
+        """Prod with env vars absent AND boto3 finds no credentials -> the
+        RuntimeError is raised (final fallback, actionable message)."""
+        conn = duckdb.connect()
+        session = Mock()
+        session.get_credentials.return_value = None
+        with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
+            os.environ.pop("AWS_ACCESS_KEY_ID", None)
+            os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+            set_mode("prod")
+            with (
+                patch("boto3.Session", return_value=session),
+                pytest.raises(RuntimeError, match="AWS credentials not found"),
+            ):
+                _configure_s3(conn)
+        conn.close()
+
+    def test_prod_mode_env_vars_skip_boto3(self):
+        """Prod with env vars set: env vars win, the boto3 fallback helper is
+        never invoked."""
+        conn = duckdb.connect()
+        with patch.dict(
+            os.environ,
+            {
+                "AWS_ACCESS_KEY_ID": "env-key",
+                "AWS_SECRET_ACCESS_KEY": "env-secret",
+                "AWS_REGION": "eu-west-1",
+            },
+        ):
+            set_mode("prod")
+            with patch("pipeline.secrets._boto3_default_chain_credentials") as helper:
+                _configure_s3(conn)
+                helper.assert_not_called()
+        conn.close()
+
+
+class TestBoto3DefaultChainCredentials:
+    """Unit tests for the shared boto3 default-chain credential helper."""
+
+    def _session(
+        self,
+        access_key: str,
+        secret_key: str,
+        token: str | None = None,
+        *,
+        has_creds: bool = True,
+    ) -> Mock:
+        """Build a mock boto3.Session with the given frozen credentials."""
+        frozen = Mock()
+        frozen.access_key = access_key
+        frozen.secret_key = secret_key
+        frozen.token = token
+        creds = Mock()
+        creds.get_frozen_credentials.return_value = frozen
+        session = Mock()
+        session.get_credentials.return_value = creds if has_creds else None
+        return session
+
+    def test_returns_credentials_with_token(self):
+        with patch(
+            "boto3.Session",
+            return_value=self._session("ak", "sk", "tok"),
+        ) as session_cls:
+            result = _boto3_default_chain_credentials("eu-west-1")
+        assert result == ("ak", "sk", "tok")
+        session_cls.assert_called_once_with(region_name="eu-west-1")
+
+    def test_returns_credentials_without_token(self):
+        with patch(
+            "boto3.Session",
+            return_value=self._session("ak", "sk", None),
+        ):
+            result = _boto3_default_chain_credentials("eu-west-1")
+        assert result == ("ak", "sk", None)
+
+    def test_returns_none_when_no_credentials(self):
+        with patch(
+            "boto3.Session",
+            return_value=self._session("", "", has_creds=False),
+        ):
+            result = _boto3_default_chain_credentials("eu-west-1")
+        assert result is None
+
+    def test_returns_none_when_access_key_empty(self):
+        with patch("boto3.Session", return_value=self._session("", "sk")):
+            result = _boto3_default_chain_credentials("eu-west-1")
+        assert result is None
+
+
+class TestAwsCredentialsSessionToken:
+    """The session_token (SSO/temporary creds) threads through all adapters."""
+
+    def _creds(self, session_token: str | None) -> AwsCredentials:
+        return AwsCredentials(
+            key_id="k",
+            secret_key="s",
+            region="eu-west-1",
+            endpoint_url=None,
+            allow_http=False,
+            session_token=session_token,
+        )
+
+    def test_to_storage_options_includes_session_token(self):
+        opts = self._creds("tok").to_storage_options()
+        assert opts["aws_session_token"] == "tok"
+
+    def test_to_storage_options_omits_session_token_when_none(self):
+        opts = self._creds(None).to_storage_options()
+        assert "aws_session_token" not in opts
+
+    def test_to_pyarrow_kwargs_includes_session_token(self):
+        assert self._creds("tok").to_pyarrow_kwargs()["session_token"] == "tok"
+
+    def test_to_pyarrow_kwargs_omits_session_token_when_none(self):
+        assert "session_token" not in self._creds(None).to_pyarrow_kwargs()
+
+    def test_to_duckdb_secret_parts_includes_session_token(self):
+        assert "SESSION_TOKEN 'tok'" in self._creds("tok").to_duckdb_secret_parts()
+
+    def test_to_duckdb_secret_parts_omits_session_token_when_none(self):
+        parts = self._creds(None).to_duckdb_secret_parts()
+        assert not any(p.startswith("SESSION_TOKEN") for p in parts)
+
+    def test_to_duckdb_secret_parts_escapes_single_quotes(self):
+        parts = self._creds("a'b").to_duckdb_secret_parts()
+        assert "SESSION_TOKEN 'a''b'" in parts

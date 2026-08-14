@@ -1,5 +1,10 @@
 # 0088: Raise on Missing AWS Credentials for DuckDB S3
 
+> **Superseded by [ADR 0103](./0103-prod-boto3-default-chain-credential-fallback.md)** — The
+> production-mode branch no longer raises immediately when AWS credentials are absent;
+> `resolve_aws_credentials()` now falls back to boto3's default credential chain first. The
+> demo-mode empty-SECRET branch carries forward unchanged, see 0103 §Decision.
+
 > **Supersedes [ADR 0055](./0055-iam-role-credential-fallback.md)** — The production-mode
 > branch of `_configure_s3()` now raises `RuntimeError` instead of silently skipping
 > DuckDB SECRET creation. ADR 0055's demo-mode branch (empty credentials blocking

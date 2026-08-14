@@ -312,11 +312,12 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
 
     When both key_id and secret_key are ``None`` in demo mode, a
     SECRET with empty credentials is created to prevent DuckDB from
-    falling back to production credentials.  In production mode, a
-    ``RuntimeError`` is raised because DuckDB's ``delta_scan()``
-    cannot resolve credentials from ``~/.aws/credentials`` or AWS
-    SSO — explicit credentials must be provided via environment
-    variables or ``.env`` file.
+    falling back to production credentials.  In production mode,
+    :func:`pipeline.secrets.resolve_aws_credentials` already attempts
+    a boto3 default-chain fallback (``~/.aws/credentials`` / AWS SSO)
+    before returning ``None``, so reaching the ``None`` branch here means
+    neither env vars nor the AWS credential chain yielded credentials;
+    a ``RuntimeError`` is raised with an actionable message.
 
     For S3-compatible stores (MinIO), set ``S3_ENDPOINT_URL`` to the
     server URL and ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
@@ -326,13 +327,15 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     creds = resolve_aws_credentials()
     parts = creds.to_duckdb_secret_parts()
 
-    # Decision: docs/adr/0088-raise-on-missing-aws-credentials.md
+    # Decision: docs/adr/0103-prod-boto3-default-chain-credential-fallback.md
+    # (supersedes 0088): resolve_aws_credentials() tries boto3's default chain
+    # in prod before returning None; the raise below is the final fallback.
     # When both key_id and secret_key are None, the caller has no explicit
     # credentials.  In staging mode this means credentials are missing —
     # create a SECRET with empty KEY_ID/SECRET so that DuckDB does not fall
-    # back to production credentials.  In production mode, DuckDB's
-    # delta_scan() cannot reach ~/.aws/credentials or AWS SSO, so raise an
-    # error with an actionable message.
+    # back to production credentials.  In production mode,
+    # resolve_aws_credentials() already tried boto3's default chain (AWS
+    # config/SSO) and found nothing, so raise an actionable error.
     if creds.key_id is None and creds.secret_key is None:
         if is_demo():
             # Empty credentials prevent fallback to production env vars.
@@ -341,10 +344,10 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
             conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
         else:
             raise RuntimeError(
-                "AWS credentials not found. Set AWS_ACCESS_KEY_ID and "
-                "AWS_SECRET_ACCESS_KEY in your .env file or environment "
-                "variables. For local development, use "
-                "--mode docker (MinIO)."
+                "AWS credentials not found. Run 'aws configure' or "
+                "'aws sso login', or set AWS_ACCESS_KEY_ID and "
+                "AWS_SECRET_ACCESS_KEY in your .env file / environment. "
+                "For local development, use --mode docker (MinIO)."
             )
     elif parts:
         conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
