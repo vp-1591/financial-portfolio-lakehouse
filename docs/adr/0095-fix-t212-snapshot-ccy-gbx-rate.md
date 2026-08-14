@@ -1,6 +1,6 @@
 # Fix T212 Snapshot Currency Mismatch and GBX Rate Bug
 
-> **Superseded by [ADR 0097](./0097-remove-yahoo-finance-fx-provider.md)** — Yahoo Finance fallback and symbol validation removed. GBX handling via `MINOR_CURRENCY_UNITS` and snapshot `security_ccy` fix remain unchanged.
+> **Superseded by [ADR 0097](./0097-remove-yahoo-finance-fx-provider.md) and [ADR 0102](./0102-standardize-snapshot-schemas-t212-instrument-ccy.md)** — 0097 removed the Yahoo Finance fallback and symbol validation. 0102 reverses the snapshot `security_ccy` = wallet-currency decision (Bug 1) to use instrument currency via `currentPrice × quantity` with a wallet-currency fallback. GBX handling via `MINOR_CURRENCY_UNITS` (Bug 2) remains unchanged (originally decided in ADR 0095 §Decision).
 
 ## Context
 

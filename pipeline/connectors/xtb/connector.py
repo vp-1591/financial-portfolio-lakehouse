@@ -52,7 +52,7 @@ class XtbConnector:
                     value=row["security_value_decrypted"],
                     identifier=identifier,
                     security_currency=str(row.get("security_ccy", "")),
-                    description=str(row.get("name", "")),
+                    description=str(row.get("description", "")),
                     position_type=str(row.get("position_type", "EQUITY")),
                 )
             )

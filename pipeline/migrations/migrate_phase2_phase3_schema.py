@@ -39,9 +39,7 @@ from pipeline.analytics.models import (
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     consolidated_holdings_schema,
-    ibkr_snapshot_normalized_schema,
-    trading212_snapshot_normalized_schema,
-    xtb_snapshot_normalized_schema,
+    snapshot_normalized_schema,
 )
 from pipeline.storage import get_storage
 
@@ -87,9 +85,9 @@ def _get_storage_options_with_credentials() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 _SNAPSHOTS = {
-    "ibkr_snapshot": (ibkr_snapshot_normalized_schema, "normalized"),
-    "trading212_snapshot": (trading212_snapshot_normalized_schema, "normalized"),
-    "xtb_snapshot": (xtb_snapshot_normalized_schema, "normalized"),
+    "ibkr_snapshot": (snapshot_normalized_schema, "normalized"),
+    "trading212_snapshot": (snapshot_normalized_schema, "normalized"),
+    "xtb_snapshot": (snapshot_normalized_schema, "normalized"),
 }
 
 _CDC = {

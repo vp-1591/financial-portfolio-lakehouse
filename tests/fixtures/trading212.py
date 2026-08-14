@@ -19,7 +19,7 @@ from typing import Any
 import pyarrow as pa
 
 from pipeline.crypto import encrypt, encrypt_float, generate_key
-from pipeline.normalized.models import trading212_snapshot_normalized_schema
+from pipeline.normalized.models import snapshot_normalized_schema
 from pipeline.raw.models import RAW_SCHEMA
 
 # Real demo API uses "Trading 212" (mixed case with space) as the broker label.
@@ -160,11 +160,14 @@ def t212_normalized_snapshot(
     Default data mirrors the real demo ``trading212_snapshot_normalized`` shape
     and is exactly what ``transform_snapshot(t212_raw_snapshot(...))`` produces
     (round-trip): 2 equities (``VWCEl_EQ``, ``AAPLu_EQ``) + 1 cash entry
-    (``CASH PLN``), all ``security_ccy`` = ``PLN`` (the wallet currency the
-    demo account uses), ``asset_class`` = ``EQUITY``/``CASH`` (the values the
-    T212 transform hardcodes — never ``STK``), ``account_id`` = ``""`` (real
-    demo T212 snapshots carry an empty account id) and labels using the real
-    single-lowercase-letter suffix format (``VWCEl_EQ``).
+    (``CASH PLN``). Equities use their instrument trading currency
+    (``EUR``/``USD``) for ``security_ccy`` — the transform pairs
+    ``currentPrice * quantity`` with the instrument currency; the CASH row
+    uses the wallet currency (``PLN``). ``asset_class`` = ``EQUITY``/``CASH``
+    (the values the T212 transform hardcodes — never ``STK``),
+    ``account_id`` = ``""`` (real demo T212 snapshots carry an empty account id)
+    and labels using the real single-lowercase-letter suffix format
+    (``VWCEl_EQ``).
     """
     if fernet_key is None:
         fernet_key = generate_key()
@@ -175,7 +178,7 @@ def t212_normalized_snapshot(
             "account_id": [account_id, account_id, account_id],
             "position_type": ["EQUITY", "EQUITY", "CASH"],
             "label": ["VWCEl_EQ", "AAPLu_EQ", "CASH PLN"],
-            "name": [
+            "description": [
                 "Vanguard FTSE All-World UCITS ETF",
                 "Apple Inc",
                 "Cash PLN",
@@ -186,8 +189,8 @@ def t212_normalized_snapshot(
                 encrypt_float(1800.0, fernet_key),
                 encrypt_float(1500.0, fernet_key),
             ],
-            "security_ccy": ["PLN", "PLN", "PLN"],
+            "security_ccy": ["EUR", "USD", "PLN"],
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
         },
-        schema=trading212_snapshot_normalized_schema,
+        schema=snapshot_normalized_schema,
     )

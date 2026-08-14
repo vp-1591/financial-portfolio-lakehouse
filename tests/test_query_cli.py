@@ -13,7 +13,7 @@ import pytest
 from deltalake import write_deltalake
 
 from pipeline.crypto import encrypt_float, generate_key
-from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+from pipeline.normalized.models import snapshot_normalized_schema
 from pipeline.run import cmd_query
 from pipeline.storage import StorageConfig, use_storage
 from tests.local_backend import LocalBackend
@@ -44,7 +44,7 @@ def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
             "description": ["Vanguard FTSE All-World", "Apple Inc", "Cash EUR"],
         },
-        schema=ibkr_snapshot_normalized_schema,
+        schema=snapshot_normalized_schema,
     )
     path = str(data_dir / "normalized" / "ibkr_snapshot")
     write_deltalake(path, table, mode="overwrite")

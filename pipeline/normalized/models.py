@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import pyarrow as pa
 
-# --- Snapshot schemas (3) ---
+# --- Snapshot schema (shared) ---
 
-ibkr_snapshot_normalized_schema = pa.schema(
+snapshot_normalized_schema = pa.schema(
     [
         pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
         pa.field("account_id", pa.string()),
@@ -41,34 +41,6 @@ ibkr_snapshot_normalized_schema = pa.schema(
         pa.field("security_ccy", pa.string()),
         pa.field("isin", pa.string()),
         pa.field("description", pa.string()),
-    ]
-)
-
-trading212_snapshot_normalized_schema = pa.schema(
-    [
-        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-        pa.field("account_id", pa.string()),
-        pa.field("position_type", pa.string()),  # EQUITY or CASH
-        pa.field("label", pa.string()),
-        pa.field("name", pa.string()),
-        pa.field("asset_class", pa.string()),
-        pa.field("security_value", pa.binary()),  # Fernet-encrypted; in security_ccy
-        pa.field("security_ccy", pa.string()),
-        pa.field("isin", pa.string()),
-    ]
-)
-
-xtb_snapshot_normalized_schema = pa.schema(
-    [
-        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
-        pa.field("account_id", pa.string()),
-        pa.field("position_type", pa.string()),  # EQUITY or CASH
-        pa.field("label", pa.string()),
-        pa.field("name", pa.string()),
-        pa.field("asset_class", pa.string()),
-        pa.field("security_value", pa.binary()),  # Fernet-encrypted; in security_ccy
-        pa.field("security_ccy", pa.string()),
-        pa.field("isin", pa.string()),
     ]
 )
 

@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import pyarrow as pa
 
 from pipeline.crypto import encrypt, encrypt_float, generate_key
-from pipeline.normalized.models import xtb_snapshot_normalized_schema
+from pipeline.normalized.models import snapshot_normalized_schema
 from pipeline.raw.models import RAW_SCHEMA
 
 
@@ -212,7 +212,7 @@ def xtb_normalized_snapshot(
             "account_id": [account_id, account_id, account_id],
             "position_type": ["EQUITY", "EQUITY", "CASH"],
             "label": ["VWCE.DE", "CDR.PL", "CASH:PLN"],
-            "name": [
+            "description": [
                 "Vanguard FTSE All-World UCITS ETF",
                 "CD Projekt",
                 "Cash PLN",
@@ -226,5 +226,5 @@ def xtb_normalized_snapshot(
             "security_ccy": ["EUR", "PLN", "PLN"],
             "isin": ["IE00BK5BQT80", "PL9999900006", ""],
         },
-        schema=xtb_snapshot_normalized_schema,
+        schema=snapshot_normalized_schema,
     )

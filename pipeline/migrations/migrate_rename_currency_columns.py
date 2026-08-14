@@ -30,9 +30,7 @@ from pipeline.analytics.models import (
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
     consolidated_holdings_schema,
-    ibkr_snapshot_normalized_schema,
-    trading212_snapshot_normalized_schema,
-    xtb_snapshot_normalized_schema,
+    snapshot_normalized_schema,
 )
 from pipeline.storage import get_storage
 
@@ -58,9 +56,9 @@ def _get_storage_options_with_credentials() -> dict[str, str]:
 
 # Tables that need `currency` dropped (no replacement column).
 _DROP_CURRENCY = {
-    "ibkr_snapshot": (ibkr_snapshot_normalized_schema, "currency"),
-    "trading212_snapshot": (trading212_snapshot_normalized_schema, "currency"),
-    "xtb_snapshot": (xtb_snapshot_normalized_schema, "currency"),
+    "ibkr_snapshot": (snapshot_normalized_schema, "currency"),
+    "trading212_snapshot": (snapshot_normalized_schema, "currency"),
+    "xtb_snapshot": (snapshot_normalized_schema, "currency"),
 }
 
 # Tables where `currency` is renamed to `value_currency`.

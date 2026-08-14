@@ -426,3 +426,16 @@ def position_security_currency(
         return instrument_currencies[str(ticker)]
 
     return fallback
+
+
+def position_security_value(position: dict[str, Any]) -> float | None:
+    """Position market value in the INSTRUMENT currency (currentPrice * quantity).
+
+    Returns None when currentPrice or quantity is unavailable, signalling the
+    caller to fall back to the wallet-currency value/ccy pairing.
+    """
+    quantity = as_float(first_value(position, ("quantity", "ownedQuantity")))
+    price = as_float(first_value(position, ("currentPrice", "price")))
+    if quantity and price:
+        return quantity * price
+    return None

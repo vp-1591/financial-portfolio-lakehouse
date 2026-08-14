@@ -30,7 +30,7 @@ from pipeline.connectors.transform_utils import (
 )
 from pipeline.normalized.models import (
     cdc_events_normalized_schema,
-    ibkr_snapshot_normalized_schema,
+    snapshot_normalized_schema,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ def transform_snapshot(
 
     return build_normalized_table(
         records,
-        ibkr_snapshot_normalized_schema,
+        snapshot_normalized_schema,
         fernet_key,
         encrypt_columns=_IBKR_SNAPSHOT_ENCRYPT_COLUMNS,
     )

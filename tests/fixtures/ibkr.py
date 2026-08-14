@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 import pyarrow as pa
 
 from pipeline.crypto import encrypt, encrypt_float, generate_key
-from pipeline.normalized.models import ibkr_snapshot_normalized_schema
+from pipeline.normalized.models import snapshot_normalized_schema
 from pipeline.raw.models import RAW_SCHEMA
 
 
@@ -129,7 +129,7 @@ def ibkr_normalized_snapshot(
                 "Cash EUR",
             ],
         },
-        schema=ibkr_snapshot_normalized_schema,
+        schema=snapshot_normalized_schema,
     )
 
 
