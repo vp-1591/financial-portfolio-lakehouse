@@ -22,8 +22,16 @@ from raw — that happens automatically when ``transform_snapshot`` re-runs
 Idempotent: skips tables that are absent and tables that already have
 ``description`` (already migrated).
 
+Run this script BEFORE deploying the code that emits the unified schema. The
+connector writes the normalized snapshot with ``write_deltalake(mode="overwrite")``
+and no ``schema_mode``, so overwriting an existing ``name``-column table with a
+``description``-column table raises ``SchemaMismatchError``. This migration
+renames the column first so the next pipeline run's transform write succeeds
+(and then overwrites the rows with the new instrument-currency values).
+
 Usage:
-    .venv/Scripts/python -m pipeline.migrations.migrate_snapshot_schema_unify [--dry-run]
+    .venv/Scripts/python -m pipeline.migrations.migrate_snapshot_schema_unify \
+        --mode (docker|staging|prod) [--dry-run]
 
 Requires the same environment variables as the main pipeline (ENCRYPTION_KEY,
 S3_BUCKET or PIPELINE_DATA_DIR, etc.).
@@ -143,11 +151,27 @@ def main() -> None:
         "for trading212_snapshot and xtb_snapshot"
     )
     parser.add_argument(
+        "--mode",
+        required=True,
+        choices=("docker", "staging", "prod"),
+        help="Execution mode (which S3/env to migrate). Run BEFORE deploying "
+        "the code that emits the unified schema, otherwise the next pipeline "
+        "run's connector write fails with SchemaMismatchError.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be done without making changes",
     )
     args = parser.parse_args()
+
+    # Set execution mode + load env before storage resolution (mirrors
+    # pipeline.run's main()). The sibling migrations lack this and raise
+    # "Mode not set" on a direct `python -m` run.
+    from pipeline.secrets import load_env, set_mode
+
+    load_env()
+    set_mode(args.mode)
 
     storage = get_storage()
     storage_opts = _get_storage_options_with_credentials()
