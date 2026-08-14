@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -14,7 +14,9 @@ from deltalake import write_deltalake
 
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.models import snapshot_normalized_schema
+from pipeline.query import clear_table_cache, list_tables
 from pipeline.run import cmd_query
+from pipeline.secrets import reset_mode, set_mode
 from pipeline.storage import StorageConfig, use_storage
 from tests.local_backend import LocalBackend
 
@@ -25,7 +27,6 @@ from tests.local_backend import LocalBackend
 
 def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
     """Write a small normalized IBKR Delta table for query tests."""
-    from datetime import datetime
 
     now = datetime.now(UTC)
     table = pa.table(
@@ -52,7 +53,6 @@ def _write_ibkr_snapshot(data_dir: Path, fernet_key: bytes) -> None:
 
 def _setup_env(tmp_path: Path) -> tuple[Path, bytes]:
     """Create data dir structure, write IBKR data, set up storage and env."""
-    from pipeline.secrets import set_mode
 
     key = generate_key()
     data = tmp_path / "data"
@@ -114,15 +114,11 @@ class TestQueryCLI:
 
     def setup_method(self) -> None:
         """Reset the query module cache between tests."""
-        from pipeline.query import clear_table_cache
-        from pipeline.secrets import set_mode
-
         clear_table_cache()
         set_mode("docker")
 
     def teardown_method(self) -> None:
         """Clean up env var."""
-        from pipeline.secrets import reset_mode
 
         os.environ.pop("ENCRYPTION_KEY", None)
         reset_mode()
@@ -241,8 +237,6 @@ class TestQueryCLI:
     def test_list_tables(self, tmp_path: Path) -> None:
         """list_tables() discovers the IBKR snapshot table after setup."""
         _setup_env(tmp_path)
-
-        from pipeline.query import list_tables
 
         tables = list_tables()
         assert "ibkr_snapshot_normalized" in tables

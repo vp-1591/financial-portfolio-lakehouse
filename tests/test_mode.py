@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pipeline.secrets import get_mode, is_demo, reset_mode, set_mode
+from pipeline.storage import S3_DEFAULT_PROD_BUCKET, resolve_storage, use_storage
 
 
 class TestSetMode:
@@ -64,7 +65,6 @@ class TestResolveStorage:
     """resolve_storage dispatches on mode to select S3 backend."""
 
     def test_docker_mode_uses_minio_endpoint(self, monkeypatch) -> None:
-        from pipeline.storage import resolve_storage, use_storage
 
         set_mode("docker")
         monkeypatch.setenv("S3_BUCKET", "test-bucket")
@@ -85,7 +85,6 @@ class TestResolveStorage:
         reset_mode()
 
     def test_staging_mode_uses_s3_bucket(self, monkeypatch) -> None:
-        from pipeline.storage import resolve_storage
 
         set_mode("staging")
         monkeypatch.setenv("S3_BUCKET", "staging-bucket")
@@ -98,7 +97,6 @@ class TestResolveStorage:
         reset_mode()
 
     def test_prod_mode_uses_prod_bucket(self, monkeypatch) -> None:
-        from pipeline.storage import resolve_storage
 
         set_mode("prod")
         monkeypatch.setenv("S3_BUCKET", "prod-bucket")
@@ -117,7 +115,6 @@ class TestResolveStorage:
         reset_mode()
 
     def test_docker_mode_missing_bucket_raises(self, monkeypatch) -> None:
-        from pipeline.storage import resolve_storage
 
         set_mode("docker")
         # S3_BUCKET not set
@@ -126,7 +123,6 @@ class TestResolveStorage:
         reset_mode()
 
     def test_prod_mode_missing_bucket_defaults(self, monkeypatch) -> None:
-        from pipeline.storage import S3_DEFAULT_PROD_BUCKET, resolve_storage
 
         set_mode("prod")
         # S3_BUCKET not set — defaults to the production bucket
@@ -136,7 +132,6 @@ class TestResolveStorage:
         reset_mode()
 
     def test_staging_mode_missing_bucket_raises(self, monkeypatch) -> None:
-        from pipeline.storage import resolve_storage
 
         set_mode("staging")
         # S3_BUCKET not set

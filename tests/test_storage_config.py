@@ -19,8 +19,11 @@ from pathlib import Path
 
 import pytest
 
+import pipeline.paths
+import pipeline.storage
 from pipeline.secrets import reset_mode, resolve_aws_credentials, set_mode
 from pipeline.storage import (
+    PROJECT_ROOT,
     S3_DEFAULT_PREFIX,
     S3_DEFAULT_PROD_BUCKET,
     S3Backend,
@@ -37,14 +40,12 @@ class TestResolveStorage:
 
     def setup_method(self):
         """Reset module-level singletons before each test."""
-        import pipeline.storage
 
         pipeline.storage._config = None
         reset_mode()
 
     def teardown_method(self):
         """Reset module-level singletons after each test."""
-        import pipeline.storage
 
         pipeline.storage._config = None
         reset_mode()
@@ -215,7 +216,6 @@ class TestResolveStorage:
 
     def test_mode_not_set_raises(self):
         """resolve_storage raises RuntimeError when mode is not set."""
-        import pipeline.storage
 
         pipeline.storage._config = None
         reset_mode()
@@ -224,7 +224,6 @@ class TestResolveStorage:
 
     def test_secrets_dir_at_project_root(self, monkeypatch):
         """secrets_dir is always at project root, not inside data dir."""
-        from pipeline.storage import PROJECT_ROOT
 
         monkeypatch.setenv("S3_BUCKET", "test-bucket")
         set_mode("docker")
@@ -577,20 +576,16 @@ class TestPathsModule:
     """Test that pipeline.paths delegates to StorageConfig."""
 
     def setup_method(self):
-        import pipeline.storage
 
         pipeline.storage._config = None
         reset_mode()
 
     def teardown_method(self):
-        import pipeline.storage
 
         pipeline.storage._config = None
         reset_mode()
 
     def test_paths_module_delegates_to_storage(self, tmp_path: Path):
-        import pipeline.paths
-
         data = tmp_path / "test-data"
         (data / "raw").mkdir(parents=True)
         (data / "normalized").mkdir(parents=True)
@@ -613,8 +608,6 @@ class TestPathsModule:
         assert pipeline.paths.NORMALIZED_DIR == str(data / "normalized")
 
     def test_paths_table_paths(self, tmp_path: Path):
-        import pipeline.paths
-
         data = tmp_path / "test-data"
         (data / "raw").mkdir(parents=True)
         (data / "normalized").mkdir(parents=True)
@@ -641,8 +634,6 @@ class TestPathsModule:
         )
 
     def test_paths_unknown_attribute_raises(self, monkeypatch):
-        import pipeline.paths
-
         monkeypatch.setenv("S3_BUCKET", "test-bucket")
         set_mode("docker")
         with pytest.raises(AttributeError, match="has no attribute"):

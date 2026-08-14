@@ -1,12 +1,20 @@
 """Tests for table discovery, alias resolution, connection management, and decryption."""
 
+import shutil
+import tempfile
+from pathlib import Path
+
 import duckdb
 import polars as pl
 import pyarrow as pa
 import pytest
 from deltalake import write_deltalake
 
+import pipeline.storage as _storage_mod
 from pipeline.crypto import encrypt_float, encrypt_string, generate_key
+from pipeline.query import (
+    _TABLE_CACHE as fresh_cache,
+)
 from pipeline.query import (
     LAYERS,
     _decrypt_value,
@@ -18,6 +26,7 @@ from pipeline.query import (
     parse_alias,
     refresh,
 )
+from pipeline.secrets import reset_mode, set_mode
 from pipeline.storage import S3Backend, StorageConfig, use_storage
 from tests.local_backend import LocalBackend
 
@@ -107,8 +116,6 @@ class TestDiscoverTablesLocal:
             names = [n for _, n in tables]
             assert "not_a_table" not in names
         finally:
-            import pipeline.storage as _storage_mod
-
             _storage_mod._config = None
 
     def test_empty_data_dir(self, tmp_path):
@@ -136,11 +143,6 @@ class TestListTables:
         making the loops vacuously true and the parse_alias swap mutation
         undetectable here).
         """
-        import tempfile
-        from pathlib import Path
-
-        from pipeline.secrets import set_mode
-
         clear_table_cache()
         set_mode("docker")
         self._tmp = tempfile.mkdtemp()
@@ -175,11 +177,6 @@ class TestListTables:
 
     def teardown_method(self):
         """Reset storage and mode, and clean up the temp dir after each test."""
-        import shutil
-
-        import pipeline.storage as _storage_mod
-        from pipeline.secrets import reset_mode
-
         _storage_mod._config = None
         reset_mode()
         clear_table_cache()
@@ -216,7 +213,6 @@ class TestListTables:
 
     def test_s3_backend_returns_empty_for_missing_bucket(self):
         """With S3Backend pointing to nonexistent bucket, result is empty."""
-        from pipeline.secrets import set_mode
 
         set_mode("docker")
         backend = S3Backend(bucket="test-bucket", prefix="pipeline")
@@ -236,9 +232,6 @@ class TestListTables:
             tables = list_tables()
             assert tables == []
         finally:
-            import pipeline.storage as _storage_mod
-            from pipeline.secrets import reset_mode
-
             _storage_mod._config = None
             reset_mode()
             clear_table_cache()
@@ -270,8 +263,6 @@ class TestListTables:
             tables = list_tables()
             assert "test_table_normalized" in tables
         finally:
-            import pipeline.storage as _storage_mod
-
             _storage_mod._config = None
             clear_table_cache()
 
@@ -302,8 +293,6 @@ class TestListTables:
             second = list_tables()
             assert first is second  # same object — cached
         finally:
-            import pipeline.storage as _storage_mod
-
             _storage_mod._config = None
             clear_table_cache()
 
@@ -335,8 +324,6 @@ class TestListTables:
             assert refreshed == first  # same content
             assert first is not refreshed  # different object — re-discovered
         finally:
-            import pipeline.storage as _storage_mod
-
             _storage_mod._config = None
             clear_table_cache()
 
@@ -352,7 +339,6 @@ class TestListTables:
             pass
         # After clearing, cache should be None.
         clear_table_cache()
-        from pipeline.query import _TABLE_CACHE as fresh_cache
 
         assert fresh_cache is None
 
@@ -371,7 +357,6 @@ class TestGetConnection:
 
     def teardown_method(self):
         """Clean up storage singleton and connection."""
-        import pipeline.storage as _storage_mod
 
         _storage_mod._config = None
         refresh()
@@ -551,8 +536,6 @@ class TestDecryptValue:
         assert result == pytest.approx(42.5)
 
     def test_bytes_decrypts_string(self):
-        from pipeline.crypto import encrypt_string
-
         key = generate_key()
         encrypted = encrypt_string("hello", key)
         result = _decrypt_value(encrypted, key)
