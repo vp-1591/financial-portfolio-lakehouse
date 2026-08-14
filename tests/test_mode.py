@@ -125,13 +125,14 @@ class TestResolveStorage:
             resolve_storage()
         reset_mode()
 
-    def test_prod_mode_missing_bucket_raises(self, monkeypatch) -> None:
-        from pipeline.storage import resolve_storage
+    def test_prod_mode_missing_bucket_defaults(self, monkeypatch) -> None:
+        from pipeline.storage import S3_DEFAULT_PROD_BUCKET, resolve_storage
 
         set_mode("prod")
-        # S3_BUCKET not set
-        with pytest.raises(ValueError, match="S3_BUCKET is required"):
-            resolve_storage()
+        # S3_BUCKET not set — defaults to the production bucket
+        config = resolve_storage()
+        assert config.backend.bucket == S3_DEFAULT_PROD_BUCKET
+        assert config.backend.prefix == "pipeline"
         reset_mode()
 
     def test_staging_mode_missing_bucket_raises(self, monkeypatch) -> None:
