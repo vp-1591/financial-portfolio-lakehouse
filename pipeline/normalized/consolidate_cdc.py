@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import logging
 
+import polars as pl
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
+from pipeline.connectors.transform_utils import dedup_cdc_events
 from pipeline.normalized.models import cdc_events_normalized_schema
 from pipeline.storage import get_storage
 
@@ -79,13 +81,30 @@ def consolidate_cdc_events() -> pa.Table:
     # tables is guaranteed non-empty because all required brokers contributed.
     result = pa.concat_tables(tables, schema=cdc_events_normalized_schema)
 
+    # Defense-in-depth: dedup across brokers on (broker, event_type, event_id).
+    # Each broker's transform already dedups its own events, but this boundary
+    # check guards against future brokers that skip transform-level dedup and
+    # against raw-layer replays that bypass the transform contract.  It also
+    # catches the T212 full-history re-fetch class of bug regardless of broker.
+    # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
+    df = pl.from_arrow(result)
+    assert isinstance(df, pl.DataFrame)  # pl.from_arrow(pa.Table) -> DataFrame
+    df = dedup_cdc_events(
+        df,
+        subset=["broker", "event_type", "event_id"],
+        label="CDC consolidate",
+    )
+
     output_path = config.normalized_path("cdc_events")
     config.backend.ensure_parent(output_path)
     write_deltalake(
         str(output_path),
-        result,
+        df,
         mode="overwrite",
         storage_options=storage_opts,
     )
-    logger.info("Consolidated CDC events: %d rows", result.num_rows)
-    return result
+    logger.info("Consolidated CDC events: %d rows", df.height)
+    # Return an Arrow table to honor the -> pa.Table contract (callers and
+    # tests access result.num_rows / result.column(...)); write_deltalake
+    # receives the Polars frame directly per the repo rule (no pa.Table write).
+    return df.to_arrow()

@@ -858,10 +858,11 @@ class TestCdcTransform:
         events: list[dict] | dict,
         source: str,
         fernet_key: bytes,
+        fetched_at: datetime | None = None,
     ) -> pa.Table:
         """Build a raw-layer table with encrypted CDC event payloads."""
 
-        now = datetime.now(UTC)
+        now = fetched_at if fetched_at is not None else datetime.now(UTC)
         raw_payloads = [json.dumps(events).encode("utf-8")]
         encrypted_payloads = [encrypt(p, fernet_key) for p in raw_payloads]
 
@@ -959,6 +960,115 @@ class TestCdcTransform:
         assert result.column("target_fx_rate")[0].as_py() is None
         assert result.column("target_value")[0].as_py() is None
         assert result.column("target_ccy")[0].as_py() is None
+
+    def test_transform_cdc_deduplicates_across_payloads(
+        self, fernet_key: bytes
+    ) -> None:
+        """Re-fetched T212 CDC payloads are deduped by (event_type, event_id).
+
+        T212 fetches full history on every run, so repeated pipeline runs
+        re-append the same orders to the raw layer.  Mirrors the IBKR dedup
+        test at test_ibkr_connector.py::test_transform_cdc_deduplicates_across_payloads.
+        """
+        events = [self._make_order_event()]
+        raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
+        duplicated = pa.concat_tables([raw, raw])
+
+        result = transform_cdc(duplicated, fernet_key)
+
+        # The same order should appear exactly once, not twice.
+        assert result.num_rows == 1
+        keys = list(
+            zip(
+                result.column("event_type").to_pylist(),
+                result.column("event_id").to_pylist(),
+            )
+        )
+        assert len(keys) == len(set(keys)), f"Duplicate keys found: {keys}"
+
+    def test_transform_cdc_dedup_scopes_by_event_type(self, fernet_key: bytes) -> None:
+        """An order and a dividend sharing event_id "12345" are kept distinct.
+
+        order.id is an integer cast to string; dividend.reference is a separate
+        string ID space.  Dedup must be scoped by event_type, not event_id alone,
+        or an order and dividend with the same numeric string id would collide.
+        """
+        order_event = self._make_order_event()  # order.id 12345 -> event_id "12345"
+        dividend_event = {
+            "reference": "12345",  # same string as the order id
+            "ticker": "AAPL_US_EQ",
+            "instrument": {
+                "ticker": "AAPL_US_EQ",
+                "isin": "US0378331007",
+                "name": "Apple Inc.",
+                "currency": "USD",
+            },
+            "amount": 10.0,
+            "currency": "USD",
+            "grossAmountPerShare": 0.10,
+            "paidOn": "2024-02-15",
+            "quantity": 100,
+            "tickerCurrency": "USD",
+            "type": "ORDINARY",
+        }
+        raw_orders = self._build_raw_cdc_table(
+            [order_event], "/equity/history/orders", fernet_key
+        )
+        raw_dividends = self._build_raw_cdc_table(
+            [dividend_event], "/equity/history/dividends", fernet_key
+        )
+        raw = pa.concat_tables([raw_orders, raw_dividends])
+
+        result = transform_cdc(raw, fernet_key)
+
+        # Both events survive — event_type scopes the uniqueness.
+        assert result.num_rows == 2
+        keys = list(
+            zip(
+                result.column("event_type").to_pylist(),
+                result.column("event_id").to_pylist(),
+            )
+        )
+        assert len(keys) == len(set(keys)), f"Duplicate keys found: {keys}"
+        assert ("TRADE", "12345") in keys
+        assert ("DIVIDEND", "12345") in keys
+
+    def test_transform_cdc_dedup_keeps_latest_fetched_version(
+        self, fernet_key: bytes
+    ) -> None:
+        """When an event is re-fetched with a corrected value, the latest wins.
+
+        unique()'s default keep="any" is non-deterministic and does not
+        guarantee the row kept after a descending fetched_at sort is the
+        newest.  keep="first" honors that sort so a field correction in a
+        later fetch survives.  This is the load-bearing guard for ADR 0105's
+        "latest fetched_at wins" decision.
+        """
+        earlier = datetime(2024, 1, 1, 10, 0, tzinfo=UTC)
+        later = datetime(2024, 1, 2, 10, 0, tzinfo=UTC)
+
+        stale_event = self._make_order_event()
+        stale_event["fill"]["walletImpact"]["netValue"] = 1500.0
+        corrected_event = self._make_order_event()
+        corrected_event["fill"]["walletImpact"]["netValue"] = 2000.0
+        raw_stale = self._build_raw_cdc_table(
+            [stale_event], "/equity/history/orders", fernet_key, fetched_at=earlier
+        )
+        raw_corrected = self._build_raw_cdc_table(
+            [corrected_event],
+            "/equity/history/orders",
+            fernet_key,
+            fetched_at=later,
+        )
+        raw = pa.concat_tables([raw_stale, raw_corrected])
+
+        result = transform_cdc(raw, fernet_key)
+
+        assert result.num_rows == 1
+        assert result.column("event_id")[0].as_py() == "12345"
+        cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
+        # BUY = outflow -> negative; latest correction (netValue 2000.0) must win.
+        assert cash == pytest.approx(-2000.0)
 
     def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
         """T212 orders with walletImpact.taxes correctly split fees and taxes."""

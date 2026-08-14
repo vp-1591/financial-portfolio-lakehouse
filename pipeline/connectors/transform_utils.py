@@ -382,3 +382,51 @@ def finalize_table(
     # Convert to PyArrow and cast to target schema.
     arrow_table = df.to_arrow()
     return arrow_table.cast(schema)
+
+
+def dedup_cdc_events(
+    df: pl.DataFrame,
+    subset: list[str],
+    *,
+    sort_after: list[str] | None = None,
+    label: str = "CDC",
+) -> pl.DataFrame:
+    """Deduplicate CDC events, keeping the latest-``fetched_at`` version.
+
+    Sorts by ``fetched_at`` descending so the newest fetch is first, then
+    keeps the first row per *subset* group.  ``keep="first"`` is required:
+    ``unique()``'s default ``keep="any"`` is non-deterministic and may drop
+    the newest version, violating the "latest fetched_at wins" contract
+    (Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md).
+    When *sort_after* is given, re-sorts for deterministic row order across
+    runs.  Logs how many duplicates were removed under *label*.
+
+    A no-op (returns *df* unchanged) when *df* is empty.
+
+    Parameters
+    ----------
+    df:
+        Polars DataFrame with ``fetched_at`` and every column in *subset*.
+    subset:
+        Columns defining event identity (e.g. ``["event_type", "event_id"]``).
+    sort_after:
+        Optional columns to sort by after dedup for stable output order.
+    label:
+        Prefix for the dedup log line.
+    """
+    if df.height == 0:
+        return df
+    before = df.height
+    df = df.sort("fetched_at", descending=True).unique(subset=subset, keep="first")
+    if sort_after is not None:
+        df = df.sort(sort_after)
+    after = df.height
+    if before > after:
+        logger.info(
+            "%s dedup: removed %d duplicate events (%d → %d)",
+            label,
+            before - after,
+            before,
+            after,
+        )
+    return df

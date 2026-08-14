@@ -79,7 +79,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0066 | Portfolio Holdings Gold Table and Report Generation | 2026-07-13 | superseded | 0082 |
 | 0067 | Fix Step Function Failure Logging in Deploy Workflow | 2026-07-13 | superseded | 0081 |
 | 0068 | Add Gitleaks Secret Scanning to CI | 2026-07-13 | active | — |
-| 0069 | Fix IBKR CDC Triplication and Date Parsing | 2026-07-13 | active | — |
+| 0069 | Fix IBKR CDC Triplication and Date Parsing | 2026-07-13 | superseded | 0105 |
 | 0070 | Embed Validation in Pipeline and Selective Report Sections | 2026-07-13 | active | — |
 | 0071 | IBKR Demo Initial Deposit Injection | 2026-07-14 | active | — |
 | 0072 | DQ Table Overwrite and Empty-Table Freshness | 2026-07-14 | active | — |
@@ -115,6 +115,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0102 | Standardize Snapshot Schemas and Fix T212 security_ccy to Instrument Currency | 2026-08-14 | active | — |
 | 0103 | Prod boto3 Default-Chain Credential Fallback | 2026-08-14 | active | — |
 | 0104 | Fix T212 Trade cash_amount/gross_amount Sign Convention | 2026-08-14 | active | — |
+| 0105 | Fix T212 CDC Dedup and Cross-Endpoint Concat Type Mismatch | 2026-08-14 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
