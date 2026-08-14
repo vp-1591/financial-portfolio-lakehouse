@@ -385,10 +385,10 @@ _IBKR_CASH_TYPE_MAP: dict[str, str] = {
 def _classify_ibkr_cash_type(cash_type: str, amount: float) -> str:
     """Map an IBKR CashTransaction type to a normalized event_type.
 
-    Deposits & Withdrawals are classified by sign: positive = DEPOSIT,
+    Deposits/Withdrawals are classified by sign: positive = DEPOSIT,
     negative = WITHDRAWAL.
     """
-    if cash_type == "Deposits & Withdrawals":
+    if cash_type == "Deposits/Withdrawals":
         return "DEPOSIT" if amount >= 0 else "WITHDRAWAL"
     return _IBKR_CASH_TYPE_MAP.get(cash_type, "UNKNOWN")
 
@@ -496,7 +496,7 @@ def _inject_demo_deposit(
                 ),
                 "source": "CashTransaction",
                 "event_type": "DEPOSIT",
-                "raw_event_type": "Deposits & Withdrawals",
+                "raw_event_type": "Deposits/Withdrawals",
                 "event_datetime": deposit_date_str,
                 "security_ccy": base_ccy,
                 "cash_amount": _DEMO_INITIAL_DEPOSIT_AMOUNT,

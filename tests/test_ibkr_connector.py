@@ -1412,19 +1412,17 @@ class TestClassifyIbkrCashType:
     def test_deposits_positive_is_deposit(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
-        assert _classify_ibkr_cash_type("Deposits & Withdrawals", 1000.0) == "DEPOSIT"
+        assert _classify_ibkr_cash_type("Deposits/Withdrawals", 1000.0) == "DEPOSIT"
 
     def test_deposits_zero_is_deposit(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
-        assert _classify_ibkr_cash_type("Deposits & Withdrawals", 0.0) == "DEPOSIT"
+        assert _classify_ibkr_cash_type("Deposits/Withdrawals", 0.0) == "DEPOSIT"
 
     def test_deposits_negative_is_withdrawal(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
 
-        assert (
-            _classify_ibkr_cash_type("Deposits & Withdrawals", -500.0) == "WITHDRAWAL"
-        )
+        assert _classify_ibkr_cash_type("Deposits/Withdrawals", -500.0) == "WITHDRAWAL"
 
     def test_broker_interest_received(self) -> None:
         from pipeline.connectors.ibkr.transform import _classify_ibkr_cash_type
@@ -1534,7 +1532,7 @@ class TestInjectDemoDeposit:
         assert deposit["cash_amount"] == 1_000_000.0
         assert deposit["target_fx_rate"] == 1.0
         assert deposit["source"] == "CashTransaction"
-        assert deposit["raw_event_type"] == "Deposits & Withdrawals"
+        assert deposit["raw_event_type"] == "Deposits/Withdrawals"
         assert deposit["description"] == "Initial demo account deposit"
         assert deposit["ticker"] == ""
         assert deposit["isin"] == ""

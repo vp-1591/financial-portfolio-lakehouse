@@ -124,7 +124,9 @@ match the Flex Query editor checkboxes exactly (see
 
 The `type` attribute values below are the exact strings IBKR puts in the XML.
 The Flex API uses the sub-section name directly (e.g. `"Broker Interest Received"`,
-`"Broker Interest Paid"`) rather than a simplified base form.
+`"Broker Interest Paid"`) rather than a simplified base form. The one exception is
+deposits/withdrawals: the XML attribute is `"Deposits/Withdrawals"` (forward slash),
+not the Flex Query editor checkbox label `"Deposits & Withdrawals"` (ampersand).
 
 | IBKR `type` value        | Normalized `event_type` | Notes |
 |--------------------------|--------------------------|-------|
@@ -132,8 +134,8 @@ The Flex API uses the sub-section name directly (e.g. `"Broker Interest Received
 | `PaymentInLieue`         | `DIVIDEND`               | IBKR spelling (extra 'e'). |
 | `Withholding Tax`        | `TAX`                    | |
 | `871(m) Withholding`     | `TAX`                    | US withholding on dividend equivalents. |
-| `Deposits & Withdrawals` (positive) | `DEPOSIT`      | Sign of `amount` determines direction. |
-| `Deposits & Withdrawals` (negative) | `WITHDRAWAL`   | |
+| `Deposits/Withdrawals` (positive) | `DEPOSIT`      | Sign of `amount` determines direction. |
+| `Deposits/Withdrawals` (negative) | `WITHDRAWAL`   | |
 | `Broker Interest Received` | `INTEREST`             | |
 | `Broker Interest Paid`   | `INTEREST`               | |
 | `Bond Interest Received` | `INTEREST`               | |
