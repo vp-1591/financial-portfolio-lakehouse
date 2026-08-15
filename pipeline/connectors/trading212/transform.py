@@ -75,8 +75,12 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         # position from the portfolio. A genuinely zero-value position (both
         # present, value 0) is still skipped quietly below.
         if price is None or quantity is None:
+            # ``instrument`` may itself be None on a corrupted payload; guard the
+            # ticker read so the intended ValueError surfaces instead of an
+            # AttributeError masking it.
+            ticker = instrument.get("ticker") if isinstance(instrument, dict) else None
             raise ValueError(
-                f"T212 position {instrument.get('ticker')!r} has null "
+                f"T212 position {ticker!r} has null "
                 f"currentPrice/quantity (currentPrice={price!r}, "
                 f"quantity={quantity!r}); cannot compute instrument value. "
                 "This indicates a corrupted/truncated payload, not a normal "

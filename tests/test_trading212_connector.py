@@ -133,7 +133,6 @@ class TestTransformSnapshot:
         self,
         summary: dict,
         positions: list[dict],
-        instruments: list[dict] | None = None,
     ) -> pa.Table:
         """Build a raw-layer table from fake API responses.
 
@@ -148,9 +147,6 @@ class TestTransformSnapshot:
             json.dumps(summary).encode("utf-8"),
             json.dumps(positions).encode("utf-8"),
         ]
-        if instruments is not None:
-            sources.append("/equity/metadata/instruments")
-            raw_payloads.append(json.dumps(instruments).encode("utf-8"))
 
         # Encrypt payloads like the real pipeline does in ingest_raw
         encrypted_payloads = [encrypt(p, key) for p in raw_payloads]
@@ -195,11 +191,8 @@ class TestTransformSnapshot:
                 "currentPrice": 100.0,
             },
         ]
-        instruments = [
-            {"ticker": "VUAA", "currencyCode": "USD", "name": "Vanguard ETF"}
-        ]
 
-        raw = self._build_raw_table(summary, positions, instruments)
+        raw = self._build_raw_table(summary, positions)
         result = transform_snapshot(raw, fernet_key)
 
         # 1 equity (ZERO is zero-value) + 1 cash
@@ -268,11 +261,8 @@ class TestTransformSnapshot:
                 "currentPrice": 100.0,
             },
         ]
-        instruments = [
-            {"ticker": "VUAA", "currencyCode": "EUR", "name": "Vanguard ETF"}
-        ]
 
-        raw = self._build_raw_table(summary, positions, instruments)
+        raw = self._build_raw_table(summary, positions)
         result = transform_snapshot(raw, fernet_key)
 
         types = result.column("position_type").to_pylist()
@@ -336,13 +326,8 @@ class TestTransformSnapshot:
                 },
             },
         ]
-        instruments = [
-            {"ticker": "SPYId_EQ", "currencyCode": "EUR", "name": "SPY"},
-            {"ticker": "SGLNl_EQ", "currencyCode": "GBX", "name": "SGLN"},
-            {"ticker": "VUAGl_EQ", "currencyCode": "GBP", "name": "VUAG"},
-        ]
 
-        raw = self._build_raw_table(summary, positions, instruments)
+        raw = self._build_raw_table(summary, positions)
         result = transform_snapshot(raw, fernet_key)
 
         ccys = result.column("security_ccy").to_pylist()
@@ -387,9 +372,8 @@ class TestTransformSnapshot:
                 },
             }
         ]
-        instruments = [{"ticker": "VWCEl_EQ", "currencyCode": "EUR", "name": "VWCE"}]
 
-        raw = self._build_raw_table(summary, positions, instruments)
+        raw = self._build_raw_table(summary, positions)
         result = transform_snapshot(raw, fernet_key)
 
         types = result.column("position_type").to_pylist()
@@ -575,6 +559,65 @@ class TestTransformSnapshot:
         raw = self._build_raw_table(summary, positions)
 
         with pytest.raises(ValueError, match="SUSP"):
+            transform_snapshot(raw, fernet_key)
+
+    def test_transform_snapshot_raises_on_null_quantity(
+        self, fernet_key: bytes
+    ) -> None:
+        """A position with null quantity fast-fails (same guard as null price).
+
+        The guard is ``if price is None or quantity is None``; the sibling
+        null-price test only exercises the ``price`` half. This covers the
+        ``quantity`` half so a regression that dropped the quantity check
+        (e.g. ``and`` instead of ``or``, or a price-only guard) is caught.
+        """
+        summary = {
+            "currency": "PLN",
+            "cash": {"availableToTrade": 1500.0},
+            "totalValue": 4000.0,
+        }
+        positions = [
+            {
+                "instrument": {
+                    "ticker": "SUSP",
+                    "name": "Suspended Co",
+                    "isin": "US0000000000",
+                    "currency": "USD",
+                },
+                "quantity": None,  # null quantity → corruption, fast-fail
+                "currentPrice": 100.0,
+            },
+        ]
+        raw = self._build_raw_table(summary, positions)
+
+        with pytest.raises(ValueError, match="SUSP"):
+            transform_snapshot(raw, fernet_key)
+
+    def test_transform_snapshot_raises_value_error_when_instrument_none(
+        self, fernet_key: bytes
+    ) -> None:
+        """A null ``instrument`` plus a null price surfaces a ValueError.
+
+        Without the guard in the error-message builder, ``instrument.get(...)``
+        on a None instrument raises AttributeError and masks the intended
+        ValueError. This locks in that the guard works: the corruption surfaces
+        as a ValueError, not an AttributeError.
+        """
+        summary = {
+            "currency": "PLN",
+            "cash": {"availableToTrade": 1500.0},
+            "totalValue": 4000.0,
+        }
+        positions = [
+            {
+                "instrument": None,  # corrupted payload: instrument itself is null
+                "quantity": 10.0,
+                "currentPrice": None,
+            },
+        ]
+        raw = self._build_raw_table(summary, positions)
+
+        with pytest.raises(ValueError, match="null currentPrice/quantity"):
             transform_snapshot(raw, fernet_key)
 
     def test_transform_snapshot_skips_zero_value_quietly(
