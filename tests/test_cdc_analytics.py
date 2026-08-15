@@ -530,6 +530,39 @@ class TestBuildDividendIncome:
         with pytest.raises(FileNotFoundError, match="CDC events table not found"):
             build_dividend_income(fernet_key=fernet_key)
 
+    def test_empty_input_writes_declared_schema(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """An empty (filtered-out) CDC input must still write a dividend_income
+        table whose on-disk schema matches dividend_income_schema exactly.
+
+        Regression guard for ADR 0106: the empty branch must route through
+        _finalize_analytics (the shared stamp/cast write tail), not call
+        _write_analytics_table directly, so empty tables share the schema
+        contract with non-empty ones.
+        """
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        # Write an empty CDC events table (no DIVIDEND rows to aggregate).
+        cdc = _make_cdc_table(fernet_key, [])
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        result = build_dividend_income(fernet_key=fernet_key)
+        assert isinstance(result, pl.DataFrame)
+        assert result.is_empty()
+        _assert_on_disk_schema_matches(
+            storage, "dividend_income", dividend_income_schema
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestBuildInterestIncome

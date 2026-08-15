@@ -13,12 +13,10 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import polars as pl
-
-if TYPE_CHECKING:
-    import pyarrow as pa
+import pyarrow as pa
 
 from pipeline.crypto import decrypt, encrypt_float
 
@@ -93,7 +91,10 @@ def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
     # ADR 0100 (issue #109 proposed exactly that regression).
     df = pl.DataFrame(raw)
     df = df.filter(pl.col("fetched_at") == pl.col("fetched_at").max().over("source"))
-    return df.to_arrow()
+    # Cast back to the input schema: polars to_arrow() emits large_string /
+    # large_binary, so the result would not .equals(RAW_SCHEMA). Mirrors the
+    # build_normalized_table cast convention (ADR 0045).
+    return df.to_arrow().cast(raw.schema)
 
 
 def coerce_fetched_at(value: Any) -> datetime:
@@ -109,6 +110,19 @@ def coerce_fetched_at(value: Any) -> datetime:
     if hasattr(value, "to_pydatetime"):
         return value.to_pydatetime()
     return value
+
+
+def empty_arrow_table(schema: pa.Schema) -> pa.Table:
+    """Build an empty PyArrow table matching *schema* (columns, dtypes, order).
+
+    Shared by the normalized builder (``build_normalized_table``) and the
+    analytics empty-frame helper (``_empty_analytics_frame``) so the
+    empty-table recipe is defined once.
+    """
+    return pa.table(
+        {field.name: pa.array([], type=field.type) for field in schema},
+        schema=schema,
+    )
 
 
 def iter_raw_payloads(
@@ -207,17 +221,12 @@ def build_normalized_table(
         Column names whose float values should be Fernet-encrypted to binary.
         Defaults to an empty list (no encryption).
     """
-    import pyarrow as pa
-
     if encrypt_columns is None:
         encrypt_columns = []
 
     # Empty result set: return a correctly-typed empty table.
     if not records:
-        return pa.table(
-            {field.name: pa.array([], type=field.type) for field in schema},
-            schema=schema,
-        )
+        return empty_arrow_table(schema)
 
     df = pl.DataFrame(records)
 

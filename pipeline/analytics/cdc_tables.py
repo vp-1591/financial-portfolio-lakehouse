@@ -24,6 +24,7 @@ from pipeline.analytics.models import (
     dividend_income_schema,
     interest_income_schema,
 )
+from pipeline.connectors.transform_utils import empty_arrow_table
 from pipeline.crypto import decrypt_float, encrypt_float
 
 logger = logging.getLogger(__name__)
@@ -275,11 +276,7 @@ def _finalize_analytics(
 
 def _empty_analytics_frame(schema: pa.Schema) -> pl.DataFrame:
     """Build an empty Polars DataFrame matching *schema* (columns + dtypes)."""
-    empty_arrow = pa.table(
-        {field.name: pa.array([], type=field.type) for field in schema},
-        schema=schema,
-    )
-    df = pl.from_arrow(empty_arrow)
+    df = pl.from_arrow(empty_arrow_table(schema))
     assert isinstance(df, pl.DataFrame)
     return df
 
@@ -315,9 +312,12 @@ def build_dividend_income(
     now = datetime.now(UTC)
 
     if df.is_empty():
-        # Write an empty table with the correct schema.
+        # Route the empty table through the shared write tail so empty
+        # tables share the stamp/cast contract (ADR 0106).
         result = _empty_analytics_frame(dividend_income_schema)
-        return _write_analytics_table(result, analytics_path)
+        return _finalize_analytics(
+            result, dividend_income_schema, analytics_path, calculated_at=now
+        )
 
     agg = (
         df.group_by(
@@ -406,7 +406,9 @@ def build_interest_income(
 
     if df.is_empty():
         result = _empty_analytics_frame(interest_income_schema)
-        return _write_analytics_table(result, analytics_path)
+        return _finalize_analytics(
+            result, interest_income_schema, analytics_path, calculated_at=now
+        )
 
     agg = (
         df.group_by(
@@ -476,7 +478,9 @@ def build_cash_flow_summary(
 
     if df.is_empty():
         result = _empty_analytics_frame(cash_flow_summary_schema)
-        return _write_analytics_table(result, analytics_path)
+        return _finalize_analytics(
+            result, cash_flow_summary_schema, analytics_path, calculated_at=now
+        )
 
     agg = (
         df.group_by(

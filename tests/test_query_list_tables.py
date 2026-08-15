@@ -544,6 +544,21 @@ class TestDecryptDf:
         result = decrypt_df(df, key=key)
         assert result["value"][0] == pytest.approx(42.5)
 
+    def test_binary_payload_correct_key_does_not_raise(self):
+        """A non-UTF8 binary payload (e.g. an XTB XLSX blob) encrypted with the
+        correct key must NOT trip the key-mismatch guard: Fernet decrypts
+        fine, the bytes just aren't float/text. Regression guard for the
+        false-positive fixed in the decrypt_df sample inference."""
+        from pipeline.crypto import encrypt
+
+        key = generate_key()
+        # 0x80/0x81/0x82 are invalid utf-8 — like an XLSX (ZIP) payload.
+        blob = encrypt(b"\x80\x81\x82binary-payload", key)
+        df = pl.DataFrame({"payload": [blob]})
+        result = decrypt_df(df, key=key)  # must NOT raise the ENCRYPTION_KEY ValueError
+        assert result.height == 1
+        assert result["payload"].dtype in (pl.String, pl.Binary)
+
 
 # ---------------------------------------------------------------------------
 # _decrypt_value
