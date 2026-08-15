@@ -231,34 +231,52 @@ def _read_cdc_events(
     return df
 
 
-def _write_analytics_table(
-    result: pa.Table,
-    schema: pa.Schema,
-    analytics_path: str,
-) -> pa.Table:
-    """Write an analytics table to Delta, casting types to match the schema."""
+def _write_analytics_table(df: pl.DataFrame, analytics_path: str) -> pl.DataFrame:
+    """Write an analytics ``pl.DataFrame`` to Delta in overwrite mode."""
     from pipeline.storage import get_storage
 
     storage_opts = get_storage().storage_options
     get_storage().backend.ensure_parent(analytics_path)
+    write_deltalake(analytics_path, df, mode="overwrite", storage_options=storage_opts)
+    return df
 
-    # Cast result columns to match the expected schema types.
-    # This handles cases like Int64 → Float64 for aggregated sums.
-    casted = {}
-    for i, field in enumerate(schema):
-        col_name = field.name
-        if col_name in result.column_names:
-            casted[col_name] = result.column(col_name).cast(field.type)
-        else:
-            # Shouldn't happen if the table was built correctly.
-            raise ValueError(f"Missing column {col_name} in result table")
 
-    result = pa.table(casted, schema=schema)
+def _finalize_analytics(
+    agg: pl.DataFrame,
+    schema: pa.Schema,
+    analytics_path: str,
+    *,
+    calculated_at: datetime,
+) -> pl.DataFrame:
+    """Add ``calculated_at``, select columns in schema order, and write to Delta.
 
-    write_deltalake(
-        analytics_path, result, mode="overwrite", storage_options=storage_opts
+    Shared tail for every CDC/holdings builder: stamp the run timestamp, project
+    to the declared column order, and persist.  The column order is derived
+    from *schema* so the on-disk table always matches the declared contract.
+
+    The Arrow schema is re-cast at the write boundary because polars ``count()``
+    yields ``Int32`` (the declared schema is ``Int64``) and ``to_arrow()`` does
+    not reproduce the declared nullability flags.  The round-trip guard tests
+    in ``tests/test_cdc_analytics.py`` and ``tests/test_portfolio_holdings.py``
+    assert the on-disk schema matches the declared ``*_schema`` exactly.
+    """
+    agg = agg.with_columns(pl.lit(calculated_at).alias("calculated_at"))
+    agg = agg.select([field.name for field in schema])
+    final = pl.from_arrow(agg.to_arrow().cast(schema))
+    # pl.from_arrow returns DataFrame | Series; a Table always yields a DataFrame.
+    assert isinstance(final, pl.DataFrame)
+    return _write_analytics_table(final, analytics_path)
+
+
+def _empty_analytics_frame(schema: pa.Schema) -> pl.DataFrame:
+    """Build an empty Polars DataFrame matching *schema* (columns + dtypes)."""
+    empty_arrow = pa.table(
+        {field.name: pa.array([], type=field.type) for field in schema},
+        schema=schema,
     )
-    return result
+    df = pl.from_arrow(empty_arrow)
+    assert isinstance(df, pl.DataFrame)
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +288,7 @@ def build_dividend_income(
     table_path: str | None = None,
     fernet_key: bytes | None = None,
     analytics_path: str | None = None,
-) -> pa.Table:
+) -> pl.DataFrame:
     """Build the ``dividend_income`` analytics table from CDC events.
 
     Groups DIVIDEND events by period, broker, security, and currency.
@@ -293,109 +311,74 @@ def build_dividend_income(
 
     if df.is_empty():
         # Write an empty table with the correct schema.
-        result = pa.table(
-            {
-                "calculated_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
-                "period_month": pa.array([], type=pa.string()),
-                "period_quarter": pa.array([], type=pa.string()),
-                "broker": pa.array([], type=pa.string()),
-                "ticker": pa.array([], type=pa.string()),
-                "isin": pa.array([], type=pa.string()),
-                "description": pa.array([], type=pa.string()),
-                "security_ccy": pa.array([], type=pa.string()),
-                "instrument_ccy": pa.array([], type=pa.string()),
-                "cash_amount": pa.array([], type=pa.binary()),
-                "target_value": pa.array([], type=pa.binary()),
-                "target_ccy": pa.array([], type=pa.string()),
-                "event_count": pa.array([], type=pa.int64()),
-            },
-            schema=dividend_income_schema,
-        )
-    else:
-        agg = (
-            df.group_by(
-                [
-                    "period_month",
-                    "period_quarter",
-                    "broker",
-                    "ticker",
-                    "isin",
-                    "description",
-                    "security_ccy",
-                ]
-            )
-            .agg(
-                [
-                    pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
-                    # Use sum() then replace 0.0 with null when all source values
-                    # were null — Polars sum() on all-null Float64 returns 0.0.
-                    pl.when(pl.col("target_value_resolved").null_count() == pl.len())
-                    .then(None)
-                    .otherwise(pl.col("target_value_resolved").sum())
-                    .alias("target_value"),
-                    # Take the first non-null target_ccy in each group.
-                    pl.col("target_ccy")
-                    .filter(pl.col("target_ccy").is_not_null())
-                    .first()
-                    .alias("target_ccy"),
-                    # Take the first non-null instrument_ccy in each group (display column).
-                    pl.col("instrument_ccy")
-                    .filter(pl.col("instrument_ccy").is_not_null())
-                    .first()
-                    .alias("instrument_ccy"),
-                    pl.col("event_id").count().alias("event_count"),
-                ]
-            )
-            .sort(["period_month", "broker", "ticker"])
-        )
-        # Cast target_value to Float64 — Polars sum() on an all-null column
-        # produces Null type, which breaks PyArrow schema inference.
-        agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
+        result = _empty_analytics_frame(dividend_income_schema)
+        return _write_analytics_table(result, analytics_path)
 
-        # Fill null target_ccy with the target currency string.
-        # This handles groups where all events had null target_ccy (pre-normalize).
-        # Get the first non-null target_ccy from the full dataset as a fallback.
-        target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
-        default_target_ccy = (
-            target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+    agg = (
+        df.group_by(
+            [
+                "period_month",
+                "period_quarter",
+                "broker",
+                "ticker",
+                "isin",
+                "description",
+                "security_ccy",
+            ]
         )
-        agg = agg.with_columns(
-            pl.when(pl.col("target_ccy").is_null())
-            .then(pl.lit(default_target_ccy))
-            .otherwise(pl.col("target_ccy"))
-            .alias("target_ccy")
+        .agg(
+            [
+                pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
+                # Use sum() then replace 0.0 with null when all source values
+                # were null — Polars sum() on all-null Float64 returns 0.0.
+                pl.when(pl.col("target_value_resolved").null_count() == pl.len())
+                .then(None)
+                .otherwise(pl.col("target_value_resolved").sum())
+                .alias("target_value"),
+                # Take the first non-null target_ccy in each group.
+                pl.col("target_ccy")
+                .filter(pl.col("target_ccy").is_not_null())
+                .first()
+                .alias("target_ccy"),
+                # Take the first non-null instrument_ccy in each group (display column).
+                pl.col("instrument_ccy")
+                .filter(pl.col("instrument_ccy").is_not_null())
+                .first()
+                .alias("instrument_ccy"),
+                pl.col("event_id").count().alias("event_count"),
+            ]
         )
+        .sort(["period_month", "broker", "ticker"])
+    )
+    # Cast target_value to Float64 — Polars sum() on an all-null column
+    # produces Null type, which breaks PyArrow schema inference.
+    agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
 
-        # Encrypt gold value columns before writing.
-        agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
+    # Fill null target_ccy with the target currency string.
+    # This handles groups where all events had null target_ccy (pre-normalize).
+    # Get the first non-null target_ccy from the full dataset as a fallback.
+    target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
+    default_target_ccy = target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+    agg = agg.with_columns(
+        pl.when(pl.col("target_ccy").is_null())
+        .then(pl.lit(default_target_ccy))
+        .otherwise(pl.col("target_ccy"))
+        .alias("target_ccy")
+    )
 
-        result = pa.table(
-            {
-                "calculated_at": [now] * len(agg),
-                "period_month": agg["period_month"].to_list(),
-                "period_quarter": agg["period_quarter"].to_list(),
-                "broker": agg["broker"].to_list(),
-                "ticker": agg["ticker"].to_list(),
-                "isin": agg["isin"].to_list(),
-                "description": agg["description"].to_list(),
-                "security_ccy": agg["security_ccy"].to_list(),
-                "instrument_ccy": agg["instrument_ccy"].to_list(),
-                "cash_amount": agg["cash_amount"].to_list(),
-                "target_value": agg["target_value"].to_list(),
-                "target_ccy": agg["target_ccy"].to_list(),
-                "event_count": agg["event_count"].to_list(),
-            },
-            schema=dividend_income_schema,
-        )
+    # Encrypt gold value columns before writing.
+    agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
 
-    return _write_analytics_table(result, dividend_income_schema, analytics_path)
+    return _finalize_analytics(
+        agg, dividend_income_schema, analytics_path, calculated_at=now
+    )
 
 
 def build_interest_income(
     table_path: str | None = None,
     fernet_key: bytes | None = None,
     analytics_path: str | None = None,
-) -> pa.Table:
+) -> pl.DataFrame:
     """Build the ``interest_income`` analytics table from CDC events.
 
     Groups INTEREST events by period, broker, and currency.
@@ -417,85 +400,58 @@ def build_interest_income(
     now = datetime.now(UTC)
 
     if df.is_empty():
-        result = pa.table(
-            {
-                "calculated_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
-                "period_month": pa.array([], type=pa.string()),
-                "period_quarter": pa.array([], type=pa.string()),
-                "broker": pa.array([], type=pa.string()),
-                "security_ccy": pa.array([], type=pa.string()),
-                "cash_amount": pa.array([], type=pa.binary()),
-                "target_value": pa.array([], type=pa.binary()),
-                "target_ccy": pa.array([], type=pa.string()),
-                "event_count": pa.array([], type=pa.int64()),
-            },
-            schema=interest_income_schema,
-        )
-    else:
-        agg = (
-            df.group_by(
-                [
-                    "period_month",
-                    "period_quarter",
-                    "broker",
-                    "security_ccy",
-                ]
-            )
-            .agg(
-                [
-                    pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
-                    pl.when(pl.col("target_value_resolved").null_count() == pl.len())
-                    .then(None)
-                    .otherwise(pl.col("target_value_resolved").sum())
-                    .alias("target_value"),
-                    pl.col("target_ccy")
-                    .filter(pl.col("target_ccy").is_not_null())
-                    .first()
-                    .alias("target_ccy"),
-                    pl.col("event_id").count().alias("event_count"),
-                ]
-            )
-            .sort(["period_month", "broker", "security_ccy"])
-        )
-        agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
+        result = _empty_analytics_frame(interest_income_schema)
+        return _write_analytics_table(result, analytics_path)
 
-        target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
-        default_target_ccy = (
-            target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+    agg = (
+        df.group_by(
+            [
+                "period_month",
+                "period_quarter",
+                "broker",
+                "security_ccy",
+            ]
         )
-        agg = agg.with_columns(
-            pl.when(pl.col("target_ccy").is_null())
-            .then(pl.lit(default_target_ccy))
-            .otherwise(pl.col("target_ccy"))
-            .alias("target_ccy")
+        .agg(
+            [
+                pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
+                pl.when(pl.col("target_value_resolved").null_count() == pl.len())
+                .then(None)
+                .otherwise(pl.col("target_value_resolved").sum())
+                .alias("target_value"),
+                pl.col("target_ccy")
+                .filter(pl.col("target_ccy").is_not_null())
+                .first()
+                .alias("target_ccy"),
+                pl.col("event_id").count().alias("event_count"),
+            ]
         )
+        .sort(["period_month", "broker", "security_ccy"])
+    )
+    agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
 
-        # Encrypt gold value columns before writing.
-        agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
+    target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
+    default_target_ccy = target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+    agg = agg.with_columns(
+        pl.when(pl.col("target_ccy").is_null())
+        .then(pl.lit(default_target_ccy))
+        .otherwise(pl.col("target_ccy"))
+        .alias("target_ccy")
+    )
 
-        result = pa.table(
-            {
-                "calculated_at": [now] * len(agg),
-                "period_month": agg["period_month"].to_list(),
-                "period_quarter": agg["period_quarter"].to_list(),
-                "broker": agg["broker"].to_list(),
-                "security_ccy": agg["security_ccy"].to_list(),
-                "cash_amount": agg["cash_amount"].to_list(),
-                "target_value": agg["target_value"].to_list(),
-                "target_ccy": agg["target_ccy"].to_list(),
-                "event_count": agg["event_count"].to_list(),
-            },
-            schema=interest_income_schema,
-        )
+    # Encrypt gold value columns before writing.
+    agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
 
-    return _write_analytics_table(result, interest_income_schema, analytics_path)
+    return _finalize_analytics(
+        agg, interest_income_schema, analytics_path, calculated_at=now
+    )
 
 
 def build_cash_flow_summary(
     table_path: str | None = None,
     fernet_key: bytes | None = None,
     analytics_path: str | None = None,
-) -> pa.Table:
+) -> pl.DataFrame:
     """Build the ``cash_flow_summary`` analytics table from CDC events.
 
     Groups all events by period, broker, event type, and currency.
@@ -514,78 +470,49 @@ def build_cash_flow_summary(
     now = datetime.now(UTC)
 
     if df.is_empty():
-        result = pa.table(
-            {
-                "calculated_at": pa.array([], type=pa.timestamp("us", tz="UTC")),
-                "period_month": pa.array([], type=pa.string()),
-                "period_quarter": pa.array([], type=pa.string()),
-                "broker": pa.array([], type=pa.string()),
-                "event_type": pa.array([], type=pa.string()),
-                "security_ccy": pa.array([], type=pa.string()),
-                "cash_amount": pa.array([], type=pa.binary()),
-                "target_value": pa.array([], type=pa.binary()),
-                "target_ccy": pa.array([], type=pa.string()),
-                "event_count": pa.array([], type=pa.int64()),
-            },
-            schema=cash_flow_summary_schema,
-        )
-    else:
-        agg = (
-            df.group_by(
-                [
-                    "period_month",
-                    "period_quarter",
-                    "broker",
-                    "event_type",
-                    "security_ccy",
-                ]
-            )
-            .agg(
-                [
-                    pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
-                    pl.when(pl.col("target_value_resolved").null_count() == pl.len())
-                    .then(None)
-                    .otherwise(pl.col("target_value_resolved").sum())
-                    .alias("target_value"),
-                    pl.col("target_ccy")
-                    .filter(pl.col("target_ccy").is_not_null())
-                    .first()
-                    .alias("target_ccy"),
-                    pl.col("event_id").count().alias("event_count"),
-                ]
-            )
-            .sort(["period_month", "broker", "event_type"])
-        )
-        agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
+        result = _empty_analytics_frame(cash_flow_summary_schema)
+        return _write_analytics_table(result, analytics_path)
 
-        target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
-        default_target_ccy = (
-            target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+    agg = (
+        df.group_by(
+            [
+                "period_month",
+                "period_quarter",
+                "broker",
+                "event_type",
+                "security_ccy",
+            ]
         )
-        agg = agg.with_columns(
-            pl.when(pl.col("target_ccy").is_null())
-            .then(pl.lit(default_target_ccy))
-            .otherwise(pl.col("target_ccy"))
-            .alias("target_ccy")
+        .agg(
+            [
+                pl.col("cash_amount_decrypted").sum().alias("cash_amount"),
+                pl.when(pl.col("target_value_resolved").null_count() == pl.len())
+                .then(None)
+                .otherwise(pl.col("target_value_resolved").sum())
+                .alias("target_value"),
+                pl.col("target_ccy")
+                .filter(pl.col("target_ccy").is_not_null())
+                .first()
+                .alias("target_ccy"),
+                pl.col("event_id").count().alias("event_count"),
+            ]
         )
+        .sort(["period_month", "broker", "event_type"])
+    )
+    agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
 
-        # Encrypt gold value columns before writing.
-        agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
+    target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
+    default_target_ccy = target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
+    agg = agg.with_columns(
+        pl.when(pl.col("target_ccy").is_null())
+        .then(pl.lit(default_target_ccy))
+        .otherwise(pl.col("target_ccy"))
+        .alias("target_ccy")
+    )
 
-        result = pa.table(
-            {
-                "calculated_at": [now] * len(agg),
-                "period_month": agg["period_month"].to_list(),
-                "period_quarter": agg["period_quarter"].to_list(),
-                "broker": agg["broker"].to_list(),
-                "event_type": agg["event_type"].to_list(),
-                "security_ccy": agg["security_ccy"].to_list(),
-                "cash_amount": agg["cash_amount"].to_list(),
-                "target_value": agg["target_value"].to_list(),
-                "target_ccy": agg["target_ccy"].to_list(),
-                "event_count": agg["event_count"].to_list(),
-            },
-            schema=cash_flow_summary_schema,
-        )
+    # Encrypt gold value columns before writing.
+    agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
 
-    return _write_analytics_table(result, cash_flow_summary_schema, analytics_path)
+    return _finalize_analytics(
+        agg, cash_flow_summary_schema, analytics_path, calculated_at=now
+    )

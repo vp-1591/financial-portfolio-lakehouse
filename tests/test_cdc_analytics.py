@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import polars as pl
 import pyarrow as pa
 import pytest
 from deltalake import DeltaTable, write_deltalake
@@ -142,6 +143,28 @@ def _decrypt_value(raw_bytes, key: bytes) -> float | None:
     return decrypt_float(raw_bytes, key)
 
 
+def _assert_on_disk_schema_matches(
+    storage: StorageConfig, table_name: str, expected: pa.Schema
+) -> None:
+    """Read the written Delta table back and assert its on-disk Arrow schema
+    matches the declared *expected* schema (columns, dtypes, nullability).
+
+    Replaces the old in-memory ``result.schema.equals(...)`` assertions: the
+    writers no longer cast through a ``pa.table(..., schema=)`` rebuild, so the
+    on-disk schema is the load-bearing contract.  Catches dtype drift the
+    deleted cast loop used to guard against.
+    """
+    dt = DeltaTable(
+        storage.analytics_path(table_name),
+        storage_options=storage.storage_options,
+    )
+    on_disk = dt.to_pyarrow_table().schema
+    assert on_disk.equals(expected), (
+        f"On-disk schema for {table_name} does not match declared schema.\n"
+        f"  on-disk: {on_disk}\n  expected: {expected}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # TestBuildDividendIncome
 # ---------------------------------------------------------------------------
@@ -183,7 +206,10 @@ class TestBuildDividendIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.schema.equals(dividend_income_schema, check_metadata=False)
+        assert isinstance(result, pl.DataFrame)
+        _assert_on_disk_schema_matches(
+            storage, "dividend_income", dividend_income_schema
+        )
 
     def test_filters_only_dividends(self, fernet_key: bytes, tmp_path: Path) -> None:
         """Only DIVIDEND events appear in the result."""
@@ -237,10 +263,10 @@ class TestBuildDividendIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
+        assert result.height == 1
         # The single row should be the dividend
-        assert result.column("broker")[0].as_py() == "IBKR"
-        assert result.column("ticker")[0].as_py() == "VWCE"
+        assert result["broker"][0] == "IBKR"
+        assert result["ticker"][0] == "VWCE"
 
     def test_groups_by_period_broker_security(
         self, fernet_key: bytes, tmp_path: Path
@@ -304,14 +330,14 @@ class TestBuildDividendIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.num_rows == 3  # Two different months for IBKR, one for T212
+        assert result.height == 3  # Two different months for IBKR, one for T212
 
         # Check period format
-        months = set(result.column("period_month").to_pylist())
+        months = set(result["period_month"].to_list())
         assert "2026-03" in months
         assert "2026-04" in months
 
-        quarters = set(result.column("period_quarter").to_pylist())
+        quarters = set(result["period_quarter"].to_list())
         assert "2026-Q1" in quarters
 
     def test_sums_cash_amount_and_target_value(
@@ -359,22 +385,10 @@ class TestBuildDividendIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert (
-            abs(
-                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
-                - 52.5
-            )
-            < 0.01
-        )
-        assert (
-            abs(
-                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
-                - 52.5
-            )
-            < 0.01
-        )
-        assert result.column("event_count")[0].as_py() == 2
+        assert result.height == 1
+        assert abs(_decrypt_value(result["cash_amount"][0], fernet_key) - 52.5) < 0.01
+        assert abs(_decrypt_value(result["target_value"][0], fernet_key) - 52.5) < 0.01
+        assert result["event_count"][0] == 2
 
     def test_handles_null_target_value_with_fx_rate_fallback(
         self, fernet_key: bytes, tmp_path: Path
@@ -411,22 +425,10 @@ class TestBuildDividendIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert (
-            abs(
-                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
-                - 100.0
-            )
-            < 0.01
-        )
+        assert result.height == 1
+        assert abs(_decrypt_value(result["cash_amount"][0], fernet_key) - 100.0) < 0.01
         # target_value should be 100 * 0.9 = 90.0
-        assert (
-            abs(
-                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
-                - 90.0
-            )
-            < 0.01
-        )
+        assert abs(_decrypt_value(result["target_value"][0], fernet_key) - 90.0) < 0.01
 
     def test_handles_completely_null_target_value(
         self, fernet_key: bytes, tmp_path: Path
@@ -463,15 +465,9 @@ class TestBuildDividendIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert (
-            abs(
-                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
-                - 50.0
-            )
-            < 0.01
-        )
-        assert result.column("target_value")[0].as_py() is None
+        assert result.height == 1
+        assert abs(_decrypt_value(result["cash_amount"][0], fernet_key) - 50.0) < 0.01
+        assert result["target_value"][0] is None
 
     def test_writes_delta_table(self, fernet_key: bytes, tmp_path: Path) -> None:
         """The result is written to the analytics Delta table and can be read back."""
@@ -505,7 +501,7 @@ class TestBuildDividendIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
+        assert result.height == 1
 
         # Read back from Delta
 
@@ -573,7 +569,10 @@ class TestBuildInterestIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
-        assert result.schema.equals(interest_income_schema, check_metadata=False)
+        assert isinstance(result, pl.DataFrame)
+        _assert_on_disk_schema_matches(
+            storage, "interest_income", interest_income_schema
+        )
 
     def test_filters_only_interest(self, fernet_key: bytes, tmp_path: Path) -> None:
         """Only INTEREST events appear in the result."""
@@ -617,8 +616,8 @@ class TestBuildInterestIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert result.column("broker")[0].as_py() == "IBKR"
+        assert result.height == 1
+        assert result["broker"][0] == "IBKR"
 
         # Assert the surviving row is the INTEREST event, not the DIVIDEND.
         # interest_income_schema has no event_type/ticker column, so the
@@ -627,9 +626,9 @@ class TestBuildInterestIncome:
         # mutation (``event_type == "INTEREST" -> "DIVIDEND"`` at
         # cdc_tables.py:~410) the DIVIDEND row survives and cash_amount
         # decrypts to 42.5, failing this assertion.
-        cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
+        cash = decrypt_float(result["cash_amount"][0], fernet_key)
         assert cash == pytest.approx(35.0)
-        assert result.column("event_count")[0].as_py() == 1
+        assert result["event_count"][0] == 1
 
     def test_groups_by_period_broker_currency(
         self, fernet_key: bytes, tmp_path: Path
@@ -674,7 +673,7 @@ class TestBuildInterestIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
-        assert result.num_rows == 2  # Two different months
+        assert result.height == 2  # Two different months
 
     def test_sums_amounts(self, fernet_key: bytes, tmp_path: Path) -> None:
         """Two interest events in the same group are summed."""
@@ -717,22 +716,10 @@ class TestBuildInterestIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert (
-            abs(
-                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
-                - 50.0
-            )
-            < 0.01
-        )
-        assert (
-            abs(
-                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
-                - 50.0
-            )
-            < 0.01
-        )
-        assert result.column("event_count")[0].as_py() == 2
+        assert result.height == 1
+        assert abs(_decrypt_value(result["cash_amount"][0], fernet_key) - 50.0) < 0.01
+        assert abs(_decrypt_value(result["target_value"][0], fernet_key) - 50.0) < 0.01
+        assert result["event_count"][0] == 2
 
     def test_interest_income_overwrites_not_appends(
         self, fernet_key: bytes, tmp_path: Path
@@ -808,7 +795,7 @@ class TestBuildInterestIncome:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
+        assert result.height == 1
 
         # Re-open the persisted Delta table and verify overwrite semantics.
         readback = DeltaTable(out_path, storage_options=storage.storage_options)
@@ -858,7 +845,10 @@ class TestBuildCashFlowSummary:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.schema.equals(cash_flow_summary_schema, check_metadata=False)
+        assert isinstance(result, pl.DataFrame)
+        _assert_on_disk_schema_matches(
+            storage, "cash_flow_summary", cash_flow_summary_schema
+        )
 
     def test_includes_all_event_types(self, fernet_key: bytes, tmp_path: Path) -> None:
         """All CDC event types appear in the summary."""
@@ -891,7 +881,7 @@ class TestBuildCashFlowSummary:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        result_types = set(result.column("event_type").to_pylist())
+        result_types = set(result["event_type"].to_list())
         assert result_types == set(event_types)
 
     def test_groups_by_period_broker_type_currency(
@@ -948,7 +938,7 @@ class TestBuildCashFlowSummary:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.num_rows == 3  # March deposit, April deposit, March dividend
+        assert result.height == 3  # March deposit, April deposit, March dividend
 
     def test_sums_amounts(self, fernet_key: bytes, tmp_path: Path) -> None:
         """Two deposits in the same group are summed."""
@@ -991,20 +981,10 @@ class TestBuildCashFlowSummary:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.num_rows == 1
+        assert result.height == 1
+        assert abs(_decrypt_value(result["cash_amount"][0], fernet_key) - 7000.0) < 0.01
         assert (
-            abs(
-                _decrypt_value(result.column("cash_amount")[0].as_py(), fernet_key)
-                - 7000.0
-            )
-            < 0.01
-        )
-        assert (
-            abs(
-                _decrypt_value(result.column("target_value")[0].as_py(), fernet_key)
-                - 7000.0
-            )
-            < 0.01
+            abs(_decrypt_value(result["target_value"][0], fernet_key) - 7000.0) < 0.01
         )
 
     def test_event_count_matches_source(
@@ -1061,15 +1041,15 @@ class TestBuildCashFlowSummary:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.num_rows == 2  # Two groups: DEPOSIT and DIVIDEND
+        assert result.height == 2  # Two groups: DEPOSIT and DIVIDEND
 
         # Find the DEPOSIT row
-        event_types = result.column("event_type").to_pylist()
+        event_types = result["event_type"].to_list()
         deposit_idx = event_types.index("DEPOSIT")
-        assert result.column("event_count")[deposit_idx].as_py() == 2
+        assert result["event_count"][deposit_idx] == 2
 
         dividend_idx = event_types.index("DIVIDEND")
-        assert result.column("event_count")[dividend_idx].as_py() == 1
+        assert result["event_count"][dividend_idx] == 1
 
     def test_cash_flow_summary_overwrites_not_appends(
         self, fernet_key: bytes, tmp_path: Path
@@ -1146,7 +1126,7 @@ class TestBuildCashFlowSummary:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.num_rows == 1
+        assert result.height == 1
 
         # Re-open the persisted Delta table and verify overwrite semantics.
         readback = DeltaTable(out_path, storage_options=storage.storage_options)
@@ -1198,9 +1178,9 @@ class TestDateParsing:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert result.column("period_month")[0].as_py() == "2026-03"
-        assert result.column("period_quarter")[0].as_py() == "2026-Q1"
+        assert result.height == 1
+        assert result["period_month"][0] == "2026-03"
+        assert result["period_quarter"][0] == "2026-Q1"
 
     def test_date_only_format(self, fernet_key: bytes, tmp_path: Path) -> None:
         """Date-only format '2024-01-15' is parsed to period_month '2024-01'."""
@@ -1233,8 +1213,8 @@ class TestDateParsing:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert result.column("period_month")[0].as_py() == "2024-01"
+        assert result.height == 1
+        assert result["period_month"][0] == "2024-01"
 
     def test_iso_format(self, fernet_key: bytes, tmp_path: Path) -> None:
         """ISO format '2024-01-15T10:30:00Z' is parsed to period_month '2024-01'."""
@@ -1267,8 +1247,8 @@ class TestDateParsing:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert result.column("period_month")[0].as_py() == "2024-01"
+        assert result.height == 1
+        assert result["period_month"][0] == "2024-01"
 
     def test_ibkr_compact_date_format(self, fernet_key: bytes, tmp_path: Path) -> None:
         """IBKR compact date '20260204' is parsed to period_month '2026-02'."""
@@ -1301,8 +1281,8 @@ class TestDateParsing:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert result.column("period_month")[0].as_py() == "2026-02"
+        assert result.height == 1
+        assert result["period_month"][0] == "2026-02"
 
     def test_ibkr_compact_datetime_format(
         self, fernet_key: bytes, tmp_path: Path
@@ -1337,8 +1317,8 @@ class TestDateParsing:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert result.column("period_month")[0].as_py() == "2026-07"
+        assert result.height == 1
+        assert result["period_month"][0] == "2026-07"
 
     def test_ibkr_normalised_iso_parsed(
         self, fernet_key: bytes, tmp_path: Path
@@ -1373,5 +1353,5 @@ class TestDateParsing:
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
-        assert result.num_rows == 1
-        assert result.column("period_month")[0].as_py() == "2026-02"
+        assert result.height == 1
+        assert result["period_month"][0] == "2026-02"
