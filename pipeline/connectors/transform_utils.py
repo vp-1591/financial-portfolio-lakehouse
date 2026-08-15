@@ -87,19 +87,13 @@ def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
         return raw
 
     # Decision: docs/adr/0100-fix-snapshot-dedup-per-source-and-t212-encryption.md
-    # (reverses the global-max filter decided in ADR 0057)
-    import pyarrow as pa
-
-    sources = raw.column("source").to_pylist()
-    fetched_ats = raw.column("fetched_at").to_pylist()
-
-    max_by_source: dict[str, Any] = {}
-    for s, f in zip(sources, fetched_ats):
-        if s not in max_by_source or f > max_by_source[s]:
-            max_by_source[s] = f
-
-    mask = [f == max_by_source[s] for s, f in zip(sources, fetched_ats)]
-    return raw.filter(pa.array(mask))
+    # (reverses the global-max filter decided in ADR 0057). The max MUST be
+    # computed per ``source`` via ``.over("source")`` -- a bare global
+    # ``.max()`` would drop stale-but-valid per-endpoint rows and regress
+    # ADR 0100 (issue #109 proposed exactly that regression).
+    df = pl.DataFrame(raw)
+    df = df.filter(pl.col("fetched_at") == pl.col("fetched_at").max().over("source"))
+    return df.to_arrow()
 
 
 def coerce_fetched_at(value: Any) -> datetime:
