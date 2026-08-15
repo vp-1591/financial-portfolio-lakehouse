@@ -50,7 +50,7 @@ Sample report output generated from demo data for presentation purposes.
 
 ![Positions](docs/screenshots/positions.png)
 ![Currency Exposure](docs/screenshots/currency-exposure.png)
-![Data Quality](docs/screenshots/data-quality.png)
+![Broker Allocation](docs/screenshots/broker-allocation.png)
 
 ## Tech Stack
 
