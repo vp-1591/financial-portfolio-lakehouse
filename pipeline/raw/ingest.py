@@ -2,80 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
-from datetime import UTC, datetime
-
 import pyarrow as pa
 from deltalake import write_deltalake
 
 from pipeline.crypto import encrypt
-from pipeline.raw.models import RAW_SCHEMA
-
-
-def _compute_payload_hash(payload_bytes: bytes) -> str:
-    """Return the SHA-256 hex digest of unencrypted payload bytes."""
-    return hashlib.sha256(payload_bytes).hexdigest()
-
-
-def build_raw_table(
-    broker: str,
-    source: str,
-    payloads: list[bytes],
-    source_file: str = "",
-) -> pa.Table:
-    """Build a raw-layer PyArrow table from fetched payload data.
-
-    Parameters
-    ----------
-    broker:
-        Broker display name (``"IBKR"``, ``"Trading 212"``, ``"XTB"``).
-    source:
-        API endpoint path or sheet name that produced the data.
-    payloads:
-        List of raw response bytes (one per payload).
-    source_file:
-        XLS filename for XTB reports; empty string for API brokers.
-
-    Returns
-    -------
-    pa.Table
-        A table matching :data:`RAW_SCHEMA` with encrypted payloads.
-    """
-    now = datetime.now(UTC)
-
-    fetched_ats: list[datetime] = []
-    brokers: list[str] = []
-    sources: list[str] = []
-    encrypted_payloads: list[bytes] = []
-    payload_hashes: list[str] = []
-    source_files: list[str] = []
-
-    for payload_bytes in payloads:
-        fetched_ats.append(now)
-        brokers.append(broker)
-        sources.append(source)
-        payload_hashes.append(_compute_payload_hash(payload_bytes))
-        encrypted_payloads.append(payload_bytes)  # Will be encrypted in ingest_raw
-        source_files.append(source_file)
-
-    return pa.table(
-        {
-            "fetched_at": fetched_ats,
-            "broker": brokers,
-            "source": sources,
-            "payload": encrypted_payloads,
-            "payload_hash": payload_hashes,
-            "source_file": source_files,
-        },
-        schema=RAW_SCHEMA,
-    )
 
 
 def encrypt_raw_payloads(table: pa.Table, fernet_key: bytes) -> pa.Table:
-    """Encrypt the payload column of a raw table in-place.
+    """Return a new raw table with the ``payload`` column Fernet-encrypted.
 
-    Returns a new table with the ``payload`` column replaced by
-    Fernet-encrypted bytes.
+    The input table is not mutated; a new table is returned with the
+    ``payload`` column replaced by Fernet-encrypted bytes.
     """
     payloads = table.column("payload").to_pylist()
     encrypted = [encrypt(p, fernet_key) for p in payloads]
