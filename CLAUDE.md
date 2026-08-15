@@ -88,3 +88,7 @@ When a staging deploy fails, the application error (Python tracebacks) is in the
 
 ## Git workflow
 - For this project, commit and open pr right after finishing your work
+
+## Tmp references
+
+- Do not mention any tmp scripts/reports in any tracked documentation or code 
