@@ -20,7 +20,7 @@ def fetch_snapshot(
     base_url: str = "https://live.trading212.com/api/v0",
     timeout: float = 20.0,
 ) -> pa.Table:
-    """Fetch Trading 212 account summary, positions, and instruments metadata."""
+    """Fetch Trading 212 account summary and positions."""
     client = Trading212Client(
         base_url,
         api_key=api_key,
@@ -51,17 +51,6 @@ def fetch_snapshot(
     # Fetch positions
     client.captured_responses.clear()
     client.positions()
-    for path, raw_bytes in client.captured_responses:
-        fetched_ats.append(now)
-        brokers.append("Trading 212")
-        sources.append(path)
-        payloads.append(raw_bytes)
-        payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        source_files.append("")
-
-    # Fetch instruments metadata (always included for best data quality)
-    client.captured_responses.clear()
-    client.instruments()
     for path, raw_bytes in client.captured_responses:
         fetched_ats.append(now)
         brokers.append("Trading 212")

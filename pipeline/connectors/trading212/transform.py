@@ -14,17 +14,8 @@ import pyarrow as pa
 
 from pipeline.connectors.trading212.client import (
     account_currency,
+    as_float,
     cash_value,
-    instrument_currency_by_ticker,
-    instrument_isin_by_ticker,
-    instrument_name_by_ticker,
-    position_currency,
-    position_isin,
-    position_label,
-    position_name,
-    position_security_currency,
-    position_security_value,
-    position_value,
 )
 from pipeline.connectors.transform_utils import (
     build_normalized_table,
@@ -54,15 +45,12 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
     summary_data = None
     positions_data = None
-    instruments_data = None
 
     for row in rows:
         if "/account/summary" in row.source:
             summary_data = row.payload_parsed
         elif "/positions" in row.source:
             positions_data = row.payload_parsed
-        elif "/metadata/instruments" in row.source:
-            instruments_data = row.payload_parsed
 
     if summary_data is None or positions_data is None:
         return build_normalized_table(
@@ -73,45 +61,45 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
         )
 
     currency = account_currency(summary_data)
-    instruments = instruments_data if isinstance(instruments_data, list) else []
-    instrument_currencies = instrument_currency_by_ticker(instruments)
-    instrument_names = instrument_name_by_ticker(instruments)
-    instrument_isins = instrument_isin_by_ticker(instruments)
-
     fetched_at = rows[0].fetched_at
 
     for position in positions_data if isinstance(positions_data, list) else []:
-        instrument_value = position_security_value(position)
-        instrument_ccy = position_security_currency(position, instrument_currencies)
-        if instrument_value and instrument_ccy is not None:
-            value = instrument_value
-            security_ccy = instrument_ccy
-        else:
-            # Wallet-currency fallback: used when currentPrice/quantity are missing
-            # (instrument_value unresolvable) OR the instrument currency cannot be
-            # resolved (instrument_ccy is None). Either way the value/ccy pair stays
-            # consistent (both in the wallet currency). See ADR 0102.
-            value = position_value(position)
-            security_ccy = position_currency(position, instrument_currencies, currency)
+        instrument = position["instrument"]
+        price = position.get("currentPrice")
+        quantity = position.get("quantity")
+        # currentPrice and quantity are present and non-null on every position
+        # across all staging snapshots (72/72, verified). A null here is not a
+        # normal API state (e.g. a suspended instrument still carries both); it
+        # means the payload is corrupted or truncated. Fast-fail loudly so data
+        # corruption surfaces at the transform rather than silently dropping a
+        # position from the portfolio. A genuinely zero-value position (both
+        # present, value 0) is still skipped quietly below.
+        if price is None or quantity is None:
+            # ``instrument`` may itself be None on a corrupted payload; guard the
+            # ticker read so the intended ValueError surfaces instead of an
+            # AttributeError masking it.
+            ticker = instrument.get("ticker") if isinstance(instrument, dict) else None
+            raise ValueError(
+                f"T212 position {ticker!r} has null "
+                f"currentPrice/quantity (currentPrice={price!r}, "
+                f"quantity={quantity!r}); cannot compute instrument value. "
+                "This indicates a corrupted/truncated payload, not a normal "
+                "API state."
+            )
+        value = as_float(price) * as_float(quantity)
         if value == 0:
             continue
-
         records.append(
             {
                 "fetched_at": fetched_at,
                 "account_id": "",
                 "position_type": "EQUITY",
-                "label": position_label(position),
-                "description": position_name(position, instrument_names),
+                "label": str(instrument["ticker"]),
+                "description": str(instrument["name"]),
                 "asset_class": "EQUITY",
                 "security_value": value,
-                # Decision: docs/adr/0102-standardize-snapshot-schemas-t212-instrument-ccy.md
-                # Use the instrument-currency pairing (currentPrice * quantity +
-                # instrument currency) when BOTH are resolvable; otherwise fall back
-                # to the wallet-currency pairing so value/ccy stay consistent. The
-                # currency check was missing originally (superseded ADR 0095 Bug 1).
-                "security_ccy": security_ccy,
-                "isin": position_isin(position, instrument_isins),
+                "security_ccy": str(instrument["currency"]),
+                "isin": str(instrument["isin"]),
             }
         )
 
