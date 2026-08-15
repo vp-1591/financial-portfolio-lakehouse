@@ -15,11 +15,13 @@ carries the instrument's native trading currency. ADR 0095 is already marked sup
 [ADR 0097](./0097-remove-yahoo-finance-fx-provider.md), but 0097 only removed the Yahoo FX
 fallback; the snapshot `security_ccy` = wallet-currency decision remained in force.
 
-Investigation on staging (`tmp/inspect_t212_position.py`, querying `trading212_snapshot_raw`)
-confirmed the T212 `/equity/positions` payload already exposes the instrument-currency value
-directly: `currentPrice` (in instrument currency, e.g. EUR) × `quantity` = the position's market
-value in the instrument currency — **without any FX fetch**. Verified: `currentPrice × quantity ≈
-463.93 EUR`, and `463.93 × ~4.31 (PLN/EUR) ≈ 1999.4 PLN = walletImpact.currentValue`. Switching
+Investigation on staging confirmed the T212 `/equity/positions` payload already exposes the
+instrument-currency value directly. The raw `trading212_snapshot_raw` table was queried and
+decrypted, the `/equity/positions` payload located, and the first position's structure inspected —
+`currentPrice` (instrument currency, e.g. EUR) × `quantity` = the position's market value in the
+instrument currency, with `walletImpact` carrying `currentValue` (wallet currency) and the `fxRate`
+used to convert — **without any FX fetch**. Verified: `currentPrice × quantity ≈ 463.93 EUR`, and
+`463.93 × ~4.31 (PLN/EUR) ≈ 1999.4 PLN = walletImpact.currentValue`. Switching
 `security_value` to the instrument value makes `security_ccy` = instrument currency consistent
 with IBKR, while the value↔currency pair stays consistent — so the 3.3× inflation ADR 0095 feared
 does not occur (we are not relabeling a wallet value with instrument ccy; we are switching the
