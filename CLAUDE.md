@@ -85,3 +85,6 @@ When a staging deploy fails, the application error (Python tracebacks) is in the
 ### Secret Safety
 
 - MUST load the `creating-secrets-using-best-practices` skill first for any secret, credential, API key, token, or password task. MUST NOT call `secretsmanager get-secret-value` or `batch-get-secret-value` directly, and MUST NOT hit the Secrets Manager Agent daemon directly. Prefer `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` with `asm-exec` so the secret resolves at runtime without entering context.
+
+## Git workflow
+- For this project, commit and open pr right after finishing your work
