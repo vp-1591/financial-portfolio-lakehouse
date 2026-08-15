@@ -39,18 +39,20 @@ the three from drifting apart. The CDC path already avoided this by sharing one
 ## Decision
 
 1. **T212 snapshot uses instrument currency.** In `transform_snapshot()`, equity
-   `security_value`/`security_ccy` are computed from the instrument-currency pairing —
-   `position_security_value()` (`currentPrice × quantity`, a helper in `trading212/client.py`)
-   paired with `position_security_currency()` (instrument currency) — with a **wallet-currency
-   fallback** (`position_value()` + `position_currency()`) when the instrument value is
-   unresolvable (`currentPrice`/`quantity` missing) **or the instrument currency is unresolvable**
-   (`position_security_currency()` returns `None` — no `instrument.currencyCode`/`currency`, ticker
-   absent from the `/metadata/instruments` map, and no top-level position currency). Both conditions
-   route to the wallet-currency pairing, so an inconsistent (instrument-value, wallet-ccy) row is
-   never emitted. CASH rows keep wallet currency (cash is held in the wallet currency; `security_ccy
-   = currency` is already correct). This **supersedes the snapshot `security_ccy` = wallet-currency
-   decision (Bug 1) of ADR 0095**. GBX handling via `MINOR_CURRENCY_UNITS` (0095 Bug 2) remains
-   unchanged (originally decided in ADR 0095 §Decision). ADR 0097 (Yahoo removal) is unchanged.
+   `security_value`/`security_ccy` are read directly from the `/equity/positions` payload —
+   `security_value` = `currentPrice × quantity`, `security_ccy` = the embedded
+   `instrument.currency` — both assumed present, with no fallback. This is backed by the schema
+   evidence: all 72 positions across the staging snapshots carry the embedded `instrument` dict
+   with `ticker`, `name`, `isin`, `currency`, and there is a single stable key-set per endpoint
+   (cross-checked against the vendored OpenAPI spec). The `/metadata/instruments` fetch is dropped
+   (the instrument dict is already embedded in each position, so no separate reference is needed).
+   A future absent field now fast-fails with a clear `KeyError` instead of silently degrading —
+   accepted as strictly safer, since one removed fallback ladder would silently have used
+   `workingScheduleId` (an int ID) as a currency code. CASH rows keep wallet currency (cash is held
+   in the wallet currency; `security_ccy = currency` is already correct). This **supersedes the
+   snapshot `security_ccy` = wallet-currency decision (Bug 1) of ADR 0095**. GBX handling via
+   `MINOR_CURRENCY_UNITS` (0095 Bug 2) remains unchanged (originally decided in ADR 0095 §Decision).
+   ADR 0097 (Yahoo removal) is unchanged.
 
 2. **One shared snapshot schema.** The three per-broker snapshot schemas collapse into a single
    `snapshot_normalized_schema` (field order: `fetched_at, account_id, position_type, label,
@@ -109,15 +111,18 @@ ADR 0080 (`instrument_ccy` CDC-only).
 
 ## Validation
 
-- Full suite: 738 tests pass; `pyright pipeline/ tests/` reports 0 errors; `ruff check` clean.
-- `tests/test_trading212_connector.py` adds unit + transform tests for
-  `position_security_value()` / `position_security_currency()`, including the instrument-ccy
-  pairing and the wallet-currency fallback when `currentPrice`/`quantity` are missing. The
-  correction to Decision 1 is covered by `test_position_security_currency_returns_none_when_unresolvable`
-  and `test_transform_snapshot_falls_back_to_wallet_ccy_when_instrument_ccy_missing` — the latter
-  builds a position whose instrument value is resolvable (`25 × 100 = 2500.0`) but whose instrument
-  currency is not, and asserts the row uses the wallet pairing (`2200.0` PLN), not the unpaired
-  instrument value. It fails on the pre-correction guard.
+- Full suite: 741 tests pass; `pyright pipeline/ tests/` reports 0 errors; `ruff check` clean.
+- `tests/test_trading212_connector.py` covers the direct-read transform: equity
+  `security_value` = `currentPrice × quantity` paired with the embedded `instrument.currency`,
+  and CASH rows keep wallet currency. The wallet-currency fallback was removed (no longer needed
+  — 72/72 positions carry the embedded instrument dict), so the fallback tests
+  (`test_transform_snapshot_falls_back_to_wallet_ccy_*`,
+  `test_position_security_currency_returns_none_when_unresolvable`) and the `position_*` /
+  `position_security_*` unit tests for the deleted helpers were removed. New coverage:
+  `test_transform_snapshot_works_without_instruments_source` (transform produces correct rows
+  when `/metadata/instruments` is absent from the raw table) and
+  `TestSnapshotFetch.test_fetch_snapshot_does_not_request_instruments` (the snapshot fetch calls
+  `account_summary` + `positions` but not `/metadata/instruments`).
 - `test_snapshot_security_ccy_uses_wallet_currency` is renamed to
   `test_snapshot_security_ccy_uses_instrument_currency`; equity assertions flipped to instrument
   currency, CASH stays wallet currency.

@@ -128,12 +128,6 @@ class Trading212Client:
             raise Trading212Error("Unexpected positions response.")
         return positions
 
-    def instruments(self) -> list[dict[str, Any]]:
-        instruments = self.request("GET", "/equity/metadata/instruments")
-        if not isinstance(instruments, list):
-            raise Trading212Error("Unexpected instruments metadata response.")
-        return instruments
-
     # --- CDC (historical) endpoints ---
 
     def _fetch_paginated(self, path: str) -> list[dict[str, Any]]:
@@ -222,228 +216,18 @@ def basic_auth_header(api_key: str, api_secret: str) -> str:
     return f"Basic {encoded}"
 
 
-def first_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
-    for key in keys:
-        value = data.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-
-
-def nested_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
-    value = data.get(key)
-    return value if isinstance(value, dict) else {}
-
-
 def account_currency(summary: dict[str, Any]) -> str:
-    value = first_value(
-        summary,
-        (
-            "currencyCode",
-            "currency",
-            "baseCurrency",
-            "accountCurrency",
-        ),
-    )
-    return str(value) if value else ""
+    return str(summary.get("currency") or "")
 
 
 def cash_value(summary: dict[str, Any]) -> float:
     """Extract the available cash balance from a T212 account summary.
 
-    The live API returns ``cash`` as a scalar float.
-    The demo API returns ``cash`` as a nested dict like
-    ``{"availableToTrade": 10500.0, "reservedForOrders": 0, "inPies": 0}``.
-
-    When ``cash`` is a dict, drills into ``availableToTrade`` to get the
-    numeric amount.  Returns 0.0 when ``cash`` is absent.
+    ``cash`` is a ``Cash`` dict (verified across all staging snapshots); the
+    available-to-trade amount is under its ``availableToTrade`` key. Returns
+    0.0 when ``cash`` is absent or not a dict.
     """
-    raw = summary.get("cash")
-    if raw is None:
+    cash = summary.get("cash")
+    if not isinstance(cash, dict):
         return 0.0
-    if isinstance(raw, dict):
-        inner = raw.get("availableToTrade")
-        if inner is not None:
-            return as_float(inner)
-        return 0.0
-    return as_float(raw)
-
-
-def net_worth_value(summary: dict[str, Any], fallback: float) -> float:
-    for key in (
-        "total",
-        "totalValue",
-        "accountValue",
-        "netAssetValue",
-        "portfolioValue",
-    ):
-        value = first_value(summary, (key,))
-        if value is not None:
-            return as_float(value)
-    return fallback
-
-
-def instrument_currency_by_ticker(instruments: list[dict[str, Any]]) -> dict[str, str]:
-    currencies: dict[str, str] = {}
-    for instrument in instruments:
-        ticker = first_value(instrument, ("ticker", "shortName", "isin"))
-        currency = first_value(
-            instrument,
-            ("currencyCode", "currency", "workingScheduleId"),
-        )
-        if ticker and currency:
-            currencies[str(ticker)] = str(currency)
-    return currencies
-
-
-def instrument_name_by_ticker(instruments: list[dict[str, Any]]) -> dict[str, str]:
-    names: dict[str, str] = {}
-    for instrument in instruments:
-        ticker = first_value(instrument, ("ticker",))
-        name = first_value(instrument, ("name", "shortName", "isin"))
-        if ticker and name:
-            names[str(ticker)] = str(name)
-    return names
-
-
-def instrument_isin_by_ticker(instruments: list[dict[str, Any]]) -> dict[str, str]:
-    isins: dict[str, str] = {}
-    for instrument in instruments:
-        ticker = first_value(instrument, ("ticker",))
-        isin = first_value(instrument, ("isin",))
-        if ticker and isin:
-            isins[str(ticker)] = str(isin)
-    return isins
-
-
-def position_label(position: dict[str, Any]) -> str:
-    instrument = nested_dict(position, "instrument")
-    value = first_value(instrument, ("ticker", "name", "shortName", "isin"))
-    if value is None:
-        value = first_value(position, ("ticker", "name", "shortName", "isin"))
-    return str(value) if value else "UNKNOWN"
-
-
-def position_name(position: dict[str, Any], instrument_names: dict[str, str]) -> str:
-    instrument = nested_dict(position, "instrument")
-    value = first_value(instrument, ("name", "shortName", "isin"))
-    if value:
-        return str(value)
-
-    ticker = first_value(instrument, ("ticker",))
-    if ticker and str(ticker) in instrument_names:
-        return instrument_names[str(ticker)]
-
-    ticker = first_value(position, ("ticker",))
-    if ticker and str(ticker) in instrument_names:
-        return instrument_names[str(ticker)]
-
-    return position_label(position)
-
-
-def position_isin(position: dict[str, Any], instrument_isins: dict[str, str]) -> str:
-    instrument = nested_dict(position, "instrument")
-    value = first_value(instrument, ("isin",))
-    if value:
-        return str(value)
-
-    ticker = first_value(instrument, ("ticker",))
-    if ticker and str(ticker) in instrument_isins:
-        return instrument_isins[str(ticker)]
-
-    ticker = first_value(position, ("ticker",))
-    if ticker and str(ticker) in instrument_isins:
-        return instrument_isins[str(ticker)]
-
-    value = first_value(position, ("isin",))
-    return str(value) if value else ""
-
-
-def position_value(position: dict[str, Any]) -> float:
-    wallet_impact = nested_dict(position, "walletImpact")
-    wallet_value = first_value(wallet_impact, ("currentValue",))
-    if wallet_value is not None:
-        return as_float(wallet_value)
-
-    direct_value = first_value(
-        position,
-        ("marketValue", "currentValue", "investedValue"),
-    )
-    if direct_value is not None:
-        return as_float(direct_value)
-
-    quantity = as_float(first_value(position, ("quantity", "ownedQuantity")))
-    price = as_float(first_value(position, ("currentPrice", "price")))
-    return quantity * price
-
-
-def position_currency(
-    position: dict[str, Any],
-    instrument_currencies: dict[str, str],
-    fallback: str,
-) -> str:
-    wallet_impact = nested_dict(position, "walletImpact")
-    currency = first_value(wallet_impact, ("currency",))
-    if currency:
-        return str(currency)
-
-    currency = first_value(position, ("currencyCode", "currency"))
-    if currency:
-        return str(currency)
-
-    instrument = nested_dict(position, "instrument")
-    ticker = first_value(instrument, ("ticker",))
-    if ticker and str(ticker) in instrument_currencies:
-        return instrument_currencies[str(ticker)]
-
-    ticker = first_value(position, ("ticker",))
-    if ticker and str(ticker) in instrument_currencies:
-        return instrument_currencies[str(ticker)]
-
-    return fallback
-
-
-def position_security_currency(
-    position: dict[str, Any],
-    instrument_currencies: dict[str, str],
-) -> str | None:
-    """Resolve the position's INSTRUMENT currency, or None when unresolvable.
-
-    Tries, in order: ``instrument.currencyCode``/``currency``, the ticker looked
-    up in ``instrument_currencies``, a top-level ``currencyCode``/``currency``,
-    then the ticker again. Returns ``None`` when none of these resolve a
-    currency, signalling the caller to fall back to the wallet-currency value/ccy
-    pairing so an inconsistent (instrument-value, wallet-ccy) row is never emitted
-    (ADR 0102).
-    """
-    instrument = nested_dict(position, "instrument")
-    currency = first_value(instrument, ("currencyCode", "currency"))
-    if currency:
-        return str(currency)
-
-    ticker = first_value(instrument, ("ticker",))
-    if ticker and str(ticker) in instrument_currencies:
-        return instrument_currencies[str(ticker)]
-
-    currency = first_value(position, ("currencyCode", "currency"))
-    if currency:
-        return str(currency)
-
-    ticker = first_value(position, ("ticker",))
-    if ticker and str(ticker) in instrument_currencies:
-        return instrument_currencies[str(ticker)]
-
-    return None
-
-
-def position_security_value(position: dict[str, Any]) -> float | None:
-    """Position market value in the INSTRUMENT currency (currentPrice * quantity).
-
-    Returns None when currentPrice or quantity is unavailable, signalling the
-    caller to fall back to the wallet-currency value/ccy pairing.
-    """
-    quantity = as_float(first_value(position, ("quantity", "ownedQuantity")))
-    price = as_float(first_value(position, ("currentPrice", "price")))
-    if quantity and price:
-        return quantity * price
-    return None
+    return as_float(cash.get("availableToTrade"))

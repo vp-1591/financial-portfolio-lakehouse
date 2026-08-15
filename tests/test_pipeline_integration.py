@@ -243,8 +243,23 @@ class TestTransformDecryptsPayloads:
         """T212 transform_snapshot must decrypt payloads from raw Delta tables."""
         key = generate_key()
 
-        summary = {"currencyCode": "EUR", "total": 100.0}
-        positions = [{"ticker": "VUAA", "quantity": 1, "currentPrice": 100.0}]
+        summary = {
+            "currency": "EUR",
+            "totalValue": 100.0,
+            "cash": {"availableToTrade": 50.0},
+        }
+        positions = [
+            {
+                "instrument": {
+                    "ticker": "VUAA",
+                    "name": "Vanguard ETF",
+                    "isin": "IE00BK5BQT80",
+                    "currency": "USD",
+                },
+                "quantity": 1,
+                "currentPrice": 100.0,
+            }
+        ]
 
         encrypted_summary = encrypt(json.dumps(summary).encode("utf-8"), key)
         encrypted_positions = encrypt(json.dumps(positions).encode("utf-8"), key)
