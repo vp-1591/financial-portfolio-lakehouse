@@ -841,7 +841,8 @@ def main() -> int:
     query_parser.add_argument(
         "--decrypt",
         action="store_true",
-        help="Decrypt Fernet-encrypted binary columns",
+        help="Decrypt Fernet-encrypted binary columns "
+        "(requires the same ENCRYPTION_KEY used at ingest)",
     )
     query_parser.add_argument(
         "--format",

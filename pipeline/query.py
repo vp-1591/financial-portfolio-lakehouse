@@ -414,6 +414,13 @@ def decrypt_df(
         sample = _first_non_null(result[col])
         if sample is not None:
             decrypted_sample = _decrypt_value(sample, decrypt_key)
+            if isinstance(decrypted_sample, (bytes, bytearray)):
+                raise ValueError(
+                    f"Failed to decrypt column {col!r}: ENCRYPTION_KEY does not "
+                    f"match the key used at ingest (or the column is not "
+                    f"Fernet-encrypted). Check for a shell-exported "
+                    f"ENCRYPTION_KEY shadowing .env."
+                )
             is_float = isinstance(decrypted_sample, float)
         else:
             # All-null column — default to String as a safe fallback.
