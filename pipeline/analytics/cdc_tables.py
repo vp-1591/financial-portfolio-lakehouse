@@ -262,6 +262,11 @@ def _finalize_analytics(
     """
     agg = agg.with_columns(pl.lit(calculated_at).alias("calculated_at"))
     agg = agg.select([field.name for field in schema])
+    # Decision: docs/adr/0106-enforce-analytics-schema-at-write-boundary.md
+    # cast(schema) is load-bearing, not dead defense: polars count() yields Int32
+    # but the declared schema requires Int64 (event_count); to_arrow() alone
+    # also drops the declared nullability flags. Do not remove without the
+    # round-trip guard test in tests/test_cdc_analytics.py passing.
     final = pl.from_arrow(agg.to_arrow().cast(schema))
     # pl.from_arrow returns DataFrame | Series; a Table always yields a DataFrame.
     assert isinstance(final, pl.DataFrame)
