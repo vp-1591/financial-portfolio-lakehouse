@@ -65,7 +65,24 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
     for position in positions_data if isinstance(positions_data, list) else []:
         instrument = position["instrument"]
-        value = as_float(position["currentPrice"]) * as_float(position["quantity"])
+        price = position.get("currentPrice")
+        quantity = position.get("quantity")
+        # currentPrice and quantity are present and non-null on every position
+        # across all staging snapshots (72/72, verified). A null here is not a
+        # normal API state (e.g. a suspended instrument still carries both); it
+        # means the payload is corrupted or truncated. Fast-fail loudly so data
+        # corruption surfaces at the transform rather than silently dropping a
+        # position from the portfolio. A genuinely zero-value position (both
+        # present, value 0) is still skipped quietly below.
+        if price is None or quantity is None:
+            raise ValueError(
+                f"T212 position {instrument.get('ticker')!r} has null "
+                f"currentPrice/quantity (currentPrice={price!r}, "
+                f"quantity={quantity!r}); cannot compute instrument value. "
+                "This indicates a corrupted/truncated payload, not a normal "
+                "API state."
+            )
+        value = as_float(price) * as_float(quantity)
         if value == 0:
             continue
         records.append(

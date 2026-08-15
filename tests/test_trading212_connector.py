@@ -81,6 +81,10 @@ class TestClientParsing:
     def test_cash_value(self) -> None:
         assert cash_value({}) == 0.0
 
+    def test_cash_value_live_scalar(self) -> None:
+        """The live API returns cash as a scalar float (demo returns a dict)."""
+        assert cash_value({"cash": 2500.0}) == 2500.0
+
     def test_cash_value_nested_dict_available_to_trade(self) -> None:
         """Demo API returns cash as a nested dict with availableToTrade."""
         summary = {
@@ -547,6 +551,70 @@ class TestTransformSnapshot:
         labels = result.column("label").to_pylist()
         assert "VWCEl_EQ" in labels
         assert any(l.startswith("CASH") for l in labels)
+
+    def test_transform_snapshot_raises_on_null_price(self, fernet_key: bytes) -> None:
+        """A position with null currentPrice/quantity fast-fails (data corruption).
+
+        Neither field is ever null on real data (72/72 staging positions carry
+        both), so a null means a corrupted/truncated payload, not a normal API
+        state. The transform raises rather than silently dropping the position.
+        """
+        summary = {
+            "currency": "PLN",
+            "cash": {"availableToTrade": 1500.0},
+            "totalValue": 4000.0,
+        }
+        positions = [
+            {
+                "instrument": {
+                    "ticker": "SUSP",
+                    "name": "Suspended Co",
+                    "isin": "US0000000000",
+                    "currency": "USD",
+                },
+                "quantity": 10.0,
+                "currentPrice": None,  # null price → corruption, fast-fail
+            },
+        ]
+        raw = self._build_raw_table(summary, positions)
+
+        with pytest.raises(ValueError, match="SUSP"):
+            transform_snapshot(raw, fernet_key)
+
+    def test_transform_snapshot_skips_zero_value_quietly(
+        self, fernet_key: bytes
+    ) -> None:
+        """A genuinely zero-value position (both fields present, value 0) is skipped.
+
+        This is a legitimate closed/empty position, not corruption: currentPrice
+        and quantity are both present and non-null, only their product is 0. The
+        transform drops it quietly (no raise, no row emitted).
+        """
+        summary = {
+            "currency": "PLN",
+            "cash": {"availableToTrade": 1500.0},
+            "totalValue": 4000.0,
+        }
+        positions = [
+            {
+                "instrument": {
+                    "ticker": "CLOSED",
+                    "name": "Closed Position",
+                    "isin": "US0000000001",
+                    "currency": "USD",
+                },
+                "quantity": 0.0,  # legitimate zero → skipped quietly
+                "currentPrice": 100.0,
+            },
+        ]
+        raw = self._build_raw_table(summary, positions)
+
+        result = transform_snapshot(raw, fernet_key)
+
+        # Only the CASH row survives; the zero-value equity is skipped, no raise.
+        labels = result.column("label").to_pylist()
+        assert "CLOSED" not in labels
+        assert any("CASH" in lbl for lbl in labels)
 
 
 class TestClientPagination:

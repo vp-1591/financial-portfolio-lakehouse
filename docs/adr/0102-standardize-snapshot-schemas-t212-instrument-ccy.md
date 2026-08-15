@@ -46,9 +46,16 @@ the three from drifting apart. The CDC path already avoided this by sharing one
    with `ticker`, `name`, `isin`, `currency`, and there is a single stable key-set per endpoint
    (cross-checked against the vendored OpenAPI spec). The `/metadata/instruments` fetch is dropped
    (the instrument dict is already embedded in each position, so no separate reference is needed).
-   A future absent field now fast-fails with a clear `KeyError` instead of silently degrading —
-   accepted as strictly safer, since one removed fallback ladder would silently have used
-   `workingScheduleId` (an int ID) as a currency code. CASH rows keep wallet currency (cash is held
+   A future absent field now surfaces loudly instead of silently degrading — accepted as strictly
+   safer, since one removed fallback ladder would silently have used `workingScheduleId` (an int
+   ID) as a currency code. The instrument identity keys (`ticker`/`name`/`isin`/`currency`) are
+   read directly and fast-fail with a clear `KeyError` if absent; a null `currentPrice` or
+   `quantity` fast-fails with a `ValueError` rather than being silently skipped. Both fields are
+   present and non-null on every position across all staging snapshots (72/72, verified), so a
+   null is not a normal API state (a suspended instrument still carries both) but a
+   corrupted/truncated payload — surfacing it loudly at the transform is strictly safer than
+   silently dropping a position from the portfolio. A genuinely zero-value position (both fields
+   present, product 0) is still skipped quietly. CASH rows keep wallet currency (cash is held
    in the wallet currency; `security_ccy = currency` is already correct). This **supersedes the
    snapshot `security_ccy` = wallet-currency decision (Bug 1) of ADR 0095**. GBX handling via
    `MINOR_CURRENCY_UNITS` (0095 Bug 2) remains unchanged (originally decided in ADR 0095 §Decision).
@@ -122,7 +129,11 @@ ADR 0080 (`instrument_ccy` CDC-only).
   `test_transform_snapshot_works_without_instruments_source` (transform produces correct rows
   when `/metadata/instruments` is absent from the raw table) and
   `TestSnapshotFetch.test_fetch_snapshot_does_not_request_instruments` (the snapshot fetch calls
-  `account_summary` + `positions` but not `/metadata/instruments`).
+  `account_summary` + `positions` but not `/metadata/instruments`). The fast-fail
+  coverage `test_transform_snapshot_raises_on_null_price` (null `currentPrice`/`quantity`
+  raises `ValueError`) and `test_transform_snapshot_skips_zero_value_quietly` (a zero-value
+  position with both fields present is skipped, not raised) was added; the null-field case was
+  verified absent across all 72 staging positions via `tmp/probe_t212_null_price_quantity.py`.
 - `test_snapshot_security_ccy_uses_wallet_currency` is renamed to
   `test_snapshot_security_ccy_uses_instrument_currency`; equity assertions flipped to instrument
   currency, CASH stays wallet currency.
