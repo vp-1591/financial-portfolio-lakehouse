@@ -133,7 +133,8 @@ ADR 0080 (`instrument_ccy` CDC-only).
   coverage `test_transform_snapshot_raises_on_null_price` (null `currentPrice`/`quantity`
   raises `ValueError`) and `test_transform_snapshot_skips_zero_value_quietly` (a zero-value
   position with both fields present is skipped, not raised) was added; the null-field case was
-  verified absent across all 72 staging positions via `tmp/probe_t212_null_price_quantity.py`.
+  verified absent across all 72 staging positions by decrypting every `/equity/positions` payload
+  in the raw staging table and checking each position.
 - `test_snapshot_security_ccy_uses_wallet_currency` is renamed to
   `test_snapshot_security_ccy_uses_instrument_currency`; equity assertions flipped to instrument
   currency, CASH stays wallet currency.
