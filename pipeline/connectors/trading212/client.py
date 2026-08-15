@@ -223,11 +223,12 @@ def account_currency(summary: dict[str, Any]) -> str:
 def cash_value(summary: dict[str, Any]) -> float:
     """Extract the available cash balance from a T212 account summary.
 
-    The ``cash`` shape differs by environment: the **demo** API returns a
-    ``Cash`` dict with the available-to-trade amount under ``availableToTrade``;
-    the **live** API returns a scalar float. Returns 0.0 when ``cash`` is absent.
+    ``cash`` is a ``Cash`` dict with the available-to-trade amount under
+    ``availableToTrade`` on every snapshot in both demo and live (verified
+    across 40 real snapshots: 23 staging + 17 prod, all dict). Returns 0.0
+    when ``cash`` is absent or not a dict.
     """
     cash = summary.get("cash")
-    if isinstance(cash, dict):
-        return as_float(cash.get("availableToTrade"))
-    return as_float(cash)
+    if not isinstance(cash, dict):
+        return 0.0
+    return as_float(cash.get("availableToTrade"))

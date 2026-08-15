@@ -81,10 +81,6 @@ class TestClientParsing:
     def test_cash_value(self) -> None:
         assert cash_value({}) == 0.0
 
-    def test_cash_value_live_scalar(self) -> None:
-        """The live API returns cash as a scalar float (demo returns a dict)."""
-        assert cash_value({"cash": 2500.0}) == 2500.0
-
     def test_cash_value_nested_dict_available_to_trade(self) -> None:
         """Demo API returns cash as a nested dict with availableToTrade."""
         summary = {
