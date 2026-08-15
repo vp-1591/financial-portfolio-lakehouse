@@ -15,9 +15,9 @@ import logging
 from datetime import UTC, datetime
 
 import polars as pl
-import pyarrow as pa
-from deltalake import DeltaTable, write_deltalake
+from deltalake import DeltaTable
 
+from pipeline.analytics.cdc_tables import _finalize_analytics
 from pipeline.analytics.models import portfolio_holdings_schema
 from pipeline.crypto import decrypt_float, encrypt_float
 
@@ -28,7 +28,7 @@ def build_portfolio_holdings(
     table_path: str | None = None,
     fernet_key: bytes | None = None,
     analytics_path: str | None = None,
-) -> pa.Table:
+) -> pl.DataFrame:
     """Build the ``portfolio_holdings`` analytics table.
 
     Reads ``consolidated_holdings`` (which now includes ``security_value``,
@@ -100,7 +100,6 @@ def build_portfolio_holdings(
 
     result = cons.select(
         [
-            pl.lit(now).alias("calculated_at"),
             "broker",
             "ticker",
             "security_ccy",
@@ -147,20 +146,6 @@ def build_portfolio_holdings(
         .alias("target_value"),
     )
 
-    # Convert to PyArrow and cast to match the schema
-    arrow_result = result.to_arrow()
-    casted = {}
-    for i, field in enumerate(portfolio_holdings_schema):
-        col_name = field.name
-        if col_name in arrow_result.column_names:
-            casted[col_name] = arrow_result.column(col_name).cast(field.type)
-        else:
-            raise ValueError(f"Missing column {col_name} in result table")
-
-    final = pa.table(casted, schema=portfolio_holdings_schema)
-
-    storage.backend.ensure_parent(analytics_path)
-    write_deltalake(
-        analytics_path, final, mode="overwrite", storage_options=storage_opts
+    return _finalize_analytics(
+        result, portfolio_holdings_schema, analytics_path, calculated_at=now
     )
-    return final

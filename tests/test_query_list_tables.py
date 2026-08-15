@@ -517,6 +517,48 @@ class TestDecryptDf:
         assert result["payload"].dtype == pl.String
         assert result["payload"][0] == "<FlexStatement>data</FlexStatement>"
 
+    def test_key_mismatch_raises_clear_error(self):
+        """A wrong ENCRYPTION_KEY raises a clear ValueError mentioning it.
+
+        Previously a key mismatch produced a cryptic polars SchemaError
+        (Fernet decrypt returned/kept bytes, and the float-inference path
+        crashed downstream). The guard in decrypt_df must surface a clear
+        ValueError that names ENCRYPTION_KEY as the likely culprit.
+        """
+        key_a = generate_key()
+        key_b_wrong = generate_key()
+        assert key_a != key_b_wrong
+        # Sanity check: a SchemaError would not be caught by pytest.raises(ValueError).
+        assert not issubclass(pl.exceptions.SchemaError, ValueError)
+
+        df = pl.DataFrame({"value": [encrypt_float(42.5, key_a)]})
+
+        with pytest.raises(ValueError) as exc_info:
+            decrypt_df(df, key=key_b_wrong)
+        assert "ENCRYPTION_KEY" in str(exc_info.value)
+
+    def test_key_mismatch_correct_key_decrypts(self):
+        """Regression guard: the correct key decrypts without error."""
+        key = generate_key()
+        df = pl.DataFrame({"value": [encrypt_float(42.5, key)]})
+        result = decrypt_df(df, key=key)
+        assert result["value"][0] == pytest.approx(42.5)
+
+    def test_binary_payload_correct_key_does_not_raise(self):
+        """A non-UTF8 binary payload (e.g. an XTB XLSX blob) encrypted with the
+        correct key must NOT trip the key-mismatch guard: Fernet decrypts
+        fine, the bytes just aren't float/text. Regression guard for the
+        false-positive fixed in the decrypt_df sample inference."""
+        from pipeline.crypto import encrypt
+
+        key = generate_key()
+        # 0x80/0x81/0x82 are invalid utf-8 — like an XLSX (ZIP) payload.
+        blob = encrypt(b"\x80\x81\x82binary-payload", key)
+        df = pl.DataFrame({"payload": [blob]})
+        result = decrypt_df(df, key=key)  # must NOT raise the ENCRYPTION_KEY ValueError
+        assert result.height == 1
+        assert result["payload"].dtype in (pl.String, pl.Binary)
+
 
 # ---------------------------------------------------------------------------
 # _decrypt_value

@@ -116,6 +116,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0103 | Prod boto3 Default-Chain Credential Fallback | 2026-08-14 | active | — |
 | 0104 | Fix T212 Trade cash_amount/gross_amount Sign Convention | 2026-08-14 | active | — |
 | 0105 | Fix T212 CDC Dedup and Cross-Endpoint Concat Type Mismatch | 2026-08-14 | active | — |
+| 0106 | Enforce Analytics Schema at the Write Boundary (Polars Int32/Int64 Drift) | 2026-08-15 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

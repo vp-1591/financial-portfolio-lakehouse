@@ -39,8 +39,9 @@ from pathlib import Path
 
 import duckdb
 import polars as pl
+from cryptography.fernet import InvalidToken
 
-from pipeline.crypto import decrypt_float, decrypt_string, load_key
+from pipeline.crypto import decrypt, decrypt_float, decrypt_string, load_key
 from pipeline.secrets import is_demo, resolve_aws_credentials
 from pipeline.storage import S3Backend, get_storage
 
@@ -412,12 +413,39 @@ def decrypt_df(
 
         # Infer return type by sampling the first non-null value.
         sample = _first_non_null(result[col])
-        if sample is not None:
-            decrypted_sample = _decrypt_value(sample, decrypt_key)
-            is_float = isinstance(decrypted_sample, float)
-        else:
+        is_binary_payload = False
+        if sample is None:
             # All-null column — default to String as a safe fallback.
             is_float = False
+        else:
+            decrypted_sample = _decrypt_value(sample, decrypt_key)
+            if isinstance(decrypted_sample, (bytes, bytearray)):
+                # A still-bytes result means Fernet could not produce a float
+                # or string. That is only a *key mismatch* when the token is a
+                # valid Fernet message the key fails to authenticate; a binary
+                # payload that decrypts fine but isn't text (e.g. an XTB XLSX
+                # payload) must not trip the guard. A raw Fernet decrypt tells
+                # them apart: InvalidToken => genuine key mismatch; success =>
+                # binary payload, left as a Binary column (a String cast would
+                # raise on non-UTF8 bytes).
+                try:
+                    decrypt(bytes(sample), decrypt_key)
+                except InvalidToken as exc:
+                    raise ValueError(
+                        f"Failed to decrypt column {col!r}: ENCRYPTION_KEY "
+                        f"does not match the key used at ingest. Check for a "
+                        f"shell-exported ENCRYPTION_KEY shadowing .env."
+                    ) from exc
+                is_float = False
+                is_binary_payload = True
+            else:
+                is_float = isinstance(decrypted_sample, float)
+
+        if is_binary_payload:
+            # Binary payloads (e.g. XTB XLSX blobs) decrypt to non-text bytes;
+            # leave the column as its original Binary type instead of coercing
+            # to String (which would raise on non-UTF8 bytes).
+            continue
 
         dtype = pl.Float64 if is_float else pl.String
         if is_float:

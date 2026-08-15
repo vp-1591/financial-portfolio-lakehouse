@@ -13,12 +13,10 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import polars as pl
-
-if TYPE_CHECKING:
-    import pyarrow as pa
+import pyarrow as pa
 
 from pipeline.crypto import decrypt, encrypt_float
 
@@ -87,19 +85,16 @@ def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
         return raw
 
     # Decision: docs/adr/0100-fix-snapshot-dedup-per-source-and-t212-encryption.md
-    # (reverses the global-max filter decided in ADR 0057)
-    import pyarrow as pa
-
-    sources = raw.column("source").to_pylist()
-    fetched_ats = raw.column("fetched_at").to_pylist()
-
-    max_by_source: dict[str, Any] = {}
-    for s, f in zip(sources, fetched_ats):
-        if s not in max_by_source or f > max_by_source[s]:
-            max_by_source[s] = f
-
-    mask = [f == max_by_source[s] for s, f in zip(sources, fetched_ats)]
-    return raw.filter(pa.array(mask))
+    # (reverses the global-max filter decided in ADR 0057). The max MUST be
+    # computed per ``source`` via ``.over("source")`` -- a bare global
+    # ``.max()`` would drop stale-but-valid per-endpoint rows and regress
+    # ADR 0100 (issue #109 proposed exactly that regression).
+    df = pl.DataFrame(raw)
+    df = df.filter(pl.col("fetched_at") == pl.col("fetched_at").max().over("source"))
+    # Cast back to the input schema: polars to_arrow() emits large_string /
+    # large_binary, so the result would not .equals(RAW_SCHEMA). Mirrors the
+    # build_normalized_table cast convention (ADR 0045).
+    return df.to_arrow().cast(raw.schema)
 
 
 def coerce_fetched_at(value: Any) -> datetime:
@@ -115,6 +110,19 @@ def coerce_fetched_at(value: Any) -> datetime:
     if hasattr(value, "to_pydatetime"):
         return value.to_pydatetime()
     return value
+
+
+def empty_arrow_table(schema: pa.Schema) -> pa.Table:
+    """Build an empty PyArrow table matching *schema* (columns, dtypes, order).
+
+    Shared by the normalized builder (``build_normalized_table``) and the
+    analytics empty-frame helper (``_empty_analytics_frame``) so the
+    empty-table recipe is defined once.
+    """
+    return pa.table(
+        {field.name: pa.array([], type=field.type) for field in schema},
+        schema=schema,
+    )
 
 
 def iter_raw_payloads(
@@ -213,17 +221,12 @@ def build_normalized_table(
         Column names whose float values should be Fernet-encrypted to binary.
         Defaults to an empty list (no encryption).
     """
-    import pyarrow as pa
-
     if encrypt_columns is None:
         encrypt_columns = []
 
     # Empty result set: return a correctly-typed empty table.
     if not records:
-        return pa.table(
-            {field.name: pa.array([], type=field.type) for field in schema},
-            schema=schema,
-        )
+        return empty_arrow_table(schema)
 
     df = pl.DataFrame(records)
 

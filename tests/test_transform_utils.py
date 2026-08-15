@@ -413,6 +413,9 @@ class TestFilterLatestSnapshot:
         # All remaining rows should have the latest timestamp
         result_times = result.column("fetched_at").to_pylist()
         assert all(t == t2 for t in result_times)
+        # The filtered table must still match RAW_SCHEMA exactly (polars
+        # to_arrow() emits large_string/large_binary without the cast).
+        assert result.schema.equals(RAW_SCHEMA)
 
     def test_empty_table_returns_empty(self) -> None:
         """An empty table should be returned with the same schema."""

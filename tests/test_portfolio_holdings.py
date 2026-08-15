@@ -112,6 +112,27 @@ def _build_consolidated_holdings(
     return result
 
 
+def _assert_on_disk_schema_matches(storage: StorageConfig, expected: pa.Schema) -> None:
+    """Read the written ``portfolio_holdings`` Delta table back and assert its
+    on-disk Arrow schema matches the declared *expected* schema (columns,
+    dtypes, nullability).
+
+    Replaces the old in-memory ``result.schema.equals(...)`` assertions: the
+    writer no longer rebuilds via ``pa.table(..., schema=)``, so the on-disk
+    schema is the load-bearing contract.  Catches dtype drift the deleted
+    cast loop used to guard against.
+    """
+    dt = DeltaTable(
+        storage.analytics_path("portfolio_holdings"),
+        storage_options=storage.storage_options,
+    )
+    on_disk = dt.to_pyarrow_table().schema
+    assert on_disk.equals(expected), (
+        f"On-disk schema for portfolio_holdings does not match declared schema.\n"
+        f"  on-disk: {on_disk}\n  expected: {expected}"
+    )
+
+
 class TestBuildPortfolioHoldings:
     """Tests for build_portfolio_holdings."""
 
@@ -121,7 +142,8 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        assert result.schema.equals(portfolio_holdings_schema)
+        assert isinstance(result, pl.DataFrame)
+        _assert_on_disk_schema_matches(get_storage(), portfolio_holdings_schema)
 
     def test_row_count_matches_consolidated(self, tmp_path: Path):
         """One row per consolidated holding."""
@@ -129,7 +151,7 @@ class TestBuildPortfolioHoldings:
         consolidated = _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        assert result.num_rows == consolidated.num_rows
+        assert result.height == consolidated.num_rows
 
     def test_target_value_is_encrypted_binary(self, tmp_path: Path):
         """target_value column contains Fernet-encrypted binary values."""
@@ -138,10 +160,10 @@ class TestBuildPortfolioHoldings:
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
         # target_value and security_value should be binary (encrypted)
-        assert result.schema.field("target_value").type == pa.binary()
-        assert result.schema.field("security_value").type == pa.binary()
+        assert result.schema["target_value"] == pl.Binary
+        assert result.schema["security_value"] == pl.Binary
         # Decrypt and verify values are positive floats
-        values = result.column("target_value").to_pylist()
+        values = result["target_value"].to_list()
         assert all(isinstance(v, bytes) for v in values)
         assert all(decrypt_float(v, fernet_key) > 0 for v in values)
 
@@ -151,7 +173,7 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        values = result.column("security_value").to_pylist()
+        values = result["security_value"].to_list()
         assert all(isinstance(v, bytes) for v in values)
         assert all(decrypt_float(v, fernet_key) > 0 for v in values)
 
@@ -161,8 +183,8 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        assert result.schema.field("percentage").type == pa.float64()
-        percentages = result.column("percentage").to_pylist()
+        assert result.schema["percentage"] == pl.Float64
+        percentages = result["percentage"].to_list()
         assert all(isinstance(p, float) for p in percentages)
 
     def test_decrypt_roundtrip(self, tmp_path: Path):
@@ -173,7 +195,7 @@ class TestBuildPortfolioHoldings:
 
         # Decrypt both columns and verify values are positive
 
-        df = pl.from_arrow(result)
+        df = result
         for col in ("security_value", "target_value"):
             decrypted = df[col].map_elements(
                 lambda v: decrypt_float(v, fernet_key), return_dtype=pl.Float64
@@ -188,7 +210,7 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        position_types = set(result.column("position_type").to_pylist())
+        position_types = set(result["position_type"].to_list())
         assert "EQUITY" in position_types
         assert "CASH" in position_types
 
@@ -198,7 +220,7 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        target_ccy_values = set(result.column("target_ccy").to_pylist())
+        target_ccy_values = set(result["target_ccy"].to_list())
         # With manual_rates targeting EUR, all target currencies should be EUR
         assert target_ccy_values == {"EUR"}
 
@@ -212,7 +234,7 @@ class TestBuildPortfolioHoldings:
         config = get_storage()
         dt = DeltaTable(config.analytics_path("portfolio_holdings"))
         stored = dt.to_pyarrow_table()
-        assert stored.num_rows == result.num_rows
+        assert stored.num_rows == result.height
 
     def test_native_value_for_eur_positions(self, tmp_path: Path):
         """EUR-denominated positions have known expected plaintext amounts.
@@ -228,7 +250,7 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key, brokers=("ibkr", "trading212"))
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        df = pl.from_arrow(result)
+        df = result
         df = df.with_columns(
             pl.col("security_value")
             .map_elements(
@@ -279,7 +301,7 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        assert "percentage" in result.column_names
+        assert "percentage" in result.columns
 
     def test_percentage_values_positive(self, tmp_path: Path):
         """Percentage values match hand-verified expected numbers.
@@ -293,8 +315,8 @@ class TestBuildPortfolioHoldings:
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
         # Build a {ticker: percentage} dict from the result
-        tickers = result.column("ticker").to_pylist()
-        percentages = result.column("percentage").to_pylist()
+        tickers = result["ticker"].to_list()
+        percentages = result["percentage"].to_list()
         actual = dict(zip(tickers, percentages, strict=True))
 
         # Hand-verified: total_target = 17145.0
@@ -324,7 +346,7 @@ class TestBuildPortfolioHoldings:
         _build_consolidated_holdings(fernet_key)
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        total_pct = sum(result.column("percentage").to_pylist())
+        total_pct = sum(result["percentage"].to_list())
         assert abs(total_pct - 100.0) < 0.1, (
             f"Percentages sum to {total_pct}, expected ~100"
         )
@@ -375,7 +397,7 @@ class TestBuildPortfolioHoldings:
         write_deltalake(path, table, mode="overwrite")
 
         result = build_portfolio_holdings(fernet_key=fernet_key)
-        percentages = result.column("percentage").to_pylist()
+        percentages = result["percentage"].to_list()
 
         # All percentages should be 0.0, not None/null
         assert all(p == 0.0 for p in percentages), (
@@ -508,11 +530,12 @@ class TestGoldenPortfolioHoldings:
 
         result = build_portfolio_holdings(fernet_key=fernet_key)
 
-        # Schema check
-        assert result.schema.equals(portfolio_holdings_schema)
+        # Schema check (on-disk round-trip guard)
+        assert isinstance(result, pl.DataFrame)
+        _assert_on_disk_schema_matches(config, portfolio_holdings_schema)
 
         # Decrypt value columns and build result rows for comparison
-        df = pl.from_arrow(result)
+        df = result
         df = df.with_columns(
             pl.col("security_value")
             .map_elements(
