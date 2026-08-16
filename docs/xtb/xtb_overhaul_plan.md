@@ -22,7 +22,7 @@ self-contained.
 | D1 | **Rewrite `parser.py` + `transform.py`** from scratch. Keep `fetch.py`, `connector.py`, `__init__.py`. | ~70% of the parsing surface changed. Patching leaves dead branches and the core abstractions (header-set match, value-below-label, aggregate-by-symbol) don't map to the new structure. |
 | D2 | Parse **3 sheets**. Open Positions → holdings/snapshot. Cash Operations → **all** CDC events. Closed Positions → **fee-enrichment lookup only**, keyed by Position ID; never emitted as its own event. | Cash Ops is the canonical cash ledger and carries trades (with qty/price in the comment) + deposits/interest/taxes/transfers. Closed Positions adds commission (fee lookup only). One event source ⇒ no double-count. |
 | D3 | **Excel-serial dates** decoded to timezone-aware UTC datetimes in the parser via `openpyxl.utils.datetime.from_excel(serial)` (then attach `tzinfo=UTC`). Transform emits ISO datetimes so downstream analytics (`cdc_tables.py`) is unchanged. | New format stores all dates as Excel serials; old ISO-string path is dead. Confirmed by sample: 38718→2006-01-01, 46237.25→2026-08-03 06:00. `from_excel` handles the 1900 epoch and the 1900-02-29 leap-year bug. |
-| D4 | Open Positions: use **child rows** for holdings; **detect-and-skip aggregate rows** in the parser (never stored — they must be recognized so a summary total isn't misread as a holding). Use **Ticker** as label/identifier (Instrument is polymorphic — real name on aggregates, numeric ID on children). | Children carry per-position detail; Ticker is the stable join key on every row. No ISIN in the new format. No sum-of-children cross-check (YAGNI; re-add only if a future format change needs drift detection). |
+| D4 | Open Positions: use the **per-ticker aggregate rows** for holdings (the group-header row XTB emits per instrument — real name in `Instrument`, total `Value`, non-empty `Category`, empty `Type`); **skip the child lot rows** in the parser (never stored). Use **Ticker** as label/identifier; the aggregate's `Instrument` (real name) → `description`, `Category` → `asset_class`. | The snapshot schema is instrument-level (`label`=ticker; no lot/position-id/open-time/cost-basis column), so per-lot detail has nowhere to be stored — child rows would be redundant rows that sum to the same total. **Child rows have an empty `Category` and a numeric position ID in `Instrument`**, so using them would emit empty `asset_class` and a numeric-ID `description`; the aggregate carries both the real name and `Category`. Matches the old parser (`load_open_position_assets` summed by symbol → one `XtbPosition` per ticker) and IBKR (one Flex `OpenPosition` per symbol). CDC trades come from Cash Operations (D2), not Open Positions, so child lots aren't needed for CDC either. The aggregate is the group header for every ticker with open positions; a child without one is a malformed report. |
 | D5 | Account currency = the Currency column of the Open Positions summary block (Product\|Metric\|Amount\|Currency), read in `parse_report`. All Cash Operations amounts are in this account currency; `security_ccy = account_ccy` (not a hardcoded literal). No per-row Currency column on Cash Ops. | Sample summary-block Currency reads `PLN`; no per-row Currency column on Cash Ops. |
 | D6 | Updated event-type map: `Free funds interest`→INTEREST, `Free funds interest tax`→TAX, `Stock sell`/`Stock purchase`→TRADE, `Transfer`→TRANSFER, `Deposit`→DEPOSIT, `Withdrawal`→WITHDRAWAL, `Dividend`→DIVIDEND, `Fee`→FEE, `Correction`/`Profit/loss adjustment`→ADJUSTMENT. Unknown→UNKNOWN (kept, but should be empty after the map). | Current map misses `Free funds interest`, `Stock sell` (has `Stock sale`), `Subaccount transfer`. |
 | D7 | **Filter out `Subaccount transfer`** rows entirely (internal moves between the trading and investment-plan subaccounts; net zero, clutter). **Keep currency-conversion `Transfer`** as a TRANSFER event with `target_fx_rate` left **null** — `normalize_currency` converts `cash_amount` (in account_ccy) to EUR via `CurrencyConverter` (normalize.py:151-155), same as T212/IBKR. Do **not** parse `Exchange rate:X`: it is the account_ccy→destination rate, which equals the pipeline's account_ccy→EUR `target_fx_rate` only when the destination is EUR; non-EUR destinations exist, so the broker rate is unsafe. `target_ccy` is always EUR (pipeline-set, never parsed). | User-confirmed: subaccount moves are internal noise; the currency-conversion transfer is a real outbound transfer (non-EUR destinations confirmed). `target_ccy` is always EUR (models.py:21) and the destination currency is never stored — the pipeline only needs `cash_amount` (account_ccy) + an account_ccy→EUR rate, which `CurrencyConverter` supplies correctly regardless of destination. Matches the existing XTB/IBKR/T212 pattern (all set `target_fx_rate` null). |
@@ -36,7 +36,7 @@ self-contained.
 | D15 | **Remove `_OPTIONAL_CDC_BROKERS`** from `pipeline/normalized/consolidate_cdc.py`. Derive the candidate broker set from the registry (`connectors.all()` → `c.name`) instead of a hardcoded list; retain only `_REQUIRED_CDC_BROKERS = ["ibkr","trading212"]` as the ADR 0087 required-non-empty quality gate. For each candidate, try to read `normalized/{name}_cdc`: if the broker is in `_REQUIRED_CDC_BROKERS`, raise on missing/empty (unchanged); otherwise skip missing/empty (log at DEBUG). Behavior is identical to today for ibkr/t212/xtb, but the `_OPTIONAL` list and the `"xtb"` literal are gone — the candidate set comes from the single source of truth (the registry). Verify no import cycle: `connectors.base` already imports `pipeline.normalized.consolidate` (for `Holding`), so `consolidate_cdc` → `connectors.registry` must not close a loop (import `registry` lazily inside the function if needed). Update `test_consolidate_skips_xtb_*` to assert the skip still happens via the registry path. | Removes the redundant parallel "XTB is special" encoding in the consolidate layer (DRY). `_OPTIONAL_CDC_BROKERS = ["xtb"]` is the only non-required entry; folding "non-required" into "skip if absent" via the registry deletes the list entirely. The required-vs-optional *policy* stays (`_REQUIRED_CDC_BROKERS`, the deliberate ADR 0087 gate) — what's removed is the duplicate candidate list. XTB stays non-required (skipped if absent/empty) because the prod daily-schedule run (`schedule_connectors = ["ibkr","trading212"]`) does not run XTB — so `xtb_cdc` may legitimately be missing or empty on that path. |
 | D16 | **Complete ADR 0094's `*_ENABLED` cleanup** — sweep the two stale references it missed. (1) `tests/test_connector_registry.py:15`: drop `enabled_env_var = "FAKE_ENABLED"` from `FakeConnector` — the `BrokerConnector` protocol no longer declares `enabled_env_var` (ADR 0094 removed it) and nothing reads it, so the attr is dead. (2) `docs/configuration.md:62`: remove "Required environment variable: `XTB_ENABLED` (optional, enabled by default)." — the `XTB_ENABLED` env var no longer exists (ADR 0094), so the line documents a removed feature. | ADR 0094 deleted `IBKR_ENABLED`/`T212_ENABLED`/`XTB_ENABLED`, `is_enabled()`, and the `enabled_env_var` protocol attr, but left these two stragglers. The `configuration.md` line is XTB-specific waste; the `Fake.enabled_env_var` attr is a generic dead leftover. Both are one-line removals. No new ADR needed — this finishes 0094's execution, it is not a new decision. |
 | D17 | **Shared bronze — transform CDC from the snapshot raw, not a separate CDC fetch.** One fetch per file writes a single raw row to `xtb_snapshot` raw with `source="XTB_REPORT"` carrying the full workbook (all 3 sheets). Delete `fetch.py:fetch_cdc`, `XtbConnector.fetch_cdc`/`fetch_cdc_kwargs`, and the `xtb_cdc` raw table + `xtb_cdc_raw_schema`. `transform_cdc` reads from the same `xtb_snapshot` raw. Add `cdc_raw_layer: str = "cdc"` to `BrokerConnector` (`base.py`); XTB overrides `cdc_raw_layer = "snapshot"` so `transform_connector` reads `get_raw_path(name, cdc_raw_layer)` for the CDC transform. | `fetch_snapshot` and `fetch_cdc` currently store **byte-identical** xlsx in two raw tables (same `payload`, same `payload_hash`, only `source` differs) — pure duplication. One xlsx carries all 3 sheets, so one bronze row is enough; both silvers derive from it. Eliminates the dead `fetch_cdc` path and makes CDC production real (fixes the D19 finding that CDC never reached gold). |
-| D18 | **Multi-account transform semantics — do NOT use `filter_latest_snapshot` for XTB.** It keys on `source` alone and `account_id` is not in `RAW_SCHEMA` (only parsed from the payload), so it collapses distinct accounts (e.g. `PLN_123…` + `EUR_456…`) to the single latest row. Instead: `transform_snapshot` iterates **all** `source=="XTB_REPORT"` rows, parses each, keeps the latest `fetched_at` **per `account_id`**, and emits child holdings for every surviving account. `transform_cdc` iterates all rows and dedups by `event_id` (D9) — no latest-per-account (events are additive). | Multiple accounts must coexist; latest-per-account avoids stale-snapshot double-count of the same account while preserving every account. CDC needs no per-account filter since stable `event_id`s dedup across re-uploads/accounts. |
+| D18 | **Multi-account transform semantics — do NOT use `filter_latest_snapshot` for XTB.** It keys on `source` alone and `account_id` is not in `RAW_SCHEMA` (only parsed from the payload), so it collapses distinct accounts (e.g. `PLN_123…` + `EUR_456…`) to the single latest row. Instead: `transform_snapshot` iterates **all** `source=="XTB_REPORT"` rows, parses each, keeps the latest `fetched_at` **per `account_id`**, and emits per-ticker aggregate holdings for every surviving account. `transform_cdc` iterates all rows and dedups by `event_id` (D9) — no latest-per-account (events are additive). | Multiple accounts must coexist; latest-per-account avoids stale-snapshot double-count of the same account while preserving every account. CDC needs no per-account filter since stable `event_id`s dedup across re-uploads/accounts. |
 | D19 | **File-arrival trigger (prod path the overhaul must fit).** Prod: EventBridge S3 Object-Created on the XTB upload prefix (`pipeline/xtb_uploads/`, D20) → Step Functions `orchestrator` `RunConnectors` Map (`file_arrival_connectors = ["ibkr","trading212","xtb"]`, concurrency 3) → `ConsolidateAllocate` (`run-consolidate-analytics`). The trigger passes a **single** `--xtb-file` S3 URI per execution; multi-account accumulates across triggers into the shared `xtb_snapshot` raw table and is unioned per-account at transform (D18). The daily schedule (`schedule_connectors = ["ibkr","trading212"]`) excludes XTB, so `xtb_cdc` may be absent on that path (informs D15/D21). The `fetch_connector` XTB loop already iterates `--xtb-file` (supports N files in one CLI call too). | Documents the actual prod trigger and confirms CDC must come via shared bronze (D17) — the trigger never fetches CDC, so a separate CDC fetch is not how XTB CDC reaches gold. |
 | D20 | **Fix the XTB upload landing-zone path so the EventBridge trigger fires (both envs).** Upload path becomes `{env_prefix}/xtb_uploads/<file>` (prod `pipeline/xtb_uploads/`, demo `pipeline_demo/xtb_uploads/`), replacing `{env_prefix}/{staging\|staging_demo}/xtb/`. `S3StorageConfig.staging_path` + `S3Backend.staging_path` (storage.py:115-120, 195-203) drop the `staging`/`staging_demo` segment and use `{prefix}/{connector}_uploads/{filename}`. Align `xtb_staging_prefix` → `pipeline/xtb_uploads/` in `terraform/prod/main.tf:547` and `pipeline_demo/xtb_uploads/` in `terraform/demo/main.tf:564`. No S3 migration (trigger never fired in either env; nothing consumed the old uploads). Ships in this overhaul PR. | The EventBridge rule filters `object.key` by prefix, but the rule prefix missed the env top-level segment (`S3_DEFAULT_PREFIX="pipeline"`, kept in prod at storage.py:294) that `S3Backend` always prepends — actual key `pipeline/staging/xtb/<file>` never matched rule prefix `staging/xtb/`. Identical bug in demo (`pipeline_demo/staging_demo/xtb/` vs `staging_demo/xtb/`). The `staging`/`staging_demo` segment also redundantly re-encoded the env (already carried by `pipeline`/`pipeline_demo`) and `staging` collided with `--mode staging`; dropping it + renaming `xtb`→`xtb_uploads` fixes the match in both envs and removes the collision. |
 | D21 | **`xtb_cdc` stays excluded from `quality.py` `NON_EMPTY_REQUIRED`.** The prod daily schedule (`schedule_connectors = ["ibkr","trading212"]`) does not run XTB, so `xtb_cdc` may legitimately be absent or empty on that path; requiring it would break scheduled runs with no XTB activity. | Three distinct CDC-non-empty gates agree XTB CDC is never mandatory: (1) per-connector post-transform validation (D14 — unconditional, scoped to the invoked connector), (2) consolidate required/optional (D15 — `xtb_cdc` skip-if-absent), (3) `quality.py` `NON_EMPTY_REQUIRED` (this decision — `xtb_cdc` excluded). The prod daily schedule not running XTB is why `xtb_cdc` may legitimately be absent. |
@@ -93,11 +93,11 @@ and every value is assertable.
 class XtbOpenPosition:
     # Only fields with a destination in snapshot_normalized_schema.
     account_id: str
-    product: str            # "Investment Plan" | "My Trades"
-    instrument: str         # numeric ID on child rows -> description
+    product: str            # "Investment Plan" | "My Trades" (group label; not mapped)
+    instrument: str         # real instrument name on the aggregate row -> description
     ticker: str             # reliable identity key -> label / identifier
-    category: str           # -> asset_class / position_type
-    value: float            # account-ccy market value (Value column), 2dp -> security_value
+    category: str           # ETF on the aggregate row -> asset_class (empty on child lots)
+    value: float            # account-ccy market value (aggregate row Value = per-ticker total), 2dp -> security_value
 
 @dataclass(frozen=True)
 class XtbClosedPosition:
@@ -123,7 +123,7 @@ class XtbCashOperation:
 class XtbReport:
     account_id: str
     account_ccy: str                            # summary-block Currency (D5)
-    open_positions: list[XtbOpenPosition]      # child rows only (aggregates skipped)
+    open_positions: list[XtbOpenPosition]      # per-ticker aggregate rows (child lots skipped)
     closed_positions: list[XtbClosedPosition]
     cash_operations: list[XtbCashOperation]    # Total/summary rows excluded from events
     free_cash: float | None                    # Cash Ops Total (R-last) -> snapshot CASH holding (D22); None if no Total row
@@ -149,14 +149,15 @@ with financing/position costs). The raw layer preserves the full xlsx bytes.
 - Sheet discovery: `find_sheet_name` substring match survives ("OPEN POSITION"→"Open Positions", "CASH OPERATION"→"Cash Operations"); add "CLOSED POSITION"→"Closed Positions".
 - Account ID: read from `Account number` (R1 of each sheet), not the dead `value_below_label("Account")`.
 - Per-sheet parsers: `parse_open_positions(rows)`, `parse_cash_operations(rows)`, `parse_closed_positions(rows)`. Each extracts **only the fields on its dataclass** — do not populate columns with no normalized destination.
-- Open Positions: read the account currency from the **summary block's Currency column** (`Product|Metric|Amount|Currency`) before skipping that block; the detail header is `Product, Instrument/Position, Ticker, Category, Type, Volume, Value, Current price, Open price, Open time (UTC), …, Net Profit %, Net Profit, Gross Profit, …`. Extract only `product, instrument, ticker, category, value`; ignore the rest. **Skip aggregate rows** (non-empty Instrument AND empty Type AND empty Current price) — detect via Current price but do not store it. Round `value` to 2dp.
+- Open Positions: read the account currency from the **summary block's Currency column** (`Product|Metric|Amount|Currency`) before skipping that block (the summary block is per-product, not holdings — D5). The detail header is `Product, Instrument/Position, Ticker, Category, Type, Volume, Value, Current price, Open price, Open time (UTC), …, Net Profit %, Net Profit, Gross Profit, …`. **Keep the per-ticker aggregate rows** (the group header XTB emits per instrument: empty `Type`, real name in `Instrument`, non-empty `Category`) as the holdings; **skip the child lot rows** (non-empty `Type` — per-position detail with no destination in the snapshot schema, and CDC trades come from Cash Operations). Extract only `product, instrument (real name), ticker, category, value`; ignore the rest. Round `value` to 2dp.
 - Cash Operations: header `Type, Instrument, Ticker, Category, Time, Amount, ID, Comment, Product, Position ID`. Extract `Type, Ticker, Time, Amount, ID, Comment, Position ID` (drop `Instrument, Category, Product` — unused). Read the `Total` row's `Amount` into `XtbReport.free_cash` (2dp) before excluding it — it is a summary, not an event (D10); the snapshot transform emits it as the CASH holding (D22). Exclude rows where `Type` normalizes to `total`. Filter `Subaccount transfer` rows out here (D7) — single place (parser), so they never enter `XtbReport.cash_operations`.
 - Closed Positions: header per dump; extract only `Position ID, Commission, Purchase value, Sale value, Profit/Loss, Close time` (the fee-enrichment fields). Exclude the `Profit/loss` total row.
 
 **Acceptance:** `parse_report(fixture_bytes)` returns all three lists with only the
 mapped fields populated, correct types, dates decoded via
-`openpyxl.utils.datetime.from_excel`, `value`/`amount` rounded to 2dp, aggregate
-rows skipped, Total rows excluded from `cash_operations` but read into
+`openpyxl.utils.datetime.from_excel`, `value`/`amount` rounded to 2dp, **per-ticker
+aggregate rows kept as holdings (with `category` populated), child lot rows
+skipped**, Total rows excluded from `cash_operations` but read into
 `free_cash` (D22).
 
 ### Stage 2 — Rewrite `pipeline/connectors/xtb/transform.py`
@@ -170,8 +171,8 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table
 
 **`transform_snapshot` (Open Positions → snapshot_normalized_schema, multi-account — D18):**
 - Do **NOT** call `filter_latest_snapshot` (it keys on `source` alone and collapses distinct accounts). Iterate **all** `source=="XTB_REPORT"` rows via `iter_raw_payloads`; parse each via `parse_report` (aggregates already skipped by the parser); keep the latest `fetched_at` **per `account_id`**.
-- For each surviving account payload, map child rows: `ticker`→`label`, `value`→`security_value` (encrypt), `account_ccy`→`security_ccy`, `category`→`asset_class` (with `position_type`=`"EQUITY"`), `instrument`→`description`. `identifier` = ticker (D12).
-- Emit one **CASH holding row per account** from `XtbReport.free_cash` (D22): `position_type`=`"CASH"`, `label`=`"CASH {account_ccy}"`, `asset_class`=`"CASH"`, `security_value`=`free_cash` (encrypt, 2dp), `security_ccy`=`account_ccy`, `isin`=`""`, `description`=`"Cash {account_ccy}"`. Skip if `free_cash` is `None` (no Total row). Account equity = free cash (this row) + Σ open positions (the child rows).
+- For each surviving account payload, map the per-ticker aggregate rows: `ticker`→`label`, `value`→`security_value` (encrypt), `account_ccy`→`security_ccy`, `category`→`asset_class` (with `position_type`=`"EQUITY"`), `instrument` (real name)→`description`. `identifier` = ticker (D12). One row per ticker per account (the aggregate is already the per-ticker total — do not also emit child lots).
+- Emit one **CASH holding row per account** from `XtbReport.free_cash` (D22): `position_type`=`"CASH"`, `label`=`"CASH {account_ccy}"`, `asset_class`=`"CASH"`, `security_value`=`free_cash` (encrypt, 2dp), `security_ccy`=`account_ccy`, `isin`=`""`, `description`=`"Cash {account_ccy}"`. Skip if `free_cash` is `None` (no Total row). Account equity = free cash (this row) + Σ open positions (the aggregate rows).
 
 **`transform_cdc` (shared bronze `xtb_snapshot` raw → cdc_events_normalized_schema, with Closed Positions fee enrichment — D17):**
 - Reads `xtb_snapshot` raw (via `cdc_raw_layer="snapshot"`), not a separate CDC raw. Iterate **all** `source=="XTB_REPORT"` rows via `iter_raw_payloads`; parse each via `parse_report` (one payload carries all 3 sheets).
@@ -190,24 +191,26 @@ are Fernet-encrypted at the transform via `encrypt_columns`
 (`build_normalized_table`).
 
 **`xtb_snapshot_normalized`** (`snapshot_normalized_schema`) — one row per
-Open Positions **child** row plus **one CASH row per account** (Cash Ops
-`Total`, D22), per surviving account (latest `fetched_at` per `account_id`,
-D18). Aggregate rows are skipped by the parser (D4) before this mapping runs.
+Open Positions **per-ticker aggregate** row plus **one CASH row per account**
+(Cash Ops `Total`, D22), per surviving account (latest `fetched_at` per
+`account_id`, D18). Child lot rows are skipped by the parser (D4) before this
+mapping runs; the aggregate carries the per-ticker total, real name, and
+`Category`.
 
-The two row-kinds (EQUITY child rows + the per-account CASH row) share all 9
+The two row-kinds (EQUITY aggregate rows + the per-account CASH row) share all 9
 schema columns; the columns they draw from the same source are identical:
 
-| Column | EQUITY (child row) | CASH (D22) | Notes |
+| Column | EQUITY (aggregate row) | CASH (D22) | Notes |
 |---|---|---|---|
 | `fetched_at` | raw row `fetched_at` | raw row `fetched_at` | UTC; latest per `account_id` (D18) |
 | `account_id` | `XtbOpenPosition.account_id` | `XtbReport.account_id` | R1 `Account number` on each sheet |
 | `position_type` | literal `"EQUITY"` | literal `"CASH"` | CASH mirrors IBKR's holding |
 | `label` | `XtbOpenPosition.ticker` | `"CASH {account_ccy}"` | Ticker is the stable identifier (D4, D12) |
-| `asset_class` | `XtbOpenPosition.category` | literal `"CASH"` | e.g. `ETF`; resolves `category`→`asset_class` (`position_type` carries EQUITY/CASH) |
-| `security_value` | `XtbOpenPosition.value` | `XtbReport.free_cash` | Fernet-encrypted; account-ccy, rounded 2dp (D11) |
+| `asset_class` | `XtbOpenPosition.category` | literal `"CASH"` | e.g. `ETF`; populated on the aggregate row (empty on child lots — why D4 uses aggregates); resolves `category`→`asset_class` |
+| `security_value` | `XtbOpenPosition.value` | `XtbReport.free_cash` | Fernet-encrypted; per-ticker total from the aggregate row, account-ccy, rounded 2dp (D11) |
 | `security_ccy` | `XtbReport.account_ccy` | `XtbReport.account_ccy` | summary-block Currency (D5); not a hardcoded literal |
 | `isin` | `""` (empty) | `""` (empty) | no ISIN in the new format (D12); empty string, IBKR/T212 convention |
-| `description` | `XtbOpenPosition.instrument` | `"Cash {account_ccy}"` | numeric position ID on child rows (D4) |
+| `description` | `XtbOpenPosition.instrument` | `"Cash {account_ccy}"` | real instrument name on the aggregate row (e.g. `Core S&P 500`); child lots carry a numeric ID instead (D4) |
 
 † **D22 — CASH from Cash Ops `Total` under a full-history constraint.** The
 `Total` is the Σ of the cash ops over the report's `Date from → Date to`
@@ -219,7 +222,7 @@ transfers netting to 0). A partial-window export silently understates cash.
 exported with `Date from` set to the account opening date (full history).** No
 in-file detection of a truncated export is reliable, so there is no heuristic
 guard (YAGNI); the constraint is the control. Invested value stays in Open
-Positions, so account equity = this CASH row + Σ open child positions.
+Positions, so account equity = this CASH row + Σ open positions (the aggregate rows).
 
 **`xtb_cdc_normalized`** (`cdc_events_normalized_schema`) — one row per Cash
 Operations row (Total rows excluded, subaccount transfers filtered — D7/D10),
@@ -254,7 +257,7 @@ Positions via `position_id` (D8).
 | `target_value` | `null` | all rows | filled by `normalize_currency` |
 | `target_ccy` | `null` | all rows | set to `EUR` by `normalize_currency` |
 
-**Acceptance:** snapshot produces one row per open child position **per account** plus one CASH row per account (latest payload per `account_id`; CASH from `free_cash`, D22); CDC produces one event per cash op (subaccount transfers excluded; Total row excluded from events but read into `free_cash`) from the shared bronze, trades carry qty/price/side/fee, currency transfer kept as TRANSFER with `target_fx_rate` null (D7), no Total/UNKNOWN events, re-running dedups by `event_id`.
+**Acceptance:** snapshot produces one row per open position aggregate (per-ticker) **per account** plus one CASH row per account (latest payload per `account_id`; CASH from `free_cash`, D22); CDC produces one event per cash op (subaccount transfers excluded; Total row excluded from events but read into `free_cash`) from the shared bronze, trades carry qty/price/side/fee, currency transfer kept as TRANSFER with `target_fx_rate` null (D7), no Total/UNKNOWN events, re-running dedups by `event_id`.
 
 ### Stage 3 — `connector.py` + CDC-YAGNI removal (small edits)
 
@@ -273,7 +276,7 @@ Positions via `position_id` (D8).
 ### Stage 5 — Tests
 
 - Update `tests/test_xtb_connector.py` and `tests/fixtures/xtb.py` to the new format (Stage 0 fixture).
-- Cover: 3-sheet parsing, Excel-serial decoding (cash-op `time` + closed `close_time`; open positions carry no date field after the Stage 1 narrowing), aggregate-vs-child distinction, child-only holdings, **CASH holding from Cash Ops `Total` (D22)** — one CASH row per account (`position_type=CASH`, `security_value=free_cash`); absent when the sheet has no `Total` row; and Σ CDC `cash_amount` equals `free_cash` under full-history, Total-row exclusion from events, subaccount-transfer filtering, currency-conversion Transfer kept with `target_fx_rate` null (D7), trade enrichment (commission on sell row only), event-type map (interest/tax/sell), CDC dedup on re-upload, 2dp rounding, open→closed lifecycle (a position open in one snapshot, closed in the next, fee captured once). **Multi-account (D18):** two accounts in raw → both survive snapshot (latest payload per `account_id`); a re-upload of the same account supersedes the older snapshot; CDC unions across accounts with `event_id` dedup. **Shared bronze (D17):** CDC produced from `xtb_snapshot` raw with no `xtb_cdc` raw. Confirm no test references dropped fields (`net_profit`, `gross_profit`, `swap`, `rollover`, `margin`, `open_price`, `current_price`, `volume`, `side` on positions).
+- Cover: 3-sheet parsing, Excel-serial decoding (cash-op `time` + closed `close_time`; open positions carry no date field after the Stage 1 narrowing), aggregate-vs-child distinction, **per-ticker aggregate holdings (child lots skipped; `category` populated on holdings)**, **CASH holding from Cash Ops `Total` (D22)** — one CASH row per account (`position_type=CASH`, `security_value=free_cash`); absent when the sheet has no `Total` row; and Σ CDC `cash_amount` equals `free_cash` under full-history, Total-row exclusion from events, subaccount-transfer filtering, currency-conversion Transfer kept with `target_fx_rate` null (D7), trade enrichment (commission on sell row only), event-type map (interest/tax/sell), CDC dedup on re-upload, 2dp rounding, open→closed lifecycle (a position open in one snapshot, closed in the next, fee captured once). **Multi-account (D18):** two accounts in raw → both survive snapshot (latest payload per `account_id`); a re-upload of the same account supersedes the older snapshot; CDC unions across accounts with `event_id` dedup. **Shared bronze (D17):** CDC produced from `xtb_snapshot` raw with no `xtb_cdc` raw. Confirm no test references dropped fields (`net_profit`, `gross_profit`, `swap`, `rollover`, `margin`, `open_price`, `current_price`, `volume`, `side` on positions).
 - Keep the integration test against the real xlsx sample.
 
 ### Stage 6 — Checks + docs
@@ -296,7 +299,7 @@ All items below were promoted to binding decisions in §1 — nothing remains op
 | O1 — what `cdc_supported` gated | D14 (corrected rationale: CDC was broken, not disabled) |
 | O2 — commission source | D8 (user-confirmed: Closed Positions only) |
 | O3 — aggregate Net Profit % | D4 (map `Value` only, not `%`) |
-| O4 — aggregate OpenPrice | D4 (use child rows) |
+| O4 — aggregate OpenPrice | D4 (use aggregate rows; `open_price` is a dropped field either way) |
 | O5 — Cash Ops currency | D5 (all in account_ccy) |
 | O6 — Excel epoch | D3 (1900, sample-confirmed) |
 | O7 — `NON_EMPTY_REQUIRED` | D21 (`xtb_cdc` stays excluded) |
