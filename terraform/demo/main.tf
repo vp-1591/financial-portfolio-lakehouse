@@ -73,6 +73,24 @@ variable "subnet_cidrs" {
   default     = ["10.1.1.0/24"]
 }
 
+# Operational config — set per environment in connectors.auto.tfvars.
+# Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
+variable "scheduled" {
+  type = bool
+}
+
+variable "schedule_cron" {
+  type = string
+}
+
+variable "schedule_connectors" {
+  type = list(string)
+}
+
+variable "file_arrival_connectors" {
+  type = list(string)
+}
+
 # ------------------------------------------------------------------------------
 # Provider
 # ------------------------------------------------------------------------------
@@ -544,10 +562,10 @@ module "orchestrator" {
   sfn_role_arn                     = data.aws_iam_role.sfn.arn
   xtb_staging_bucket_name         = aws_s3_bucket.pipeline_demo.bucket
   xtb_staging_prefix              = "staging_demo/xtb/"
-  scheduled                        = false    # no daily schedule for demo
-  schedule_cron                    = "cron(0 6 * * ? *)"
-  schedule_connectors              = ["ibkr", "trading212"]
-  file_arrival_connectors          = ["ibkr", "trading212", "xtb"]
+  scheduled                        = var.scheduled
+  schedule_cron                    = var.schedule_cron
+  schedule_connectors              = var.schedule_connectors
+  file_arrival_connectors          = var.file_arrival_connectors
   state_machine_name               = "portfolio-pipeline-orchestrator-demo"
   aws_region                       = var.aws_region
 }

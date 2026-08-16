@@ -4,6 +4,8 @@
 #
 # These values come from `terraform output` in the shared/ directory after
 # running `terraform apply` there (shared apply #1).
+#
+# Connector/schedule config lives in connectors.auto.tfvars (docs/adr/0107).
 
 ecr_repository_url       = "<from shared output ecr_repository_url>"
 ecr_push_pull_policy_arn = "<from shared output ecr_push_pull_policy_arn>"

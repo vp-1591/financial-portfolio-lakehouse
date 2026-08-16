@@ -7,6 +7,8 @@
 # Terraform variable files (may contain secrets)
 *.tfvars
 terraform.tfvars
+# Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
+!connectors.auto.tfvars
 
 # Backend config (contains account identifiers)
 backend.tf

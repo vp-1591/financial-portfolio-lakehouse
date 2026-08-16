@@ -69,16 +69,22 @@ in `docs/roadmaps/phase-2-step-functions-orchestration.md`.
 
 #### Configuration
 
-The orchestrator is driven by two trigger-creation flags and two connector
-lists (Terraform variables that control EventBridge rule creation and
-execution input):
+The orchestrator is driven by four Terraform variables. They have no
+module-level defaults — each environment sets them in its committed, auto-loaded
+`connectors.auto.tfvars` (ADR 0107):
 
-| Variable | Controls | Default |
-|---|---|---|
-| `scheduled` | Whether an EventBridge daily-schedule trigger fires the orchestrator | `false` when `xtb_enabled`, else `true` |
-| `xtb_enabled` | Whether the S3 file-arrival trigger is created | `true` |
-| `schedule_connectors` | Which connectors the daily-schedule trigger includes | `["ibkr","t212"]` |
-| `file_arrival_connectors` | Which connectors the XTB file-arrival trigger includes | `["ibkr","t212","xtb"]` |
+| Variable | Controls |
+|---|---|
+| `scheduled` | Whether the EventBridge daily-schedule rule is created (`count = scheduled ? 1 : 0`) |
+| `schedule_cron` | Cron expression for the daily-schedule rule |
+| `schedule_connectors` | Connectors in the daily-schedule execution input |
+| `file_arrival_connectors` | Connectors in the XTB S3 file-arrival execution input (the file-arrival rule is always created; this list controls its input) |
+
+> Note: earlier narrative on this page describes an `xtb_enabled` flag and
+> module defaults. The implemented design uses `file_arrival_connectors` (a
+> list) instead of `xtb_enabled`, and ADR 0107 removed the module defaults in
+> favor of per-environment `connectors.auto.tfvars`. The combination tables and
+> alternatives below predate that change and retain the older terminology.
 
 Connector inclusion is a **list in execution input**, not per-connector ASL
 branches. The orchestrator `Map` state iterates over `$.connectors` from the
