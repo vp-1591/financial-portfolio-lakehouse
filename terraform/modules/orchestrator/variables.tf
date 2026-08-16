@@ -56,28 +56,28 @@ variable "xtb_staging_prefix" {
   default     = "staging/xtb/"
 }
 
+# Operational config — required, set per environment in the committed,
+# auto-loaded terraform/(prod|demo)/connectors.auto.tfvars so toggling a
+# connector does not require editing this module or the env main.tf module
+# block. Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
 variable "scheduled" {
   description = "Whether to create an EventBridge daily-schedule trigger for the orchestrator."
   type        = bool
-  default     = false
 }
 
 variable "schedule_cron" {
   description = "Cron expression for the daily schedule EventBridge rule."
   type        = string
-  default     = "cron(0 6 * * ? *)"
 }
 
 variable "schedule_connectors" {
   description = "Connector names included in the daily-schedule execution input (no xtb_file)."
   type        = list(string)
-  default     = ["ibkr", "trading212"]
 }
 
 variable "file_arrival_connectors" {
   description = "Connector names included in the XTB file-arrival execution input."
   type        = list(string)
-  default     = ["ibkr", "trading212", "xtb"]
 }
 
 variable "state_machine_name" {

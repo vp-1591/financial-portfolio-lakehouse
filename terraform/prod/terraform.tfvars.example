@@ -4,6 +4,10 @@
 #
 # These values come from `terraform output` in the shared/ directory after
 # running `terraform apply` there (shared apply #1).
+#
+# Non-secret operational config (which connectors run, schedule) is NOT here —
+# it lives in the committed, auto-loaded connectors.auto.tfvars. Toggle brokers
+# by editing that file, not this one.
 
 ecr_repository_url       = "<from shared output ecr_repository_url>"
 ecr_push_pull_policy_arn = "<from shared output ecr_push_pull_policy_arn>"

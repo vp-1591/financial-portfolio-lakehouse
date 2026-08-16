@@ -73,6 +73,29 @@ variable "subnet_cidrs" {
   default     = ["10.1.1.0/24"]
 }
 
+# Operational config — values live in the committed, auto-loaded
+# connectors.auto.tfvars so connectors can be toggled without editing the
+# module block below.
+variable "scheduled" {
+  description = "Whether the demo EventBridge daily-schedule trigger fires the orchestrator."
+  type        = bool
+}
+
+variable "schedule_cron" {
+  description = "Cron expression for the demo daily-schedule EventBridge rule."
+  type        = string
+}
+
+variable "schedule_connectors" {
+  description = "Connector names included in the demo daily-schedule execution input (no xtb_file)."
+  type        = list(string)
+}
+
+variable "file_arrival_connectors" {
+  description = "Connector names included in the demo XTB file-arrival execution input."
+  type        = list(string)
+}
+
 # ------------------------------------------------------------------------------
 # Provider
 # ------------------------------------------------------------------------------
@@ -544,10 +567,10 @@ module "orchestrator" {
   sfn_role_arn                     = data.aws_iam_role.sfn.arn
   xtb_staging_bucket_name         = aws_s3_bucket.pipeline_demo.bucket
   xtb_staging_prefix              = "staging_demo/xtb/"
-  scheduled                        = false    # no daily schedule for demo
-  schedule_cron                    = "cron(0 6 * * ? *)"
-  schedule_connectors              = ["ibkr", "trading212"]
-  file_arrival_connectors          = ["ibkr", "trading212", "xtb"]
+  scheduled                        = var.scheduled
+  schedule_cron                    = var.schedule_cron
+  schedule_connectors              = var.schedule_connectors
+  file_arrival_connectors          = var.file_arrival_connectors
   state_machine_name               = "portfolio-pipeline-orchestrator-demo"
   aws_region                       = var.aws_region
 }
