@@ -73,27 +73,22 @@ variable "subnet_cidrs" {
   default     = ["10.1.1.0/24"]
 }
 
-# Operational config — values live in the committed, auto-loaded
-# connectors.auto.tfvars so connectors can be toggled without editing the
-# module block below.
+# Operational config — set per environment in connectors.auto.tfvars.
+# Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
 variable "scheduled" {
-  description = "Whether the demo EventBridge daily-schedule trigger fires the orchestrator."
-  type        = bool
+  type = bool
 }
 
 variable "schedule_cron" {
-  description = "Cron expression for the demo daily-schedule EventBridge rule."
-  type        = string
+  type = string
 }
 
 variable "schedule_connectors" {
-  description = "Connector names included in the demo daily-schedule execution input (no xtb_file)."
-  type        = list(string)
+  type = list(string)
 }
 
 variable "file_arrival_connectors" {
-  description = "Connector names included in the demo XTB file-arrival execution input."
-  type        = list(string)
+  type = list(string)
 }
 
 # ------------------------------------------------------------------------------

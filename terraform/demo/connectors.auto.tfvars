@@ -1,7 +1,5 @@
-# Non-secret operational config — which connectors run and when.
-# This file is committed and auto-loaded by Terraform (no -var-file flag, no
-# main.tf edit). Toggle a broker by adding/removing it from the lists below.
-# Secret-ish ARNs stay in the gitignored terraform.tfvars.
+# Non-secret operational config — toggle brokers by editing the lists below.
+# Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
 scheduled               = false
 schedule_cron           = "cron(0 6 * * ? *)"
 schedule_connectors     = ["ibkr", "trading212"]

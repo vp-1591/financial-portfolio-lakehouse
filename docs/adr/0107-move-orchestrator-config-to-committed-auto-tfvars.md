@@ -2,7 +2,7 @@
 
 ## Context
 
-The Step Functions orchestrator (ADR 0051, ADR 0091) is driven by four operational variables on the `terraform/modules/orchestrator` module:
+The Step Functions orchestrator (ADR 0091; the per-environment state machines of ADR 0052/0054 superseded the original ADR 0051 design) is driven by four operational variables on the `terraform/modules/orchestrator` module:
 
 - `scheduled` (bool) — whether the EventBridge daily-schedule trigger fires the orchestrator.
 - `schedule_cron` (string) — cron expression for that schedule.

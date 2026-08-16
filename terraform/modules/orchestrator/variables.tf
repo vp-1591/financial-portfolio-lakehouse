@@ -56,10 +56,7 @@ variable "xtb_staging_prefix" {
   default     = "staging/xtb/"
 }
 
-# Operational config — required, set per environment in the committed,
-# auto-loaded terraform/(prod|demo)/connectors.auto.tfvars so toggling a
-# connector does not require editing this module or the env main.tf module
-# block. Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
+# Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
 variable "scheduled" {
   description = "Whether to create an EventBridge daily-schedule trigger for the orchestrator."
   type        = bool

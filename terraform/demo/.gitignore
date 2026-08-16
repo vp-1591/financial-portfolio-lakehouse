@@ -7,7 +7,6 @@
 # Terraform variable files (may contain secrets)
 *.tfvars
 terraform.tfvars
-# Non-secret operational config is committed and auto-loaded (no secrets).
 # Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
 !connectors.auto.tfvars
 
