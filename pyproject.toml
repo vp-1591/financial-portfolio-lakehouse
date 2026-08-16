@@ -16,7 +16,7 @@ pipeline = [
     "polars==1.42.0",
     # openpyxl reads/writes XTB .xlsx broker reports (sheet + cell access for the
     # XTB connector parser); staged adoption — dependency declared ahead of the
-    # parser rewrite tracked in tmp/xtb_overhaul_plan.md.
+    # parser rewrite tracked in docs/xtb/xtb_overhaul_plan.md.
     "openpyxl==3.1.5",
     "python-dotenv==1.2.2",
     "tzdata; sys_platform == 'win32'",
