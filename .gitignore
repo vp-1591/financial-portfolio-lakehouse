@@ -3,7 +3,6 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 client-portal-gateway-ibkr/
-*.xlsx
 
 # Codex
 *.err

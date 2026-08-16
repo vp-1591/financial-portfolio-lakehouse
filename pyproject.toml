@@ -14,6 +14,10 @@ pipeline = [
     "cryptography==49.0.0",
     "pyarrow==24.0.0",
     "polars==1.42.0",
+    # openpyxl reads/writes XTB .xlsx broker reports (sheet + cell access for the
+    # XTB connector parser); staged adoption — dependency declared ahead of the
+    # parser rewrite tracked in tmp/xtb_overhaul_plan.md.
+    "openpyxl==3.1.5",
     "python-dotenv==1.2.2",
     "tzdata; sys_platform == 'win32'",
     "jinja2==3.1.6",
