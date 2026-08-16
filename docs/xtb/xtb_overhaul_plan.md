@@ -93,40 +93,47 @@ and every value is assertable.
 class XtbOpenPosition:
     # Only fields with a destination in snapshot_normalized_schema.
     account_id: str
-    product: str            # "Investment Plan" | "My Trades" (group label; not mapped)
-    instrument: str         # real instrument name on the aggregate row -> description
-    ticker: str             # reliable identity key -> label / identifier
-    category: str           # ETF on the aggregate row -> asset_class (empty on child lots)
-    value: float            # account-ccy market value (aggregate row Value = per-ticker total), 2dp -> security_value
+    product: str  # "Investment Plan" | "My Trades" (group label; not mapped)
+    instrument: str  # real instrument name on the aggregate row -> description
+    ticker: str  # reliable identity key -> label / identifier
+    category: str  # ETF on the aggregate row -> asset_class (empty on child lots)
+    value: float  # account-ccy market value (aggregate row Value = per-ticker total), 2dp -> security_value
+
 
 @dataclass(frozen=True)
 class XtbClosedPosition:
     # Fee-enrichment lookup only (D2); never emitted as its own event.
-    position_id: str        # join key to Cash Ops trade rows
-    commission: float       # -> fee_amount on the closing (Stock sell) row
-    purchase_value: float   # -> gross_amount (sale_value - purchase_value)
+    position_id: str  # join key to Cash Ops trade rows
+    commission: float  # -> fee_amount on the closing (Stock sell) row
+    purchase_value: float  # -> gross_amount (sale_value - purchase_value)
     sale_value: float
-    close_time: datetime    # -> settle_date on the closing row (UTC)
+    close_time: datetime  # -> settle_date on the closing row (UTC)
+
 
 @dataclass(frozen=True)
 class XtbCashOperation:
     account_id: str
-    operation_type: str     # raw "Type" text -> raw_event_type / event_type
-    ticker: str             # populated on trade rows
-    time: datetime          # UTC -> event_datetime
-    amount: float           # account ccy, 2dp -> cash_amount
-    operation_id: str       # -> event_id (CDC dedup key)
-    comment: str            # -> description; carries trade qty/price + transfer FX details
-    position_id: str        # join key to Closed Positions (trade rows only)
+    operation_type: str  # raw "Type" text -> raw_event_type / event_type
+    ticker: str  # populated on trade rows
+    time: datetime  # UTC -> event_datetime
+    amount: float  # account ccy, 2dp -> cash_amount
+    operation_id: str  # -> event_id (CDC dedup key)
+    comment: str  # -> description; carries trade qty/price + transfer FX details
+    position_id: str  # join key to Closed Positions (trade rows only)
+
 
 @dataclass(frozen=True)
 class XtbReport:
     account_id: str
-    account_ccy: str                            # summary-block Currency (D5)
-    open_positions: list[XtbOpenPosition]      # per-ticker aggregate rows (child lots skipped)
+    account_ccy: str  # summary-block Currency (D5)
+    open_positions: list[
+        XtbOpenPosition
+    ]  # per-ticker aggregate rows (child lots skipped)
     closed_positions: list[XtbClosedPosition]
-    cash_operations: list[XtbCashOperation]    # Total/summary rows excluded from events
-    free_cash: float | None                    # Cash Ops Total (R-last) -> snapshot CASH holding (D22); None if no Total row
+    cash_operations: list[XtbCashOperation]  # Total/summary rows excluded from events
+    free_cash: (
+        float | None
+    )  # Cash Ops Total (R-last) -> snapshot CASH holding (D22); None if no Total row
 ```
 
 **Field scope (YAGNI):** each dataclass carries only fields with a confirmed

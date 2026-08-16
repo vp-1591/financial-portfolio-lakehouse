@@ -3,12 +3,13 @@
 Uses only the stdlib zipfile + xml (same approach as pipeline/connectors/xtb/parser.py),
 so no openpyxl/pandas needed. Writes tmp/xtb_sample_dump.txt.
 """
+
 from __future__ import annotations
 
 import re
 import sys
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -42,7 +43,9 @@ def read_shared_strings(zf: zipfile.ZipFile) -> list[str]:
     return out
 
 
-def read_sheet_rows(zf: zipfile.ZipFile, sheet_path: str, shared: list[str]) -> list[list[str]]:
+def read_sheet_rows(
+    zf: zipfile.ZipFile, sheet_path: str, shared: list[str]
+) -> list[list[str]]:
     root = ET.fromstring(zf.read(sheet_path))
     rows: list[list[str]] = []
     for row in root.iter(f"{NS}row"):
@@ -63,8 +66,7 @@ def read_sheet_rows(zf: zipfile.ZipFile, sheet_path: str, shared: list[str]) -> 
             else:
                 val = ""
             cells[col] = val
-            if col > max_col:
-                max_col = col
+            max_col = max(max_col, col)
         row_vals = [cells.get(i, "") for i in range(max_col + 1)]
         rows.append(row_vals)
     return rows
