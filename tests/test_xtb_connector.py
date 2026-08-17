@@ -1060,3 +1060,421 @@ class TestFetchFromS3:
             "s3://bucket/staging/xtb/my%20report.xlsx"
         )
         assert captured_uris[0] == "s3://bucket/staging/xtb/my report.xlsx"
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — Excel-serial decoding, open→closed lifecycle, real-sample
+# transform integration. Helpers + test classes below.
+# ---------------------------------------------------------------------------
+
+
+def _naive(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
+    """Build a naive datetime for an XLSX date cell (openpyxl rejects tz-aware)."""
+    return datetime(year, month, day, hour, minute)  # noqa: DTZ001
+
+
+def _op_sheet(
+    account_id: str,
+    account_ccy: str,
+    aggregates: list[tuple[str, str, str, str, float]] | None = None,
+) -> list[tuple[object, ...]]:
+    """Build a minimal Open Positions sheet (summary block + optional aggregates).
+
+    Each aggregate tuple is (product, instrument, ticker, category, value).
+    """
+    rows: list[tuple[object, ...]] = [
+        ("Account number", account_id),
+        ("Open Positions",),
+        ("Data as of report generated", "2026-08-03"),
+        ("Product", "Metric", "Amount", "Currency"),
+        ("My Trades", "Value", 0, account_ccy),
+        (None,),
+        ("Note", "Summary values and open positions are shown as of report generation"),
+        (
+            "Product",
+            "Instrument/Position",
+            "Ticker",
+            "Category",
+            "Type",
+            "Volume",
+            "Value",
+        ),
+    ]
+    for product, instrument, ticker, category, value in aggregates or []:
+        rows.append((product, instrument, ticker, category, None, 0, value))
+    return rows
+
+
+def _cash_sheet(
+    account_id: str,
+    ops: list[tuple[str, str, object, float, str, str, str]],
+) -> list[tuple[object, ...]]:
+    """Build a minimal Cash Operations sheet.
+
+    Each op tuple is (type, ticker, time, amount, id, comment, position_id).
+    A Total row (sum of amounts) is appended so free_cash is populated (D22).
+    """
+    rows: list[tuple[object, ...]] = [
+        ("Account number", account_id),
+        ("Cash Operations",),
+        ("Date from (UTC)", "2006-01-01"),
+        ("Date to (UTC)", "2026-08-03"),
+        (
+            "Type",
+            "Instrument",
+            "Ticker",
+            "Category",
+            "Time",
+            "Amount",
+            "ID",
+            "Comment",
+            "Product",
+            "Position ID",
+        ),
+    ]
+    total = 0.0
+    for op_type, ticker, time, amount, op_id, comment, position_id in ops:
+        rows.append(
+            (
+                op_type,
+                None,
+                ticker,
+                None,
+                time,
+                amount,
+                op_id,
+                comment,
+                "My Trades",
+                position_id,
+            )
+        )
+        total += amount
+    rows.append(
+        ("Total", None, None, None, None, round(total, 2), None, None, None, None)
+    )
+    return rows
+
+
+_CLOSED_HEADER: tuple[object, ...] = (
+    "Instrument",
+    "Ticker",
+    "Category",
+    "Type",
+    "Volume",
+    "Open Price",
+    "Open Time (UTC)",
+    "Close Price",
+    "Close Time (UTC)",
+    "Product",
+    "Profit/Loss",
+    "Gross Profit",
+    "Purchase Value",
+    "Sale Value",
+    "Stop Loss",
+    "Take Profit",
+    "Commission",
+    "Margin",
+    "Swap",
+    "Rollover",
+    "Open Conversion Rate",
+    "Close Conversion Rate",
+    "Close Origin",
+    "Position ID",
+    "Comment",
+)
+
+
+def _closed_sheet(
+    account_id: str,
+    positions: list[tuple[str, float, float, float, object, str]],
+) -> list[tuple[object, ...]]:
+    """Build a minimal Closed Positions sheet.
+
+    Each position tuple is (ticker, commission, purchase_value, sale_value,
+    close_time, position_id).
+    """
+    rows: list[tuple[object, ...]] = [
+        ("Account number", account_id),
+        ("Closed Positions",),
+        ("Date from (UTC)", "2006-01-01"),
+        ("Date to (UTC)", "2026-08-03"),
+        _CLOSED_HEADER,
+    ]
+    for ticker, commission, purchase, sale, close_time, position_id in positions:
+        rows.append(
+            (
+                "Instr",
+                ticker,
+                "ETF",
+                "BUY",
+                10,
+                100,
+                None,
+                120,
+                close_time,
+                "My Trades",
+                sale - purchase,
+                sale - purchase,
+                purchase,
+                sale,
+                None,
+                None,
+                commission,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "xStation5",
+                position_id,
+                None,
+            )
+        )
+    return rows
+
+
+def _build_raw_from_bytes(
+    xlsx_bytes: bytes,
+    fernet_key: bytes,
+    *,
+    fetched_at: datetime,
+    source_file: str = "report.xlsx",
+) -> pa.Table:
+    """Build a raw-layer table from .xlsx bytes (shared bronze, D17)."""
+    return pa.table(
+        {
+            "fetched_at": [fetched_at],
+            "broker": ["XTB"],
+            "source": ["XTB_REPORT"],
+            "payload": [encrypt(xlsx_bytes, fernet_key)],
+            "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
+            "source_file": [source_file],
+        },
+        schema=RAW_SCHEMA,
+    )
+
+
+class TestXtbExcelSerialDecoding:
+    """D3 defensive branch: raw numeric Excel serials decode to tz-aware UTC.
+
+    The fixture uses date-formatted cells (openpyxl auto-converts them to
+    naive ``datetime``). This test exercises the parser's defensive
+    ``from_excel`` branch by writing raw numeric serials (e.g. 46236.875) in
+    the Cash Operations ``Time`` and Closed Positions ``Close time`` columns.
+    This is the regression coverage for the analytics date-handling fix (D3):
+    the parser must never emit a serial string into ``event_datetime``.
+    """
+
+    def test_numeric_serial_decodes_to_tz_aware_utc(self) -> None:
+        # 46236.875 -> 2026-08-02 21:00 UTC (verified via from_excel).
+        serial = 46236.875
+        sheets = {
+            "Open Positions": _op_sheet(DEFAULT_ACCOUNT_ID, DEFAULT_ACCOUNT_CCY),
+            "Cash Operations": _cash_sheet(
+                DEFAULT_ACCOUNT_ID,
+                [
+                    (
+                        "Deposit",
+                        "",
+                        serial,  # raw numeric Excel serial in the Time column
+                        1000.0,
+                        "900011122",
+                        "deposit",
+                        "",
+                    ),
+                ],
+            ),
+            "Closed Positions": _closed_sheet(
+                DEFAULT_ACCOUNT_ID,
+                [
+                    (
+                        "SXR8.DE",
+                        12.50,
+                        4300.04,
+                        5040.05,
+                        serial,  # raw numeric Excel serial in Close time
+                        DEFAULT_CLOSED_POSITION_ID,
+                    ),
+                ],
+            ),
+        }
+        data = build_xlsx_bytes_from_sheets(sheets)
+        report = parse_report(data)
+
+        # Cash-operation Time decoded from the serial -> tz-aware UTC.
+        assert len(report.cash_operations) == 1
+        op = report.cash_operations[0]
+        assert op.time == datetime(2026, 8, 2, 21, 0, tzinfo=UTC)
+        assert op.time.tzinfo is not None
+
+        # Closed-position Close time decoded from the serial -> tz-aware UTC.
+        assert len(report.closed_positions) == 1
+        closed = report.closed_positions[0]
+        assert closed.close_time == datetime(2026, 8, 2, 21, 0, tzinfo=UTC)
+        assert closed.close_time.tzinfo is not None
+
+
+class TestXtbOpenClosedLifecycle:
+    """Open→closed lifecycle (Stage 5 coverage list): a position open in one
+    snapshot, closed in the next; fee captured exactly once on the sell.
+
+    D9/D18: transform keeps the latest ``fetched_at`` per ``account_id`` (not a
+    union of uploads). Two raw payloads for the same account are combined; the
+    second (later ``fetched_at``) supersedes the first. The open position from
+    payload 1 does NOT reappear in the snapshot, and the purchase event from
+    payload 1 is NOT in CDC — only the sell (with its fee) survives.
+    """
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    def test_open_then_closed_fee_captured_once(self, fernet_key: bytes) -> None:
+        t_open = datetime(2026, 8, 1, 6, 0, tzinfo=UTC)
+        t_closed = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+
+        # Payload 1: open SXR8.DE position + a Stock purchase (no fee on purchase).
+        workbook_open = build_xlsx_bytes_from_sheets(
+            {
+                "Open Positions": _op_sheet(
+                    DEFAULT_ACCOUNT_ID,
+                    DEFAULT_ACCOUNT_CCY,
+                    aggregates=[
+                        ("Investment Plan", "Core S&P 500", "SXR8.DE", "ETF", 1000.0),
+                    ],
+                ),
+                "Cash Operations": _cash_sheet(
+                    DEFAULT_ACCOUNT_ID,
+                    [
+                        (
+                            "Stock purchase",
+                            "SXR8.DE",
+                            _naive(2026, 7, 10, 8, 0),
+                            -1000.0,
+                            "900035422",
+                            "OPEN BUY 10 @ 100.00",
+                            "P1",
+                        ),
+                    ],
+                ),
+                "Closed Positions": _closed_sheet(DEFAULT_ACCOUNT_ID, []),
+            }
+        )
+        # Payload 2: SXR8.DE gone from Open Positions; Stock sell + Closed Position.
+        workbook_closed = build_xlsx_bytes_from_sheets(
+            {
+                "Open Positions": _op_sheet(
+                    DEFAULT_ACCOUNT_ID,
+                    DEFAULT_ACCOUNT_CCY,
+                    aggregates=[],  # no open positions
+                ),
+                "Cash Operations": _cash_sheet(
+                    DEFAULT_ACCOUNT_ID,
+                    [
+                        (
+                            "Stock sell",
+                            "SXR8.DE",
+                            _naive(2026, 8, 2, 7, 0),
+                            1200.0,
+                            "900041122",
+                            "CLOSE BUY 10 @ 120.00",
+                            "P1",
+                        ),
+                    ],
+                ),
+                "Closed Positions": _closed_sheet(
+                    DEFAULT_ACCOUNT_ID,
+                    [
+                        (
+                            "SXR8.DE",
+                            15.00,  # nonzero commission -> fee captured once
+                            1000.0,
+                            1200.0,
+                            _naive(2026, 8, 2, 7, 0),
+                            "P1",
+                        ),
+                    ],
+                ),
+            }
+        )
+
+        raw_open = _build_raw_from_bytes(
+            workbook_open, fernet_key, fetched_at=t_open, source_file="open.xlsx"
+        )
+        raw_closed = _build_raw_from_bytes(
+            workbook_closed, fernet_key, fetched_at=t_closed, source_file="closed.xlsx"
+        )
+        combined = pa.concat_tables([raw_open, raw_closed], schema=RAW_SCHEMA)
+
+        # Snapshot: latest-per-account = payload 2 -> no SXR8.DE equity row.
+        snapshot = transform_snapshot(combined, fernet_key)
+        labels = snapshot.column("label").to_pylist()
+        assert "SXR8.DE" not in labels  # open position does not reappear
+        equity_rows = [
+            r for r in snapshot.to_pylist() if r["position_type"] == "EQUITY"
+        ]
+        assert equity_rows == []  # payload 2 has no open positions
+        # CASH row still present (from payload 2's Total row, D22).
+        cash_rows = [r for r in snapshot.to_pylist() if r["position_type"] == "CASH"]
+        assert len(cash_rows) == 1
+
+        # CDC: latest-per-account = payload 2 -> only the sell event survives.
+        cdc = transform_cdc(combined, fernet_key)
+        trades = [r for r in cdc.to_pylist() if r["event_type"] == "TRADE"]
+        assert len(trades) == 1  # fee captured exactly once, not zero or twice
+        sell = trades[0]
+        assert sell["raw_event_type"] == "Stock sell"
+        # Fee enriched from the Closed Position (D8), exactly once.
+        assert sell["fee_amount"] is not None
+        assert decrypt_float(sell["fee_amount"], fernet_key) == pytest.approx(15.00)
+        # The purchase event from payload 1 is NOT in CDC (latest supersedes).
+        assert "Stock purchase" not in {r["raw_event_type"] for r in cdc.to_pylist()}
+
+
+class TestXtbRealSampleTransformIntegration:
+    """Real-sample integration through transform_snapshot + transform_cdc.
+
+    The parser-level round-trip (TestXtbParser.test_real_sample_round_trip)
+    only exercises ``parse_report``. This test flows the real anonymized
+    sample through both shared-bronze transforms (D17) to verify the full
+    pipeline produces sensible output. The real sample's Closed Position has
+    Commission=0, so the sell row's fee_amount must decrypt to 0.0.
+    """
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    @pytest.mark.skipif(
+        not REAL_SAMPLE_PATH.exists(), reason="sample xlsx not checked out"
+    )
+    def test_real_sample_through_transforms(self, fernet_key: bytes) -> None:
+        xlsx_bytes = REAL_SAMPLE_PATH.read_bytes()
+        raw = _build_raw_from_bytes(
+            xlsx_bytes, fernet_key, fetched_at=datetime.now(UTC)
+        )
+
+        # Snapshot: 2 EQUITY aggregates (SXR8.DE, SXRV.DE) + 1 CASH row.
+        snapshot = transform_snapshot(raw, fernet_key)
+        types = snapshot.column("position_type").to_pylist()
+        assert types.count("EQUITY") == 2
+        assert types.count("CASH") == 1
+        labels = set(snapshot.column("label").to_pylist())
+        assert {"SXR8.DE", "SXRV.DE"} <= labels
+        assert f"CASH {DEFAULT_ACCOUNT_CCY}" in labels
+
+        # CDC: events including the deposit, interest, and sell.
+        cdc = transform_cdc(raw, fernet_key)
+        raw_types = {r["raw_event_type"] for r in cdc.to_pylist()}
+        assert "Deposit" in raw_types
+        assert "Free funds interest" in raw_types
+        assert "Stock sell" in raw_types
+        event_types = set(cdc.column("event_type").to_pylist())
+        assert {"DEPOSIT", "INTEREST", "TRADE"} <= event_types
+
+        # The real sample's Closed Position has Commission=0 (the fixture
+        # adds a nonzero one). The sell row's fee_amount must decrypt to 0.0.
+        sell_rows = [r for r in cdc.to_pylist() if r["raw_event_type"] == "Stock sell"]
+        assert len(sell_rows) == 1
+        assert sell_rows[0]["fee_amount"] is not None
+        assert decrypt_float(sell_rows[0]["fee_amount"], fernet_key) == 0.0
