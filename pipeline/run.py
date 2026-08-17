@@ -720,7 +720,7 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     # D14: validation is unconditional — CDC is mandatory for every connector
     # now that XTB produces CDC via the shared bronze (D17). The
     # ``cdc_supported`` flag is removed.
-    # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+    # Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
     tables = [f"{connector.name}_snapshot", f"{connector.name}_cdc"]
     return run_validation(
         fernet_key=fernet_key,

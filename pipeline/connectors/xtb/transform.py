@@ -87,6 +87,8 @@ def _latest_per_account(
     the same account share the max ``fetched_at``, break the tie
     deterministically by ``source_file`` so both payloads do not survive and
     emit duplicate holdings.
+
+    Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
     """
     candidates: list[tuple[tuple[object, str], DecodedRow, XtbReport]] = []
     for row in iter_raw_payloads(raw, fernet_key, require_json=False):

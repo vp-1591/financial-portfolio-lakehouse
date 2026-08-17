@@ -1,5 +1,7 @@
 # 0048: XTB Cloud Upload — S3 Staging + EventBridge
 
+> **Superseded by [ADR 0108](./0108-xtb-new-format-connector-overhaul.md)** — the upload-path `staging`/`staging_demo` prefix decision (#4) is reversed by D20 (now `pipeline/xtb_uploads/`); Option B (S3 staging + EventBridge), least-privilege, and ephemeral staging carry forward unchanged, see 0108 §Decision.
+
 ## Context
 
 The XTB connector requires a local `.xlsx` file passed via `--xtb-file`. To make XTB an event-driven connector that triggers the pipeline automatically when a report is uploaded, we need:

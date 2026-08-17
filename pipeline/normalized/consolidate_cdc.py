@@ -4,10 +4,11 @@ Reads each broker's CDC normalized Delta table and concatenates all rows
 into ``normalized/cdc_events``, producing a unified broker-neutral CDC
 table suitable for dashboard queries.
 
-Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
 CDC is mandatory for ibkr and trading212 — a missing or empty required
-broker CDC table raises RuntimeError.  Other registered brokers (e.g. XTB)
-are optional: a missing or empty CDC table is skipped (the prod daily
+broker CDC table raises RuntimeError (the required-non-empty gate, carried
+forward unchanged from ADR 0087 §Decision).  Other registered brokers (e.g.
+XTB) are optional: a missing or empty CDC table is skipped (the prod daily
 schedule does not run XTB, so ``xtb_cdc`` may legitimately be absent — D21).
 
 D15: the candidate broker set is derived from the connector registry

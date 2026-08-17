@@ -1,5 +1,7 @@
 # 0087 — Make CDC Mandatory and Fail on Empty Silver CDC Tables
 
+> **Partially superseded by [ADR 0108](./0108-xtb-new-format-connector-overhaul.md)** — the `cdc_supported` flag (decision #2) and the `_OPTIONAL_CDC_BROKERS` optional-list (decision #3's mechanism) are removed by D14/D15; per-connector CDC validation is now unconditional and consolidate derives candidates from the registry. The `check_non_empty` quality check + `NON_EMPTY_REQUIRED` (decision #1), the required-broker missing/empty `RuntimeError` (decision #3 behavior), the T212 `fetch_cdc` raise on all-empty (decision #4), and the `transform_connector` empty-raw WARNING (decision #5) carry forward unchanged, see 0108 §Decision and §Constraints.
+
 ## Context
 
 The production pipeline failed at `run-consolidate-analytics` because `cdc_events` didn't exist. Root cause: CDC wasn't configured (no IBKR flex CDC query ID, no T212 CDC setup). But the code made this failure invisible and late:

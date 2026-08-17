@@ -59,8 +59,6 @@ For API key permissions, see [API Key Permissions](trading212/api-key-permission
 XTB does not provide a live API. Data is ingested from Excel report exports
 provided via the `--xtb-file` CLI argument. No API key is required.
 
-Required environment variable: `XTB_ENABLED` (optional, enabled by default).
-
 For detailed usage, see [XTB Excel Reports](brokers/xtb.md).
 
 ## Storage Configuration
