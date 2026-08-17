@@ -350,8 +350,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 0
@@ -391,8 +389,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
@@ -418,8 +414,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
@@ -444,8 +438,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
@@ -476,8 +468,6 @@ class TestCmdFullDockerMode:
             xtb_file=None,
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_full(args)
         assert rc == 0
@@ -502,8 +492,6 @@ class TestCmdFullDockerMode:
             xtb_file=None,
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_full(args)
         assert rc == 1
@@ -526,8 +514,6 @@ class TestCmdFullSfnTrigger:
             "wait": False,
             "target_currency": "EUR",
             "fx_rate": [],
-            "isin": [],
-            "isin_map_file": [],
         }
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -718,8 +704,6 @@ class TestRunConnectorsParallel:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
             xtb_file=None,
             mode="docker",
         )
@@ -738,8 +722,6 @@ class TestRunConnectorsParallel:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
             xtb_file=None,
             mode="docker",
         )

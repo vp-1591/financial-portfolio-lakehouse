@@ -71,19 +71,6 @@ def parse_fx_rate(value: str) -> tuple[str, float]:
     return currency, rate
 
 
-def parse_isin_override(value: str) -> tuple[str, str]:
-    if "=" not in value:
-        raise argparse.ArgumentTypeError("ISIN overrides must use TICKER=ISIN format.")
-    ticker, isin = value.split("=", 1)
-    ticker = ticker.strip()
-    isin = isin.strip().upper()
-    if not ticker:
-        raise argparse.ArgumentTypeError("ISIN override ticker cannot be empty.")
-    if not isin:
-        raise argparse.ArgumentTypeError("ISIN override value cannot be empty.")
-    return ticker, isin
-
-
 def cmd_keygen(args: argparse.Namespace) -> int:
     """Generate a Fernet encryption key."""
     keygen_main()
@@ -279,9 +266,6 @@ def transform_connector(connector, fernet_key: bytes) -> int:
 
 def cmd_consolidate(args: argparse.Namespace) -> int:
     """Consolidate normalized broker snapshots into the holdings table."""
-    import csv
-    from pathlib import Path
-
     from deltalake import DeltaTable
 
     from pipeline.crypto import load_key
@@ -293,23 +277,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     from pipeline.normalized.extract import extract_holdings
 
     fernet_key = load_key()
-
-    # Load ISIN overrides
-    isin_overrides: dict[str, str] = {}
-    if args.isin:
-        isin_overrides.update(dict(args.isin))
-    if args.isin_map_file:
-        for map_file in args.isin_map_file:
-            path = Path(map_file)
-            if not path.exists():
-                print(f"ISIN map file does not exist: {path}", file=sys.stderr)
-                return 1
-            with path.open(newline="", encoding="utf-8-sig") as f:
-                for row in csv.DictReader(f):
-                    ticker = (row.get("ticker") or row.get("Ticker") or "").strip()
-                    isin = (row.get("isin") or row.get("ISIN") or "").strip().upper()
-                    if ticker and isin:
-                        isin_overrides[ticker] = isin
 
     # Manual FX rates
     manual_rates: dict[str, float] = {}
@@ -349,7 +316,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         holdings=all_holdings,
         fernet_key=fernet_key,
         converter=converter,
-        isin_overrides=isin_overrides,
     )
     logger.debug("Consolidated: %d rows written", table.num_rows)
     return 0
@@ -362,29 +328,9 @@ def cmd_analytics(args: argparse.Namespace) -> int:
     income, interest income, cash flow summary).  If CDC events are not
     available, logs a warning and continues — holdings still succeeds.
     """
-    import csv
-    from pathlib import Path
-
     from pipeline.crypto import load_key
 
     fernet_key = load_key()
-
-    # Load ISIN overrides
-    isin_overrides: dict[str, str] = {}
-    if args.isin:
-        isin_overrides.update(dict(args.isin))
-    if args.isin_map_file:
-        for map_file in args.isin_map_file:
-            path = Path(map_file)
-            if not path.exists():
-                print(f"ISIN map file does not exist: {path}", file=sys.stderr)
-                return 1
-            with path.open(newline="", encoding="utf-8-sig") as f:
-                for row in csv.DictReader(f):
-                    ticker = (row.get("ticker") or row.get("Ticker") or "").strip()
-                    isin = (row.get("isin") or row.get("ISIN") or "").strip().upper()
-                    if ticker and isin:
-                        isin_overrides[ticker] = isin
 
     # Build portfolio_holdings gold table (reads security_value,
     # position_type, security_ccy, and target_ccy from consolidated_holdings).
@@ -603,8 +549,6 @@ def _run_connectors_parallel(args: argparse.Namespace) -> int:
     base_ns = argparse.Namespace(
         target_currency=getattr(args, "target_currency", "EUR"),
         fx_rate=getattr(args, "fx_rate", []),
-        isin=getattr(args, "isin", []),
-        isin_map_file=getattr(args, "isin_map_file", []),
         xtb_file=getattr(args, "xtb_file", None),
         mode=get_mode(),
     )
@@ -947,20 +891,6 @@ def main() -> int:
         default=[],
         help="Manual FX rate override as CURRENCY=RATE",
     )
-    full_parser.add_argument(
-        "--isin",
-        action="append",
-        type=parse_isin_override,
-        default=[],
-        help="ISIN override as TICKER=ISIN",
-    )
-    full_parser.add_argument(
-        "--isin-map-file",
-        action="append",
-        type=str,
-        default=[],
-        help="CSV file with ticker,isin columns",
-    )
 
     # upload-xtb
     upload_xtb_parser = subparsers.add_parser(
@@ -1005,20 +935,6 @@ def main() -> int:
         type=parse_fx_rate,
         default=[],
         help="Manual FX rate override as CURRENCY=RATE",
-    )
-    run_consolidate_analytics_parser.add_argument(
-        "--isin",
-        action="append",
-        type=parse_isin_override,
-        default=[],
-        help="ISIN override as TICKER=ISIN",
-    )
-    run_consolidate_analytics_parser.add_argument(
-        "--isin-map-file",
-        action="append",
-        type=str,
-        default=[],
-        help="CSV file with ticker,isin columns",
     )
 
     args = parser.parse_args()

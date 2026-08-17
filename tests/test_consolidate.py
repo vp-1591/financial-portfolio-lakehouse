@@ -16,7 +16,6 @@ from pipeline.normalized.consolidate import (
     PortfolioRow,
     TransientHttpError,
     aggregate_percentages,
-    format_identifier,
     normalize_trading212_ticker,
 )
 
@@ -41,14 +40,6 @@ class TestNormalizeTrading212Ticker:
 
     def test_preserves_already_lowercase(self) -> None:
         assert normalize_trading212_ticker("alreadylower") == "alreadylower"
-
-
-class TestFormatIdentifier:
-    def test_formats_with_prefix(self) -> None:
-        assert format_identifier("ISIN", "IE00BK5BQT80") == "ISIN:IE00BK5BQT80"
-
-    def test_returns_empty_for_empty_value(self) -> None:
-        assert format_identifier("ISIN", "") == ""
 
 
 class TestAggregatePercentages:
@@ -84,34 +75,6 @@ class TestAggregatePercentages:
             ),
             PortfolioRow("AAPL", 41.66666666666667, "IBKR", "-", "-", "-"),
             PortfolioRow("CASH PLN", 8.333333333333332, "XTB", "-", "-", "-"),
-        ]
-
-    def test_fills_missing_isin_from_override_map(self) -> None:
-        converter = CurrencyConverter("EUR")
-
-        rows = aggregate_percentages(
-            [
-                Holding(
-                    "XTB",
-                    "SXR8.DE",
-                    "EUR",
-                    100.0,
-                    description="SXR8.DE",
-                ),
-            ],
-            converter,
-            isin_overrides={"SXR8.DE": "IE00B5BMR087"},
-        )
-
-        assert rows == [
-            PortfolioRow(
-                "SXR8.DE",
-                100.0,
-                "XTB",
-                "ISIN:IE00B5BMR087",
-                "-",
-                "SXR8.DE",
-            )
         ]
 
     def test_zero_net_worth_raises_error(self) -> None:

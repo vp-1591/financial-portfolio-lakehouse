@@ -12,7 +12,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 |-----|-------|---------|--------|---------------|
 | 0001 | Disable Pytest Cache Provider | 2026-06-15 | active | — |
 | 0002a | Add Consolidate Step and Fix Duplicates | 2026-06-26 | active | — |
-| 0002b | Use Broker-Native Identifiers in Portfolio Report | 2026-06-15 | active | — |
+| 0002b | Use Broker-Native Identifiers in Portfolio Report | 2026-06-15 | superseded | 0109 |
 | 0003 | Medallion Architecture Pipeline | 2026-06-19 | superseded | 0084 |
 | 0004 | Pipeline End-to-End Bugfixes | 2026-06-21 | active | — |
 | 0005 | Pipeline End-to-End Bugfixes (Round 2) | 2026-06-21 | active | — |
@@ -119,6 +119,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0106 | Enforce Analytics Schema at the Write Boundary (Polars Int32/Int64 Drift) | 2026-08-15 | active | — |
 | 0107 | Move orchestrator connector/schedule config to committed connectors.auto.tfvars | 2026-08-16 | active | — |
 | 0108 | XTB New-Format Connector Overhaul | 2026-08-17 | active | — |
+| 0109 | Remove ISIN Override CLI Feature | 2026-08-17 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

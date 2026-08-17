@@ -35,6 +35,9 @@ _bmad/*
 # review agent output
 .claude/_review-artifacts
 
+# local agent worktrees
+.claude/worktrees/
+
 # temporary investigation results and artifacts
 tmp/
 PROGRESS.md

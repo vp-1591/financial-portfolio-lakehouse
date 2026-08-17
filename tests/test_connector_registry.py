@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pipeline.connectors.registry import all, get, register
+from pipeline.connectors.registry import all, get, register, unregister
 
 
 class TestRegistry:
@@ -38,9 +38,14 @@ class TestRegistry:
             def transform_cdc(self, raw, fernet_key):
                 raise NotImplementedError
 
-        connector = register(FakeConnector())
-        assert connector.name == "fake"
-        assert get("fake") is connector
+        try:
+            connector = register(FakeConnector())
+            assert connector.name == "fake"
+            assert get("fake") is connector
+        finally:
+            # Clean up so "fake" does not leak into all() for later tests
+            # (consolidate_cdc_events derives candidates from all_connectors()).
+            unregister("fake")
 
     def test_get_unknown_connector_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown connector"):
