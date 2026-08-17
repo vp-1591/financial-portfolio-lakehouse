@@ -17,7 +17,10 @@ class BrokerConnector(Protocol):
 
     name: str  # e.g. "ibkr", "trading212", "xtb"
     display_name: str  # e.g. "IBKR", "Trading 212", "XTB"
-    cdc_supported: bool  # True for brokers with a real CDC feed; False otherwise
+    # D17: which raw layer the CDC transform reads from. Default "cdc"
+    # (a separate CDC raw fetch); XTB overrides to "snapshot" (shared bronze
+    # — one raw row carries all sheets and feeds both silvers).
+    cdc_raw_layer: str
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         """Build connector-specific keyword arguments for ``fetch_snapshot``.

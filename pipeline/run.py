@@ -221,7 +221,12 @@ def transform_connector(connector, fernet_key: bytes) -> int:
     storage_opts = get_storage().storage_options
 
     for layer in ("snapshot", "cdc"):
-        raw_path = get_raw_path(connector.name, layer)
+        # D17: the CDC transform reads from the connector's cdc_raw_layer
+        # (default "cdc"; XTB overrides to "snapshot" for shared bronze). The
+        # snapshot layer always reads the snapshot raw. The normalized output
+        # is still written to ``normalized/{name}_{layer}`` below.
+        raw_layer = layer if layer == "snapshot" else connector.cdc_raw_layer
+        raw_path = get_raw_path(connector.name, raw_layer)
         try:
             dt = DeltaTable(raw_path, storage_options=storage_opts)
         except Exception:
@@ -711,12 +716,12 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     rc = transform_connector(connector, fernet_key)
     if rc:
         return rc
-    # Validate connector's normalized tables after transform
+    # Validate connector's normalized tables after transform.
+    # D14: validation is unconditional — CDC is mandatory for every connector
+    # now that XTB produces CDC via the shared bronze (D17). The
+    # ``cdc_supported`` flag is removed.
     # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
-    # Only validate CDC table for connectors that support CDC (XTB does not).
-    tables = [f"{connector.name}_snapshot"]
-    if connector.cdc_supported:
-        tables.append(f"{connector.name}_cdc")
+    tables = [f"{connector.name}_snapshot", f"{connector.name}_cdc"]
     return run_validation(
         fernet_key=fernet_key,
         tables=tables,

@@ -1,4 +1,11 @@
-"""XTB connector: fetch raw snapshot and CDC data from XLS files."""
+"""XTB connector: fetch raw report data from XLS files.
+
+Stage 3 (D17 shared bronze): ``fetch_snapshot`` writes a single raw row with
+``source == "XTB_REPORT"`` carrying the full 3-sheet workbook. The separate
+``fetch_cdc`` path is removed — both snapshot and CDC silvers derive from the
+same ``xtb_snapshot`` raw table. ``fetch_kwargs``/``args.xtb_file`` loop
+support lives in :func:`pipeline.run.fetch_connector`, not here.
+"""
 
 from __future__ import annotations
 
@@ -57,37 +64,12 @@ def _read_file_bytes(file_path: str | Path) -> tuple[bytes, str]:
 
 
 def fetch_snapshot(file_path: str | Path) -> pa.Table:
-    """Fetch XTB positions and cash from an Excel report.
+    """Fetch an XTB report (full 3-sheet workbook) and return a raw-layer table.
 
-    Stores the raw .xlsx file bytes as the payload, leaving parsing
-    to the transform layer.
-
-    Parameters
-    ----------
-    file_path:
-        Absolute path to the XTB .xlsx report, or an ``s3://`` URI.
-    """
-    payload, filename = _read_file_bytes(file_path)
-    now = datetime.now(UTC)
-
-    return pa.table(
-        {
-            "fetched_at": [now],
-            "broker": ["XTB"],
-            "source": ["OPEN POSITION"],
-            "payload": [payload],
-            "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "source_file": [filename],
-        },
-        schema=RAW_SCHEMA,
-    )
-
-
-def fetch_cdc(file_path: str | Path) -> pa.Table:
-    """Fetch XTB cash operations (CDC) from an Excel report.
-
-    Stores the raw .xlsx file bytes as the payload, leaving parsing
-    to the transform layer.
+    Stores the raw .xlsx file bytes as the payload with
+    ``source == "XTB_REPORT"`` (D17 shared bronze). Both snapshot and CDC
+    silvers derive from this single raw row; parsing is left to the
+    transform layer.
 
     Parameters
     ----------
@@ -101,7 +83,7 @@ def fetch_cdc(file_path: str | Path) -> pa.Table:
         {
             "fetched_at": [now],
             "broker": ["XTB"],
-            "source": ["CASH OPERATION"],
+            "source": ["XTB_REPORT"],
             "payload": [payload],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
             "source_file": [filename],

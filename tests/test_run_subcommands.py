@@ -98,18 +98,6 @@ class TestArgparseDispatch:
         connector = get("xtb")
         assert connector.name == "xtb"
 
-    def test_cdc_supported_ibkr(self) -> None:
-        """IBKR supports CDC."""
-        assert get("ibkr").cdc_supported is True
-
-    def test_cdc_supported_trading212(self) -> None:
-        """Trading 212 supports CDC."""
-        assert get("trading212").cdc_supported is True
-
-    def test_cdc_supported_xtb(self) -> None:
-        """XTB does not support CDC."""
-        assert get("xtb").cdc_supported is False
-
 
 # ---------------------------------------------------------------------------
 # fetch_connector / transform_connector isolation
@@ -310,9 +298,10 @@ class TestCmdRunConnector:
         args = argparse.Namespace(connector="xtb", xtb_file=["report.xlsx"])
         rc = cmd_run_connector(args)
         assert rc == 0
+        # D14: validation is unconditional — CDC table is always validated.
         mock_validate.assert_called_once_with(
             fernet_key=b"test-key",
-            tables=["xtb_snapshot"],
+            tables=["xtb_snapshot", "xtb_cdc"],
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()

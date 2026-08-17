@@ -24,7 +24,7 @@ _DEMO_BASE_URL = "https://demo.trading212.com/api/v0"
 class Trading212Connector:
     name = "trading212"
     display_name = "Trading 212"
-    cdc_supported = True
+    cdc_raw_layer = "cdc"
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         api_key = resolve_secret("T212_API_KEY")

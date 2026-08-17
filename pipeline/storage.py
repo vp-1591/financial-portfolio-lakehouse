@@ -37,7 +37,6 @@ from typing import Protocol, runtime_checkable
 from pipeline.secrets import (
     get_env,
     get_mode,
-    is_demo,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,9 +64,7 @@ class StorageBackend(Protocol):
     """
 
     def table_path(self, layer: str, table_name: str) -> str: ...
-    def staging_path(
-        self, staging_prefix: str, connector_name: str, filename: str
-    ) -> str: ...
+    def staging_path(self, segment: str, filename: str) -> str: ...
     def ensure_parent(self, table_path: str) -> None:
         """Create parent dirs and clean up orphaned files from failed writes."""
         ...
@@ -112,12 +109,21 @@ class S3Backend:
             return f"s3://{self.bucket}/{self.prefix}/{layer}/{table_name}"
         return f"s3://{self.bucket}/{layer}/{table_name}"
 
-    def staging_path(
-        self, staging_prefix: str, connector_name: str, filename: str
-    ) -> str:
+    def staging_path(self, segment: str, filename: str) -> str:
+        """Return the S3 URI for a staging upload.
+
+        D20: the ``segment`` is the full middle segment (e.g.
+        ``xtb_uploads``) — the environment prefix (``pipeline`` /
+        ``pipeline_demo``) is already carried by ``self.prefix``, so no
+        separate ``staging``/``staging_demo`` segment is inserted. This
+        yields ``s3://{bucket}/{prefix}/{segment}/{filename}`` (e.g.
+        ``s3://bucket/pipeline/xtb_uploads/report.xlsx``) with no
+        ``xtb/`` subfolder between ``xtb_uploads/`` and the filename,
+        matching the EventBridge rule prefix.
+        """
         if self.prefix:
-            return f"s3://{self.bucket}/{self.prefix}/{staging_prefix}/{connector_name}/{filename}"
-        return f"s3://{self.bucket}/{staging_prefix}/{connector_name}/{filename}"
+            return f"s3://{self.bucket}/{self.prefix}/{segment}/{filename}"
+        return f"s3://{self.bucket}/{segment}/{filename}"
 
     def ensure_parent(self, table_path: str) -> None:
         # S3 does not require parent directories to exist.
@@ -193,14 +199,17 @@ class StorageConfig:
         return self.backend.table_path("analytics", table_name)
 
     def staging_path(self, connector_name: str, filename: str) -> str:
-        """Return the full path for a staging file.
+        """Return the full path for a staging upload (D20).
 
-        Uses ``staging`` prefix in production, ``staging_demo`` in demo
-        mode — matching the existing ``pipeline``/``pipeline_demo`` pattern.
+        ``segment`` is ``{connector_name}_uploads`` (e.g. ``xtb_uploads``).
+        The environment (``pipeline`` / ``pipeline_demo``) is already
+        carried by the backend's ``prefix``, so no separate
+        ``staging``/``staging_demo`` segment is inserted — the old segment
+        redundantly re-encoded the environment and collided with
+        ``--mode staging``. Yields
+        ``s3://{bucket}/{prefix}/{connector}_uploads/{filename}``.
         """
-
-        prefix = "staging_demo" if is_demo() else "staging"
-        return self.backend.staging_path(prefix, connector_name, filename)
+        return self.backend.staging_path(f"{connector_name}_uploads", filename)
 
     @property
     def storage_options(self) -> dict[str, str] | None:

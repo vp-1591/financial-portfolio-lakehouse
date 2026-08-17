@@ -6,8 +6,15 @@ table suitable for dashboard queries.
 
 Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
 CDC is mandatory for ibkr and trading212 — a missing or empty required
-broker CDC table raises RuntimeError.  XTB is optional (file-based, no
-CDC feed).
+broker CDC table raises RuntimeError.  Other registered brokers (e.g. XTB)
+are optional: a missing or empty CDC table is skipped (the prod daily
+schedule does not run XTB, so ``xtb_cdc`` may legitimately be absent — D21).
+
+D15: the candidate broker set is derived from the connector registry
+(``connectors.all()``), not a hardcoded ``_OPTIONAL_CDC_BROKERS`` list. Only
+``_REQUIRED_CDC_BROKERS`` is hardcoded (the ADR 0087 required-non-empty gate).
+D15: ``account_id`` is part of the consolidate dedup subset so multi-account
+brokers (XTB, D18) do not drop same-ID events across accounts.
 """
 
 from __future__ import annotations
@@ -26,62 +33,65 @@ logger = logging.getLogger(__name__)
 
 # Brokers whose CDC tables are required — must be present and non-empty.
 _REQUIRED_CDC_BROKERS = ["ibkr", "trading212"]
-# Brokers whose CDC tables are optional (file-based, may legitimately be absent).
-_OPTIONAL_CDC_BROKERS = ["xtb"]
 
 
 def consolidate_cdc_events() -> pa.Table:
     """Merge broker CDC normalized tables into ``normalized/cdc_events``.
 
-    Reads ``normalized/{broker}_cdc`` for each broker, concatenates the
-    rows, and writes the result to ``normalized/cdc_events`` using
+    Reads ``normalized/{broker}_cdc`` for each registered broker, concatenates
+    the rows, and writes the result to ``normalized/cdc_events`` using
     overwrite mode.
 
-    Raises :class:`RuntimeError` if a required broker CDC table is missing
-    or empty.  Optional brokers are skipped silently when absent and logged
-    at DEBUG when empty.
+    The candidate broker set is derived from the connector registry
+    (``connectors.all()``) — D15. Required brokers
+    (:data:`_REQUIRED_CDC_BROKERS`) must be present and non-empty (raise on
+    missing/empty). Other registered brokers are optional: a missing or
+    empty CDC table is skipped (logged at DEBUG).
 
-    Returns the concatenated table (guaranteed non-empty because all
-    required brokers contributed rows).
+    Raises :class:`RuntimeError` if a required broker CDC table is missing
+    or empty.  Returns the concatenated table (guaranteed non-empty because
+    all required brokers contributed rows).
     """
+    # Import lazily inside the function to avoid an import cycle:
+    # ``connectors.base`` imports ``pipeline.normalized.consolidate`` (for
+    # ``Holding``), so ``consolidate_cdc`` -> ``connectors.registry`` could
+    # close a loop if imported at module level.
+    from pipeline.connectors.registry import all as all_connectors
+
     config = get_storage()
     storage_opts = config.storage_options
+
+    # Candidate brokers come from the registry (single source of truth, D15).
+    candidate_brokers = [c.name for c in all_connectors()]
+
     tables: list[pa.Table] = []
 
-    # Required brokers: must be present and non-empty.
-    for broker in _REQUIRED_CDC_BROKERS:
+    for broker in candidate_brokers:
         cdc_path = config.normalized_path(f"{broker}_cdc")
         try:
             dt = DeltaTable(str(cdc_path), storage_options=storage_opts)
             table = dt.to_pyarrow_table()
         except Exception as exc:
-            raise RuntimeError(
-                f"Required CDC table {broker}_cdc not found: {exc}"
-            ) from exc
-        if table.num_rows == 0:
-            raise RuntimeError(f"Required CDC table {broker}_cdc is empty (0 rows)")
-        tables.append(table)
-        logger.info("CDC %s: %d rows", broker, table.num_rows)
-
-    # Optional brokers: skip silently when absent, log at DEBUG when empty.
-    for broker in _OPTIONAL_CDC_BROKERS:
-        cdc_path = config.normalized_path(f"{broker}_cdc")
-        try:
-            dt = DeltaTable(str(cdc_path), storage_options=storage_opts)
-            table = dt.to_pyarrow_table()
-        except Exception:
+            if broker in _REQUIRED_CDC_BROKERS:
+                raise RuntimeError(
+                    f"Required CDC table {broker}_cdc not found at {cdc_path}"
+                ) from exc
             logger.debug("CDC %s: no data, skipping (optional)", broker)
             continue
-        if table.num_rows > 0:
-            tables.append(table)
-            logger.info("CDC %s: %d rows", broker, table.num_rows)
-        else:
+        if table.num_rows == 0:
+            if broker in _REQUIRED_CDC_BROKERS:
+                raise RuntimeError(f"Required CDC table {broker}_cdc is empty (0 rows)")
             logger.debug("CDC %s: 0 rows, skipping (optional)", broker)
+            continue
+        tables.append(table)
+        logger.info("CDC %s: %d rows", broker, table.num_rows)
 
     # tables is guaranteed non-empty because all required brokers contributed.
     result = pa.concat_tables(tables, schema=cdc_events_normalized_schema)
 
-    # Defense-in-depth: dedup across brokers on (broker, event_type, event_id).
+    # Defense-in-depth: dedup across brokers on (broker, event_type, event_id,
+    # account_id). D15: ``account_id`` is part of the subset so multi-account
+    # brokers (XTB, D18) do not silently drop same-ID events across accounts.
     # Each broker's transform already dedups its own events, but this boundary
     # check guards against future brokers that skip transform-level dedup and
     # against raw-layer replays that bypass the transform contract.  It also
@@ -91,7 +101,7 @@ def consolidate_cdc_events() -> pa.Table:
     assert isinstance(df, pl.DataFrame)  # pl.from_arrow(pa.Table) -> DataFrame
     df = dedup_cdc_events(
         df,
-        subset=["broker", "event_type", "event_id"],
+        subset=["broker", "event_type", "event_id", "account_id"],
         label="CDC consolidate",
     )
 

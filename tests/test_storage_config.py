@@ -444,25 +444,46 @@ class TestS3Backend:
         assert backend.prefix == "pipeline"
 
     def test_staging_path_with_prefix(self):
+        # D20: staging_path(segment, filename) — segment is the full middle
+        # segment (e.g. "xtb_uploads"); no staging/ subfolder, no connector
+        # subfolder between segment and filename.
         backend = S3Backend(bucket="my-bucket", prefix="pipeline")
         assert (
-            backend.staging_path("staging", "xtb", "report.xlsx")
-            == "s3://my-bucket/pipeline/staging/xtb/report.xlsx"
+            backend.staging_path("xtb_uploads", "report.xlsx")
+            == "s3://my-bucket/pipeline/xtb_uploads/report.xlsx"
         )
 
     def test_staging_path_no_prefix(self):
         backend = S3Backend(bucket="my-bucket", prefix="")
         assert (
-            backend.staging_path("staging", "xtb", "report.xlsx")
-            == "s3://my-bucket/staging/xtb/report.xlsx"
+            backend.staging_path("xtb_uploads", "report.xlsx")
+            == "s3://my-bucket/xtb_uploads/report.xlsx"
         )
 
     def test_staging_path_demo_prefix(self):
         backend = S3Backend(bucket="my-bucket-demo", prefix="pipeline_demo")
         assert (
-            backend.staging_path("staging_demo", "xtb", "report.xlsx")
-            == "s3://my-bucket-demo/pipeline_demo/staging_demo/xtb/report.xlsx"
+            backend.staging_path("xtb_uploads", "report.xlsx")
+            == "s3://my-bucket-demo/pipeline_demo/xtb_uploads/report.xlsx"
         )
+
+    def test_staging_path_no_xtb_subfolder(self):
+        # D20 literal-key guard: a refactor re-introducing a connector
+        # segment (e.g. "xtb_uploads/xtb/report.xlsx") must fail this test.
+        # Prod: s3://<bucket>/pipeline/xtb_uploads/<file>
+        prod_backend = S3Backend(bucket="prod-bucket", prefix="pipeline")
+        prod_uri = prod_backend.staging_path("xtb_uploads", "report.xlsx")
+        assert prod_uri == "s3://prod-bucket/pipeline/xtb_uploads/report.xlsx"
+        # The object key MUST NOT contain an "xtb/" subfolder after the segment.
+        assert "/xtb_uploads/xtb/" not in prod_uri
+        assert prod_uri.count("/xtb_uploads/") == 1
+
+        # Demo: s3://<bucket>/pipeline_demo/xtb_uploads/<file>
+        demo_backend = S3Backend(bucket="demo-bucket", prefix="pipeline_demo")
+        demo_uri = demo_backend.staging_path("xtb_uploads", "report.xlsx")
+        assert demo_uri == "s3://demo-bucket/pipeline_demo/xtb_uploads/report.xlsx"
+        assert "/xtb_uploads/xtb/" not in demo_uri
+        assert demo_uri.count("/xtb_uploads/") == 1
 
     def test_storage_options_lowercase_keys(self, monkeypatch):
         """S3Backend.storage_options returns lowercase keys for deltalake."""
@@ -696,7 +717,8 @@ class TestStorageConfigHelpers:
         )
 
     def test_staging_path_local_backend(self, tmp_path: Path) -> None:
-
+        # D20: staging_path uses {connector}_uploads as the segment; the env
+        # (prod/staging) is carried by the backend, not a staging/ subfolder.
         data = tmp_path / "data"
         secrets = tmp_path / ".secrets"
         secrets.mkdir()
@@ -709,10 +731,9 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        # Production mode -- staging_path uses "staging" prefix
         set_mode("prod")
         result = config.staging_path("xtb", "report.xlsx")
-        assert result == str(data / "staging" / "xtb" / "report.xlsx")
+        assert result == str(data / "xtb_uploads" / "report.xlsx")
 
     def test_staging_path_local_backend_staging(self, tmp_path: Path) -> None:
 
@@ -728,12 +749,12 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        # Staging mode -- staging_path uses "staging_demo" prefix
         set_mode("staging")
         result = config.staging_path("xtb", "report.xlsx")
-        assert result == str(data / "staging_demo" / "xtb" / "report.xlsx")
+        assert result == str(data / "xtb_uploads" / "report.xlsx")
 
     def test_staging_path_s3_backend(self, monkeypatch) -> None:
+        # D20: prod -> s3://<bucket>/pipeline/xtb_uploads/<file>
         backend = S3Backend(bucket="my-bucket", prefix="pipeline")
         config = StorageConfig(
             data_dir="s3://my-bucket/pipeline",
@@ -744,11 +765,12 @@ class TestStorageConfigHelpers:
             encryption_key_file="/app/.secrets/encryption.key",
             backend=backend,
         )
-        set_mode("docker")
+        set_mode("prod")
         result = config.staging_path("xtb", "report.xlsx")
-        assert result == "s3://my-bucket/pipeline/staging/xtb/report.xlsx"
+        assert result == "s3://my-bucket/pipeline/xtb_uploads/report.xlsx"
 
     def test_staging_path_s3_backend_staging(self, monkeypatch) -> None:
+        # D20: demo -> s3://<bucket>/pipeline_demo/xtb_uploads/<file>
         backend = S3Backend(bucket="my-bucket-demo", prefix="pipeline_demo")
         config = StorageConfig(
             data_dir="s3://my-bucket-demo/pipeline_demo",
@@ -761,6 +783,4 @@ class TestStorageConfigHelpers:
         )
         set_mode("staging")
         result = config.staging_path("xtb", "report.xlsx")
-        assert (
-            result == "s3://my-bucket-demo/pipeline_demo/staging_demo/xtb/report.xlsx"
-        )
+        assert result == "s3://my-bucket-demo/pipeline_demo/xtb_uploads/report.xlsx"

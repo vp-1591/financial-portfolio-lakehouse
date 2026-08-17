@@ -12,8 +12,7 @@ class TestRegistry:
         class FakeConnector:
             name = "fake"
             display_name = "Fake"
-            enabled_env_var = "FAKE_ENABLED"
-            cdc_supported = False
+            cdc_raw_layer = "cdc"
 
             def fetch_kwargs(self, args):
                 return {}

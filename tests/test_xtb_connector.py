@@ -13,19 +13,41 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
-from pipeline.connectors.xtb.fetch import _read_file_bytes, fetch_cdc, fetch_snapshot
+from pipeline.connectors.xtb.fetch import _read_file_bytes, fetch_snapshot
 from pipeline.connectors.xtb.parser import (
+    XtbCashOperation,
+    XtbClosedPosition,
     XtbError,
-    XtbPosition,
+    XtbOpenPosition,
+    XtbReport,
     as_float,
-    column_name,
-    load_cash_operations_from_report,
-    load_positions,
     normalize_header,
+    parse_report,
 )
 from pipeline.connectors.xtb.transform import transform_cdc, transform_snapshot
 from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.raw.models import RAW_SCHEMA
+from tests.fixtures.xtb import (
+    CONVERSION_TRANSFER_AMOUNT,
+    DEFAULT_ACCOUNT_CCY,
+    DEFAULT_ACCOUNT_ID,
+    DEFAULT_CLOSED_COMMISSION,
+    DEFAULT_CLOSED_POSITION_ID,
+    DEFAULT_CLOSED_PURCHASE_VALUE,
+    DEFAULT_CLOSED_SALE_VALUE,
+    DEPOSIT_AMOUNT,
+    INTEREST_AMOUNT,
+    INTEREST_TAX_AMOUNT,
+    PURCHASE_AMOUNT,
+    SELL_AMOUNT,
+    SOLD_OUT_AGGREGATE_VALUE,
+    SUBACCOUNT_IN_AMOUNT,
+    SUBACCOUNT_OUT_AMOUNT,
+    SXR8_AGGREGATE_VALUE,
+    SXRV_AGGREGATE_VALUE,
+    build_new_format_xlsx_bytes,
+    build_xlsx_bytes_from_sheets,
+)
 
 # --- XLS test helpers (preserved from tests/test_xtb_net_worth.py) ---
 
@@ -53,7 +75,11 @@ def sheet(rows: list[str]) -> str:
 def write_xtb_workbook(
     path: Path, include_isin: bool = False, include_cash_ops: bool = False
 ) -> None:
-    """Create a minimal XLSX workbook for testing."""
+    """Create a minimal legacy-format XLSX workbook (used by fetch tests).
+
+    fetch.py is unchanged by the Stage 0/1 rewrite, so these legacy-format
+    helpers remain valid for the TestFetchFromS3 suite.
+    """
 
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -181,7 +207,7 @@ def write_xtb_workbook(
 def _build_xlsx_bytes(
     include_isin: bool = False, include_cash_ops: bool = False
 ) -> bytes:
-    """Build minimal .xlsx bytes for transform tests."""
+    """Build minimal legacy-format .xlsx bytes for transform/fetch tests."""
 
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / f"test-{uuid.uuid4().hex}.xlsx"
@@ -192,7 +218,7 @@ def _build_xlsx_bytes(
 
 
 class TestParserHelpers:
-    """Tests preserved from tests/test_xtb_net_worth.py."""
+    """Tests for the small parser helpers retained across the rewrite."""
 
     def test_as_float(self) -> None:
         assert as_float(None) == 0.0
@@ -202,174 +228,730 @@ class TestParserHelpers:
         assert as_float("1,5") == 1.5
         assert as_float("abc", -1.0) == -1.0
 
-    def test_column_name(self) -> None:
-        assert column_name("A1") == "A"
-        assert column_name("AB12") == "AB"
-        assert column_name("") == ""
-
     def test_normalize_header(self) -> None:
         assert normalize_header("  Purchase  value  ") == "purchase value"
         assert normalize_header(None) == ""
         assert normalize_header("Gross P/L") == "gross p/l"
 
-    def test_relative_file_path_is_rejected(self) -> None:
-        try:
-            load_positions(Path("xtb.xlsx"))
-        except XtbError as exc:
-            assert "absolute path" in str(exc)
-        else:
-            raise AssertionError("relative paths should be rejected")
 
-    def test_load_assets_reads_open_positions_and_cash(self, tmp_path: Path) -> None:
-        report = tmp_path / "xtb-test.xlsx"
-        write_xtb_workbook(report)
-        assets, net_worth = load_positions(report.resolve())
+REAL_SAMPLE_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "docs"
+    / "xtb"
+    / "xtb-report-sample"
+    / "PLN_12345678_2006-01-01_2026-08-03.xlsx"
+)
 
-        assert net_worth == 220.0
-        assert assets == [
-            XtbPosition("123456", "VWCE.DE", "VWCE.DE", "EQUITY", "PLN", 195.0),
-            XtbPosition("123456", "CASH PLN", "Cash PLN", "CASH", "PLN", 25.0),
-        ]
 
-    def test_load_assets_can_override_account_id(self, tmp_path: Path) -> None:
-        report = tmp_path / "xtb-test.xlsx"
-        write_xtb_workbook(report)
-        assets, _net_worth = load_positions(
-            report.resolve(),
-            account_id_override="XTB-1",
+class TestXtbParser:
+    """Parser tests for the new-format 3-sheet workbook (Stage 1 + guards)."""
+
+    @pytest.fixture()
+    def report(self) -> XtbReport:
+        return parse_report(build_new_format_xlsx_bytes())
+
+    # --- 3-sheet parsing + dataclass shape ---
+
+    def test_parses_all_three_sheets(self, report: XtbReport) -> None:
+        assert report.account_id == DEFAULT_ACCOUNT_ID
+        assert report.account_ccy == DEFAULT_ACCOUNT_CCY
+        assert len(report.open_positions) == 2  # SXR8.DE, SXRV.DE (SOLD.DE skipped)
+        assert len(report.closed_positions) == 1
+        assert len(report.cash_operations) == 6  # subaccount pair + Total excluded
+        assert report.free_cash is not None
+
+    def test_open_position_fields(self, report: XtbReport) -> None:
+        by_ticker = {p.ticker: p for p in report.open_positions}
+        sxr8 = by_ticker["SXR8.DE"]
+        assert sxr8.account_id == DEFAULT_ACCOUNT_ID
+        assert sxr8.product == "Investment Plan"
+        assert sxr8.instrument == "Core S&P 500"  # real name on the aggregate row
+        assert sxr8.category == "ETF"  # populated on holdings (empty on child lots)
+        assert sxr8.value == pytest.approx(SXR8_AGGREGATE_VALUE)
+        assert by_ticker["SXRV.DE"].instrument == "NASDAQ 100"
+
+    # --- aggregate-vs-child distinction (D4) ---
+
+    def test_child_lot_rows_are_skipped(self, report: XtbReport) -> None:
+        # Two instruments each have an aggregate + a child lot row; only the
+        # 2 aggregate rows survive. Child lots carry a numeric ID in
+        # Instrument and an empty Category.
+        tickers = {p.ticker for p in report.open_positions}
+        assert tickers == {"SXR8.DE", "SXRV.DE"}
+        # No child-lot Instrument (numeric position id) leaks through.
+        assert all(not p.instrument.isdigit() for p in report.open_positions)
+        assert all(p.category for p in report.open_positions)  # non-empty on aggregates
+
+    def test_zero_value_aggregate_skipped(self, report: XtbReport) -> None:
+        # Guard 3: SOLD.DE aggregate has Value 0 -> skipped.
+        assert "SOLD.DE" not in {p.ticker for p in report.open_positions}
+        assert SOLD_OUT_AGGREGATE_VALUE == 0.0
+
+    # --- date decoding (D3): tz-aware UTC ---
+
+    def test_cash_operation_times_are_utc(self, report: XtbReport) -> None:
+        for op in report.cash_operations:
+            assert op.time.tzinfo is not None
+            assert op.time.utcoffset() == datetime.now(UTC).utcoffset()
+
+    def test_closed_position_close_time_is_utc(self, report: XtbReport) -> None:
+        closed = report.closed_positions[0]
+        assert closed.close_time.tzinfo is not None
+        assert closed.close_time == datetime(2026, 8, 2, 7, 0, tzinfo=UTC)
+
+    # --- CASH / free_cash from Total row (D22) ---
+
+    def test_free_cash_read_from_total_row(self, report: XtbReport) -> None:
+        # D22: Total row Amount -> free_cash (2dp), excluded from events.
+        assert report.free_cash == pytest.approx(
+            DEPOSIT_AMOUNT
+            + INTEREST_AMOUNT
+            + INTEREST_TAX_AMOUNT
+            + SUBACCOUNT_IN_AMOUNT
+            + SUBACCOUNT_OUT_AMOUNT
+            + (-1000.0)
+            + PURCHASE_AMOUNT
+            + SELL_AMOUNT
         )
 
-        assert {asset.account_id for asset in assets} == {"XTB-1"}
+    def test_free_cash_equals_sum_of_cash_operations(self, report: XtbReport) -> None:
+        # D22 invariant: under full history, sum of CDC cash_amount == free_cash
+        # (subaccount transfers net to zero, so the Total equals the sum of
+        # the retained events).
+        assert report.free_cash == pytest.approx(
+            round(sum(op.amount for op in report.cash_operations), 2)
+        )
 
-    def test_load_assets_preserves_isin(self, tmp_path: Path) -> None:
-        report = tmp_path / "xtb-test.xlsx"
-        write_xtb_workbook(report, include_isin=True)
-        assets, _net_worth = load_positions(report.resolve())
+    # --- Total-row exclusion from events (D10) + subaccount filtering (D7) ---
 
-        assert assets[0].isin == "IE00BK5BQT80"
+    def test_total_row_excluded_from_cash_operations(self, report: XtbReport) -> None:
+        types = {op.operation_type for op in report.cash_operations}
+        assert "Total" not in types
+        assert all(op.operation_type for op in report.cash_operations)
 
-    def test_load_cash_operations(self, tmp_path: Path) -> None:
-        report = tmp_path / "xtb-test.xlsx"
-        write_xtb_workbook(report, include_cash_ops=True)
-        ops = load_cash_operations_from_report(report.resolve())
+    def test_subaccount_transfers_filtered(self, report: XtbReport) -> None:
+        types = {op.operation_type for op in report.cash_operations}
+        assert "Subaccount transfer" not in types
 
-        assert len(ops) == 2
-        assert ops[0].operation_type == "Deposit"
-        assert ops[0].amount == pytest.approx(200.0)
-        assert ops[0].currency == "PLN"
-        assert ops[1].operation_type == "Dividend"
-        assert ops[1].amount == pytest.approx(5.0)
+    def test_currency_conversion_transfer_kept(self, report: XtbReport) -> None:
+        transfers = [
+            op for op in report.cash_operations if op.operation_type == "Transfer"
+        ]
+        assert len(transfers) == 1
+        assert transfers[0].amount == pytest.approx(-1000.0)
+        assert "Exchange rate:0.230001" in transfers[0].comment
+
+    # --- 2dp rounding (D11) ---
+
+    def test_amounts_rounded_to_2dp(self, report: XtbReport) -> None:
+        for op in report.cash_operations:
+            assert round(op.amount, 2) == op.amount
+
+    def test_closed_values_rounded_to_2dp(self, report: XtbReport) -> None:
+        closed = report.closed_positions[0]
+        assert round(closed.commission, 2) == closed.commission
+        assert round(closed.purchase_value, 2) == closed.purchase_value
+        assert round(closed.sale_value, 2) == closed.sale_value
+
+    # --- Closed Positions: nonzero commission + Profit/loss total excluded ---
+
+    def test_closed_position_has_nonzero_commission(self, report: XtbReport) -> None:
+        closed = report.closed_positions[0]
+        assert closed.position_id == DEFAULT_CLOSED_POSITION_ID
+        assert closed.commission == pytest.approx(DEFAULT_CLOSED_COMMISSION)
+        assert closed.commission != 0.0
+        assert closed.purchase_value == pytest.approx(DEFAULT_CLOSED_PURCHASE_VALUE)
+        assert closed.sale_value == pytest.approx(DEFAULT_CLOSED_SALE_VALUE)
+
+    def test_profit_loss_total_excluded(self, report: XtbReport) -> None:
+        # The fixture has a "Profit/loss" total row that must be excluded.
+        assert len(report.closed_positions) == 1
+
+    def test_closed_position_matches_stock_sell(self, report: XtbReport) -> None:
+        sell_rows = [
+            op for op in report.cash_operations if op.operation_type == "Stock sell"
+        ]
+        assert len(sell_rows) == 1
+        assert sell_rows[0].position_id == report.closed_positions[0].position_id
+
+    # --- guard 1: position_id string coercion ---
+
+    def test_position_id_is_string(self, report: XtbReport) -> None:
+        for op in report.cash_operations:
+            assert isinstance(op.position_id, str)
+        for closed in report.closed_positions:
+            assert isinstance(closed.position_id, str)
+        # The closed position id is a numeric value in the xlsx but coerced.
+        assert report.closed_positions[0].position_id == DEFAULT_CLOSED_POSITION_ID
+
+    # --- guard 5: missing sheet -> empty list, no abort ---
+
+    def test_missing_closed_positions_sheet_returns_empty(self) -> None:
+        data = build_new_format_xlsx_bytes()
+        # Rebuild with the Closed Positions sheet dropped.
+        from io import BytesIO
+
+        import openpyxl
+
+        wb = openpyxl.load_workbook(BytesIO(data), data_only=True)
+        if "Closed Positions" in wb.sheetnames:
+            del wb["Closed Positions"]
+        buffer = BytesIO()
+        wb.save(buffer)
+        report = parse_report(buffer.getvalue())
+        assert report.closed_positions == []
+        assert len(report.open_positions) == 2
+        assert len(report.cash_operations) == 6
+
+    def test_missing_open_positions_sheet_empty_list_no_abort(self) -> None:
+        # Missing Open Positions -> empty list (guard 5); account_ccy is
+        # empty (the Currency source is absent) but the parse does not abort.
+        data = build_new_format_xlsx_bytes()
+        from io import BytesIO
+
+        import openpyxl
+
+        wb = openpyxl.load_workbook(BytesIO(data), data_only=True)
+        if "Open Positions" in wb.sheetnames:
+            del wb["Open Positions"]
+        buffer = BytesIO()
+        wb.save(buffer)
+        report = parse_report(buffer.getvalue())
+        assert report.open_positions == []
+        assert report.account_ccy == ""
+
+    # --- guard 4: missing/empty summary-block currency raises ---
+
+    def test_empty_summary_currency_raises(self) -> None:
+        # Build an Open Positions sheet whose summary block Currency is empty.
+        open_rows: list[tuple[object, ...]] = [
+            ("Account number", DEFAULT_ACCOUNT_ID),
+            ("Open Positions",),
+            ("Data as of report generated", "2026-08-03"),
+            ("Product", "Metric", "Amount", "Currency"),
+            ("My Trades", "Value", 0, None),  # empty Currency
+            ("Investment Plans", "Value", 100, None),  # empty Currency
+        ]
+        cash_rows: list[tuple[object, ...]] = [
+            ("Account number", DEFAULT_ACCOUNT_ID),
+            ("Cash Operations",),
+            (
+                "Type",
+                "Instrument",
+                "Ticker",
+                "Category",
+                "Time",
+                "Amount",
+                "ID",
+                "Comment",
+                "Product",
+                "Position ID",
+            ),
+        ]
+        data = build_xlsx_bytes_from_sheets(
+            {"Open Positions": open_rows, "Cash Operations": cash_rows}
+        )
+        with pytest.raises(XtbError, match="account currency missing"):
+            parse_report(data)
+
+    def test_absent_summary_block_raises(self) -> None:
+        # No summary block header at all -> guard 4 raises.
+        open_rows: list[tuple[object, ...]] = [
+            ("Account number", DEFAULT_ACCOUNT_ID),
+            ("Open Positions",),
+            ("Data as of report generated", "2026-08-03"),
+        ]
+        data = build_xlsx_bytes_from_sheets({"Open Positions": open_rows})
+        with pytest.raises(XtbError, match="account currency missing"):
+            parse_report(data)
+
+    # --- account_id override ---
+
+    def test_account_id_override(self) -> None:
+        report = parse_report(
+            build_new_format_xlsx_bytes(), account_id_override="OVR-1"
+        )
+        assert report.account_id == "OVR-1"
+        assert all(p.account_id == "OVR-1" for p in report.open_positions)
+        assert all(op.account_id == "OVR-1" for op in report.cash_operations)
+
+    # --- dataclass field scope (YAGNI) ---
+
+    def test_dataclass_field_scope(self) -> None:
+        # XtbClosedPosition must NOT carry swap/rollover/margin/conversion
+        # rates (D8). XtbOpenPosition carries only the 6 mapped fields.
+        closed_fields = {
+            f.name for f in __import__("dataclasses").fields(XtbClosedPosition)
+        }
+        assert closed_fields == {
+            "position_id",
+            "commission",
+            "purchase_value",
+            "sale_value",
+            "close_time",
+        }
+        assert "swap" not in closed_fields
+        assert "rollover" not in closed_fields
+        assert "margin" not in closed_fields
+        open_fields = {
+            f.name for f in __import__("dataclasses").fields(XtbOpenPosition)
+        }
+        assert open_fields == {
+            "account_id",
+            "product",
+            "instrument",
+            "ticker",
+            "category",
+            "value",
+        }
+        cash_fields = {
+            f.name for f in __import__("dataclasses").fields(XtbCashOperation)
+        }
+        assert cash_fields == {
+            "account_id",
+            "operation_type",
+            "ticker",
+            "time",
+            "amount",
+            "operation_id",
+            "comment",
+            "position_id",
+        }
+
+    # --- integration: real anonymized sample ---
+
+    @pytest.mark.skipif(
+        not REAL_SAMPLE_PATH.exists(), reason="sample xlsx not checked out"
+    )
+    def test_real_sample_round_trip(self) -> None:
+        report = parse_report(REAL_SAMPLE_PATH.read_bytes())
+        assert report.account_id == "12345678"
+        assert report.account_ccy == "PLN"
+        # 2 aggregate holdings (SXR8.DE, SXRV.DE); child lots skipped.
+        assert {p.ticker for p in report.open_positions} == {"SXR8.DE", "SXRV.DE"}
+        # 1 closed position (the sample's Commission is 0 — the fixture adds a
+        # nonzero one to exercise fee handling).
+        assert len(report.closed_positions) == 1
+        assert report.closed_positions[0].commission == 0.0
+        # D22 invariant: free_cash == sum of cash_operations amounts.
+        assert report.free_cash == pytest.approx(
+            round(sum(op.amount for op in report.cash_operations), 2),
+            rel=0.01,
+        )
+        # Subaccount transfers filtered out.
+        assert "Subaccount transfer" not in {
+            op.operation_type for op in report.cash_operations
+        }
+        # No Total/Profit-loss rows leak into events.
+        assert "Total" not in {op.operation_type for op in report.cash_operations}
 
 
 class TestTransformSnapshot:
-    """Tests for the raw → normalized transform."""
-
-    @pytest.fixture()
-    def fernet_key(self) -> bytes:
-        key = generate_key()
-        self._fernet_key = key
-        return key
-
-    def _build_raw_table(self, xlsx_bytes: bytes) -> pa.Table:
-        """Build a raw-layer table from .xlsx bytes.
-
-        Payloads are encrypted to match the real pipeline flow where
-        raw Delta tables store encrypted payloads.
-        """
-        key = self._fernet_key
-        encrypted_payload = encrypt(xlsx_bytes, key)
-        now = datetime.now(UTC)
-
-        return pa.table(
-            {
-                "fetched_at": [now],
-                "broker": ["XTB"],
-                "source": ["OPEN POSITION"],
-                "payload": [encrypted_payload],
-                "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
-                "source_file": ["test_report.xlsx"],
-            },
-            schema=RAW_SCHEMA,
-        )
-
-    def test_transform_produces_position_rows(self, fernet_key: bytes) -> None:
-        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
-        raw = self._build_raw_table(xlsx_bytes)
-        result = transform_snapshot(raw, fernet_key)
-
-        assert result.num_rows >= 2
-        types = result.column("position_type").to_pylist()
-        assert "EQUITY" in types
-        assert "CASH" in types
-
-        values = result.column("security_value").to_pylist()
-        decrypted = [decrypt_float(v, fernet_key) for v in values]
-        assert any(v == pytest.approx(195.0, rel=0.01) for v in decrypted)
-
-    def test_transform_preserves_isin(self, fernet_key: bytes) -> None:
-        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
-        raw = self._build_raw_table(xlsx_bytes)
-        result = transform_snapshot(raw, fernet_key)
-
-        isins = result.column("isin").to_pylist()
-        assert "IE00BK5BQT80" in isins
-
-    def test_transform_extracts_account_id(self, fernet_key: bytes) -> None:
-        """Account ID should come from the .xlsx data, not from the raw table."""
-        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
-        raw = self._build_raw_table(xlsx_bytes)
-        result = transform_snapshot(raw, fernet_key)
-
-        # The test workbook has account "123456" in the Account field
-        account_ids = result.column("account_id").to_pylist()
-        assert all(aid == "123456" for aid in account_ids)
-
-
-class TestTransformCDC:
-    """Tests for the raw → normalized CDC transform."""
+    """Tests for the raw -> normalized snapshot transform (Stage 2, D18/D22)."""
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
         return generate_key()
 
-    def test_transform_cdc_produces_operation_rows(self, fernet_key: bytes) -> None:
-        now = datetime.now(UTC)
-        xlsx_bytes = _build_xlsx_bytes(include_cash_ops=True)
+    def _build_raw(
+        self,
+        xlsx_bytes: bytes,
+        fernet_key: bytes,
+        *,
+        source: str = "XTB_REPORT",
+        fetched_at: datetime | None = None,
+        source_file: str = "report.xlsx",
+    ) -> pa.Table:
+        """Build a raw-layer table from .xlsx bytes (shared bronze, D17)."""
         encrypted_payload = encrypt(xlsx_bytes, fernet_key)
-
-        raw = pa.table(
+        return pa.table(
             {
-                "fetched_at": [now],
+                "fetched_at": [fetched_at or datetime.now(UTC)],
                 "broker": ["XTB"],
-                "source": ["CASH OPERATION"],
+                "source": [source],
                 "payload": [encrypted_payload],
                 "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
-                "source_file": ["test_report.xlsx"],
+                "source_file": [source_file],
             },
             schema=RAW_SCHEMA,
         )
 
+    def _decrypt_values(self, table: pa.Table, col: str, key: bytes) -> list[float]:
+        return [decrypt_float(v, key) for v in table.column(col).to_pylist()]
+
+    def test_transform_produces_equity_and_cash_rows(self, fernet_key: bytes) -> None:
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "EQUITY" in types
+        assert "CASH" in types
+        # 2 EQUITY aggregates (SXR8.DE, SXRV.DE; SOLD.DE skipped) + 1 CASH = 3 rows.
+        assert result.num_rows == 3
+
+    def test_equity_rows_from_per_ticker_aggregates(self, fernet_key: bytes) -> None:
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_snapshot(raw, fernet_key)
+
+        labels = result.column("label").to_pylist()
+        assert "SXR8.DE" in labels
+        assert "SXRV.DE" in labels
+        assert "SOLD.DE" not in labels  # zero-value aggregate skipped (guard 3)
+
+        equity_rows = [r for r in result.to_pylist() if r["position_type"] == "EQUITY"]
+        by_label = {r["label"]: r for r in equity_rows}
+        assert by_label["SXR8.DE"]["description"] == "Core S&P 500"
+        assert by_label["SXR8.DE"]["asset_class"] == "ETF"
+        assert by_label["SXRV.DE"]["description"] == "NASDAQ 100"
+        values = self._decrypt_values(result, "security_value", fernet_key)
+        assert SXR8_AGGREGATE_VALUE in values
+        assert SXRV_AGGREGATE_VALUE in values
+
+    def test_cash_holding_from_free_cash(self, fernet_key: bytes) -> None:
+        """D22: one CASH row per account from free_cash (Total row)."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_snapshot(raw, fernet_key)
+
+        cash_rows = [r for r in result.to_pylist() if r["position_type"] == "CASH"]
+        assert len(cash_rows) == 1
+        cash = cash_rows[0]
+        assert cash["label"] == f"CASH {DEFAULT_ACCOUNT_CCY}"
+        assert cash["asset_class"] == "CASH"
+        assert cash["security_ccy"] == DEFAULT_ACCOUNT_CCY
+        assert cash["description"] == f"Cash {DEFAULT_ACCOUNT_CCY}"
+        assert cash["isin"] == ""  # D12
+        assert decrypt_float(cash["security_value"], fernet_key) == pytest.approx(
+            DEPOSIT_AMOUNT
+            + INTEREST_AMOUNT
+            + INTEREST_TAX_AMOUNT
+            + SUBACCOUNT_IN_AMOUNT
+            + SUBACCOUNT_OUT_AMOUNT
+            + CONVERSION_TRANSFER_AMOUNT
+            + PURCHASE_AMOUNT
+            + SELL_AMOUNT
+        )
+
+    def test_cash_absent_when_no_total_row(self, fernet_key: bytes) -> None:
+        """D22: CASH row is skipped when free_cash is None (no Total row)."""
+        # Build a workbook with the Cash Operations Total row dropped.
+        from io import BytesIO
+
+        import openpyxl
+
+        data = build_new_format_xlsx_bytes()
+        wb = openpyxl.load_workbook(BytesIO(data), data_only=True)
+        ws = wb["Cash Operations"]
+        # The Total row is the last data row; delete it.
+        ws.delete_rows(ws.max_row)
+        buf = BytesIO()
+        wb.save(buf)
+        raw = self._build_raw(buf.getvalue(), fernet_key)
+        result = transform_snapshot(raw, fernet_key)
+
+        types = result.column("position_type").to_pylist()
+        assert "CASH" not in types
+        assert "EQUITY" in types
+
+    def test_security_ccy_is_account_currency(self, fernet_key: bytes) -> None:
+        """D5: security_ccy comes from the summary-block Currency, not a literal."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_snapshot(raw, fernet_key)
+        assert all(
+            ccy == DEFAULT_ACCOUNT_CCY
+            for ccy in result.column("security_ccy").to_pylist()
+        )
+
+    def test_isin_empty_for_all_rows(self, fernet_key: bytes) -> None:
+        """D12: no ISIN in the new format; isin is empty string."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_snapshot(raw, fernet_key)
+        assert all(isin == "" for isin in result.column("isin").to_pylist())
+
+    def test_multi_account_both_survive(self, fernet_key: bytes) -> None:
+        """D18: two accounts in raw -> both survive snapshot."""
+        t1 = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        t2 = datetime(2026, 8, 3, 7, 0, tzinfo=UTC)
+        raw_a = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t1,
+            source_file="a.xlsx",
+        )
+        raw_b = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
+            fernet_key,
+            fetched_at=t2,
+            source_file="b.xlsx",
+        )
+        combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
+        result = transform_snapshot(combined, fernet_key)
+
+        account_ids = set(result.column("account_id").to_pylist())
+        assert account_ids == {"111", "222"}
+        # Each account has 2 EQUITY + 1 CASH = 3 rows.
+        assert result.num_rows == 6
+
+    def test_re_upload_supersedes_old_snapshot(self, fernet_key: bytes) -> None:
+        """D18: latest fetched_at per account_id supersedes the older payload."""
+        t_old = datetime(2026, 8, 1, 6, 0, tzinfo=UTC)
+        t_new = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw_old = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t_old,
+            source_file="old.xlsx",
+        )
+        raw_new = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t_new,
+            source_file="new.xlsx",
+        )
+        combined = pa.concat_tables([raw_old, raw_new], schema=RAW_SCHEMA)
+        result = transform_snapshot(combined, fernet_key)
+
+        # Only the latest payload survives — 3 rows, not 6.
+        assert result.num_rows == 3
+        assert all(fa == t_new for fa in result.column("fetched_at").to_pylist())
+
+    def test_guard9_tiebreaker_deterministic(self, fernet_key: bytes) -> None:
+        """Guard 9: same fetched_at + same account -> deterministic pick by source_file."""
+        t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw_a = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t,
+            source_file="a.xlsx",
+        )
+        raw_b = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t,
+            source_file="b.xlsx",
+        )
+        combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
+        result = transform_snapshot(combined, fernet_key)
+
+        # Tie broken deterministically by max source_file ("b.xlsx" > "a.xlsx")
+        # -> only one payload survives -> 3 rows, not 6.
+        assert result.num_rows == 3
+
+    def test_legacy_source_rows_skipped(self, fernet_key: bytes) -> None:
+        """D17: rows with source != 'XTB_REPORT' are skipped (legacy format)."""
+        raw = self._build_raw(
+            build_new_format_xlsx_bytes(),
+            fernet_key,
+            source="OPEN POSITION",  # legacy source
+        )
+        result = transform_snapshot(raw, fernet_key)
+        assert result.num_rows == 0
+
+
+class TestTransformCDC:
+    """Tests for the raw -> normalized CDC transform (Stage 2, D17/D9/D8)."""
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    def _build_raw(
+        self,
+        xlsx_bytes: bytes,
+        fernet_key: bytes,
+        *,
+        source: str = "XTB_REPORT",
+        fetched_at: datetime | None = None,
+        source_file: str = "report.xlsx",
+    ) -> pa.Table:
+        """Build a raw-layer table from .xlsx bytes (shared bronze, D17)."""
+        encrypted_payload = encrypt(xlsx_bytes, fernet_key)
+        return pa.table(
+            {
+                "fetched_at": [fetched_at or datetime.now(UTC)],
+                "broker": ["XTB"],
+                "source": [source],
+                "payload": [encrypted_payload],
+                "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
+                "source_file": [source_file],
+            },
+            schema=RAW_SCHEMA,
+        )
+
+    def test_cdc_produces_operation_rows(self, fernet_key: bytes) -> None:
+        """D17 shared bronze: CDC from xtb_snapshot raw with source='XTB_REPORT'."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
         result = transform_cdc(raw, fernet_key)
-        assert result.num_rows >= 1
+
+        # 6 events: deposit, interest, interest tax, transfer, purchase, sell.
+        # Subaccount transfers filtered (D7), Total row excluded (D10).
+        assert result.num_rows == 6
 
         event_types = result.column("event_type").to_pylist()
         assert "DEPOSIT" in event_types
+        assert "INTEREST" in event_types
+        assert "TAX" in event_types
+        assert "TRADE" in event_types
+        assert "TRANSFER" in event_types
+        assert "UNKNOWN" not in event_types
+
+    def test_event_type_map(self, fernet_key: bytes) -> None:
+        """D6: operation_type -> event_type map (INTEREST/TAX/TRADE/TRANSFER/DEPOSIT)."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        raw_to_norm = {r["raw_event_type"]: r["event_type"] for r in result.to_pylist()}
+        assert raw_to_norm["Deposit"] == "DEPOSIT"
+        assert raw_to_norm["Free funds interest"] == "INTEREST"
+        assert raw_to_norm["Free funds interest tax"] == "TAX"
+        assert raw_to_norm["Stock purchase"] == "TRADE"
+        assert raw_to_norm["Stock sell"] == "TRADE"
+        assert raw_to_norm["Transfer"] == "TRANSFER"
+
+    def test_total_row_excluded_and_subaccount_filtered(
+        self, fernet_key: bytes
+    ) -> None:
+        """D10/D7: Total row excluded from events; subaccount transfers filtered."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_cdc(raw, fernet_key)
 
         raw_types = result.column("raw_event_type").to_pylist()
-        assert "Deposit" in raw_types
+        assert "Total" not in raw_types
+        assert "Subaccount transfer" not in raw_types
 
-        cash_amounts = result.column("cash_amount").to_pylist()
-        decrypted = [decrypt_float(v, fernet_key) for v in cash_amounts]
-        assert any(v == pytest.approx(200.0, rel=0.01) for v in decrypted)
+    def test_cash_sum_equals_free_cash(self, fernet_key: bytes) -> None:
+        """D22: under full history, sum of CDC cash_amount == free_cash."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_cdc(raw, fernet_key)
+        report = parse_report(build_new_format_xlsx_bytes())
+
+        amounts = [
+            decrypt_float(v, fernet_key)
+            for v in result.column("cash_amount").to_pylist()
+        ]
+        assert sum(amounts) == pytest.approx(report.free_cash or 0.0, rel=0.01)
+
+    def test_currency_conversion_transfer_kept_fx_rate_null(
+        self, fernet_key: bytes
+    ) -> None:
+        """D7: currency-conversion Transfer kept as TRANSFER with target_fx_rate null."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        transfers = [r for r in result.to_pylist() if r["event_type"] == "TRANSFER"]
+        assert len(transfers) == 1
+        assert transfers[0]["raw_event_type"] == "Transfer"
+        assert decrypt_float(transfers[0]["cash_amount"], fernet_key) == pytest.approx(
+            CONVERSION_TRANSFER_AMOUNT
+        )
+        assert (
+            transfers[0]["target_fx_rate"] is None
+        )  # D7: do NOT parse Exchange rate:X
+        assert transfers[0]["target_ccy"] is None  # filled by normalize_currency
+
+    def test_trade_enrichment_sell_row_only(self, fernet_key: bytes) -> None:
+        """D8: fee_amount on the closing (sell) row only; purchase row gets no fee."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_cdc(raw, fernet_key)
+
+        trades = [r for r in result.to_pylist() if r["event_type"] == "TRADE"]
+        # One purchase + one sell.
+        assert len(trades) == 2
+        by_type = {r["raw_event_type"]: r for r in trades}
+
+        # Purchase row: has qty/price/side, no fee/gross/settle.
+        purchase = by_type["Stock purchase"]
+        assert purchase["ticker"] == "SXR8.DE"
+        assert decrypt_float(purchase["quantity"], fernet_key) == pytest.approx(10.0001)
+        assert decrypt_float(purchase["price"], fernet_key) == pytest.approx(100.0)
+        assert purchase["side"] == "BUY"
+        assert purchase["fee_amount"] is None  # D8: fee on closing row only
+        assert purchase["gross_amount"] is None
+        assert purchase["settle_date"] is None
+
+        # Sell row: enriched from Closed Positions via position_id.
+        sell = by_type["Stock sell"]
+        assert sell["ticker"] == "SXR8.DE"
+        assert decrypt_float(sell["quantity"], fernet_key) == pytest.approx(10.0001)
+        assert decrypt_float(sell["price"], fernet_key) == pytest.approx(120.0)
+        assert sell["side"] == "BUY"  # closing a long position
+        assert decrypt_float(sell["fee_amount"], fernet_key) == pytest.approx(
+            DEFAULT_CLOSED_COMMISSION
+        )
+        # Guard 2: gross_amount = sale_value - purchase_value, rounded 2dp.
+        assert decrypt_float(sell["gross_amount"], fernet_key) == pytest.approx(
+            round(DEFAULT_CLOSED_SALE_VALUE - DEFAULT_CLOSED_PURCHASE_VALUE, 2)
+        )
+        assert sell["settle_date"] is not None  # close_time ISO string
+
+    def test_2dp_rounding(self, fernet_key: bytes) -> None:
+        """D11: cash_amount rounded to 2dp."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_cdc(raw, fernet_key)
+        amounts = [
+            decrypt_float(v, fernet_key)
+            for v in result.column("cash_amount").to_pylist()
+        ]
+        assert all(round(a, 2) == a for a in amounts)
+
+    def test_shared_bronze_no_xtb_cdc_raw(self, fernet_key: bytes) -> None:
+        """D17: CDC produced from xtb_snapshot raw (source='XTB_REPORT'), no xtb_cdc raw."""
+        raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
+        result = transform_cdc(raw, fernet_key)
+        assert result.num_rows == 6
+        # All rows carry source='XTB_REPORT' (from the shared bronze raw).
+        assert all(s == "XTB_REPORT" for s in result.column("source").to_pylist())
+
+    def test_cdc_latest_payload_per_account_on_reupload(
+        self, fernet_key: bytes
+    ) -> None:
+        """D9: re-upload supersedes; latest payload per account (no union)."""
+        t_old = datetime(2026, 8, 1, 6, 0, tzinfo=UTC)
+        t_new = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw_old = self._build_raw(
+            build_new_format_xlsx_bytes(),
+            fernet_key,
+            fetched_at=t_old,
+            source_file="old.xlsx",
+        )
+        raw_new = self._build_raw(
+            build_new_format_xlsx_bytes(),
+            fernet_key,
+            fetched_at=t_new,
+            source_file="new.xlsx",
+        )
+        combined = pa.concat_tables([raw_old, raw_new], schema=RAW_SCHEMA)
+        result = transform_cdc(combined, fernet_key)
+
+        # Latest payload only — 6 events, not 12.
+        assert result.num_rows == 6
+        assert all(fa == t_new for fa in result.column("fetched_at").to_pylist())
+
+    def test_cross_account_same_id_events_coexist(self, fernet_key: bytes) -> None:
+        """D9/D15: same event_id from different accounts both survive (account_id in dedup)."""
+        t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw_a = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t,
+            source_file="a.xlsx",
+        )
+        raw_b = self._build_raw(
+            build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
+            fernet_key,
+            fetched_at=t,
+            source_file="b.xlsx",
+        )
+        combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
+        result = transform_cdc(combined, fernet_key)
+
+        # Both accounts contribute 6 events each = 12 (same IDs, different accounts).
+        assert result.num_rows == 12
+        account_ids = set(result.column("account_id").to_pylist())
+        assert account_ids == {"111", "222"}
 
 
 class TestFetchFromS3:
-    """Tests for fetch_snapshot / fetch_cdc with S3 URIs.
-
-    These tests mock pipeline.s3.read_s3_bytes to avoid needing a real
-    S3 connection, verifying that _read_file_bytes dispatches correctly
-    and source_file is set to the filename portion of the S3 key.
-    """
+    """Tests for fetch_snapshot with S3 URIs (D17: fetch_cdc removed)."""
 
     @pytest.fixture()
     def xlsx_bytes(self) -> bytes:
@@ -385,18 +967,7 @@ class TestFetchFromS3:
         assert table.num_rows == 1
         assert table.column("source_file")[0].as_py() == "report.xlsx"
         assert table.column("broker")[0].as_py() == "XTB"
-        assert table.column("source")[0].as_py() == "OPEN POSITION"
-
-    def test_fetch_cdc_s3_uri(self, xlsx_bytes: bytes, monkeypatch) -> None:
-        monkeypatch.setattr(
-            "pipeline.s3.read_s3_bytes",
-            lambda uri: (xlsx_bytes, "cash_ops.xlsx"),
-        )
-
-        table = fetch_cdc("s3://bucket/pipeline/staging/xtb/cash_ops.xlsx")
-        assert table.num_rows == 1
-        assert table.column("source_file")[0].as_py() == "cash_ops.xlsx"
-        assert table.column("source")[0].as_py() == "CASH OPERATION"
+        assert table.column("source")[0].as_py() == "XTB_REPORT"  # D17
 
     def test_fetch_snapshot_local_path_still_works(self, tmp_path: Path) -> None:
         """Local file paths are not affected by S3 support."""
@@ -407,6 +978,7 @@ class TestFetchFromS3:
 
         assert table.num_rows == 1
         assert table.column("source_file")[0].as_py() == report.name
+        assert table.column("source")[0].as_py() == "XTB_REPORT"
 
     def test_read_file_bytes_s3_extracts_filename(
         self, xlsx_bytes: bytes, monkeypatch

@@ -38,10 +38,10 @@ class LocalBackend:
     def table_path(self, layer: str, table_name: str) -> str:
         return str(self.data_dir / layer / table_name)
 
-    def staging_path(
-        self, staging_prefix: str, connector_name: str, filename: str
-    ) -> str:
-        return str(self.data_dir / staging_prefix / connector_name / filename)
+    def staging_path(self, segment: str, filename: str) -> str:
+        # D20: mirrors S3Backend.staging_path — the segment is the full
+        # middle segment (e.g. ``xtb_uploads``) with no connector subfolder.
+        return str(self.data_dir / segment / filename)
 
     def ensure_parent(self, table_path: str) -> None:
         """Create parent directory and rescue orphaned files from failed writes.
