@@ -44,6 +44,7 @@ Alternatives rejected:
 - Single source of truth per environment for the connector lists and schedule: the duplicate module defaults and the redundant env-level literals are gone (12 literal occurrences reduced to 8; each value lives in exactly one place).
 - A deliberate, **scoped policy exception** to the "tfvars files may contain secrets → gitignore" rule: one named non-secret tfvars file is committed. Future non-secret operational config can follow this pattern; secret config must not. This is the main risk — a future contributor must understand the negation is intentional and scoped, not a mistake to "clean up" (hence the ADR-reference comment on the gitignore line).
 - Slightly more files per env (one new `connectors.auto.tfvars`), offset by removing the buried literals and the redundant module defaults.
+- This mechanism was later used by [ADR 0108](./0108-xtb-new-format-connector-overhaul.md) (D21) to add `xtb` to both `schedule_connectors` and `file_arrival_connectors` — a one-line edit per environment in the committed file, exactly as this ADR designed. XTB is now a required scheduled connector that skips gracefully when no file has arrived.
 
 ## Validation
 

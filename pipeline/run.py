@@ -447,13 +447,18 @@ def _trigger_sfn_execution(args: argparse.Namespace, mode: str) -> int:
 
     Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md.
     """
-    # XTB is not supported in the SFN-triggered full run — it requires an
-    # uploaded file and is driven by the EventBridge S3 file-arrival rule.
+    # The --with-xtb and --xtb-file flags are local-docker-only; they do not
+    # apply to the SFN-triggered run. XTB itself IS part of the daily schedule
+    # (DEFAULT_CONNECTORS in sfn.py): the ``run-connector xtb`` step skips
+    # gracefully when no file has arrived yet, and the EventBridge S3
+    # file-arrival rule runs it automatically once a report is uploaded via
+    # ``upload-xtb``. Reject the flags here so callers don't expect a local
+    # file to reach the SFN execution.
     if getattr(args, "with_xtb", False) or getattr(args, "xtb_file", None):
         print(
-            "XTB is not supported in staging/prod 'full'. Use 'upload-xtb' to "
-            "push the file to S3; the EventBridge file-arrival trigger runs "
-            "the XTB connector automatically.",
+            "--with-xtb/--xtb-file are not supported in staging/prod 'full'. "
+            "Use 'upload-xtb' to push the file to S3; the EventBridge "
+            "file-arrival trigger runs the XTB connector automatically.",
             file=sys.stderr,
         )
         return 1
@@ -645,15 +650,11 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     inject_secrets()
     connector = get(args.connector)
 
-    # XTB requires --xtb-file in dedicated subcommand mode.
-    if connector.name == "xtb" and not getattr(args, "xtb_file", None):
-        print("Error: run-connector xtb requires --xtb-file", file=sys.stderr)
-        return 1
-
     fernet_key = load_key()
     rc = fetch_connector(connector, args, fernet_key)
     if rc == FetchResult.SKIPPED:
-        # Connector has no credentials — skip transform and validation gracefully.
+        # Connector has no credentials or required input (e.g. XTB without
+        # --xtb-file) — skip transform and validation gracefully.
         return 0
     if rc == FetchResult.ERROR:
         return 1
@@ -871,8 +872,9 @@ def main() -> int:
         action="store_true",
         default=False,
         help=(
-            "Include the XTB connector (staging/prod only; not yet implemented — "
-            "use upload-xtb + EventBridge file-arrival trigger instead)"
+            "Vestigial flag kept to reject accidental use: XTB is always part of "
+            "the daily schedule (skips when no file has arrived). In staging/prod "
+            "use 'upload-xtb' + the EventBridge file-arrival trigger instead."
         ),
     )
     full_parser.add_argument(

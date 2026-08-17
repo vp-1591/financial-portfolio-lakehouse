@@ -327,7 +327,7 @@ class TestFetchFailureDetails:
         # History surfaced.
         assert "=== Execution History ===" in out
         assert "exitCode=1" in out
-        # All three log groups queried with the scoped start time.
+        # All four log groups queried with the scoped start time.
         expected_start_ms = int(start.timestamp() * 1000)
         queried_groups = [
             c.kwargs["logGroupName"]
@@ -336,6 +336,7 @@ class TestFetchFailureDetails:
         assert queried_groups == [
             "/ecs/portfolio-pipeline-demo-ibkr",
             "/ecs/portfolio-pipeline-demo-trading212",
+            "/ecs/portfolio-pipeline-demo-xtb",
             "/ecs/portfolio-pipeline-demo-consolidate-allocate",
         ]
         for c in logs_client.filter_log_events.call_args_list:

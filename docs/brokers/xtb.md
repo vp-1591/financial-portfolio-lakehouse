@@ -39,7 +39,9 @@ docker compose run --rm pipeline full --mode docker --xtb-file /path/to/report.x
 You can pass `--xtb-file` multiple times to process several reports in one run.
 
 If `--xtb-file` is not provided, XTB is silently skipped during `full` runs.
-The `run-connector xtb` subcommand requires it and will error otherwise.
+The `run-connector xtb` subcommand skips gracefully (return 0) when no file is
+provided — XTB is a required scheduled connector, so the daily run calls it
+with no file and it skips until a report arrives via `upload-xtb`.
 
 **Cloud upload (S3 + EventBridge):**
 ```bash
@@ -54,10 +56,11 @@ In production, XTB is event-driven. EventBridge fires on S3 Object-Created for
 the upload prefix (`pipeline/xtb_uploads/` in prod, `pipeline_demo/xtb_uploads/`
 in demo) and starts the Step Functions orchestrator's `RunConnectors` Map with
 `--xtb-file <s3-uri>` — one file per execution. The daily scheduled run
-(`schedule_connectors = ["ibkr","trading212"]`) excludes XTB, so `xtb_cdc` may
-legitimately be absent on that path. Multiple accounts accumulate across
-triggers into the shared `xtb_snapshot` raw table and are unioned per-account
-at transform time.
+(`schedule_connectors = ["ibkr","trading212","xtb"]`) **includes** XTB:
+`run-connector xtb` skips gracefully (return 0) when no file has arrived yet, so
+the daily run completes and `xtb_cdc` is a required, non-empty table (stale is
+OK — CDC is cumulative). Multiple accounts accumulate across triggers into the
+shared `xtb_snapshot` raw table and are unioned per-account at transform time.
 
 ## Implementation
 
@@ -102,7 +105,15 @@ Key behaviors of the new-format parser/transform:
   `gross_amount = Sale value − Purchase value`, `settle_date = Close time`. The
   opening (`Stock purchase`) row gets no fee.
 - **Multi-account.** Snapshot and CDC both keep the latest payload per
-  `account_id` (keyed on `fetched_at`), not `filter_latest_snapshot` (which
-  keys on `source` alone and would collapse distinct accounts). CDC dedups on
-  `(event_type, event_id, account_id)` so same-ID events from different
-  accounts coexist.
+  `account_id`. Rows are grouped by `account_id` derived from `source_file`
+  (filename pattern `{CCY}_{account_id}_{from}_{to}.xlsx`) without parsing, and
+  only the latest row per account (`fetched_at`, with a `source_file`
+  tiebreaker) is parsed — not `filter_latest_snapshot` (which keys on `source`
+  alone and would collapse distinct accounts). Each parse is guarded: a
+  malformed latest row falls back to the previous good row for that account,
+  and if all rows for an account fail the account is skipped with a warning
+  (one bad historical row can no longer kill the connector). The report's R1
+  `account_id` is authoritative on a filename mismatch (logged). Rows whose
+  filename doesn't match the pattern fall back to a guarded parse for
+  account-id discovery. CDC dedups on `(event_type, event_id, account_id)` so
+  same-ID events from different accounts coexist.

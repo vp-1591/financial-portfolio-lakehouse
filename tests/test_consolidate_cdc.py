@@ -1,8 +1,9 @@
 """Tests for CDC event consolidation.
 
-Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
-CDC is mandatory for ibkr and trading212; consolidation raises RuntimeError
-when a required broker CDC table is missing or empty.  XTB is optional.
+Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
+CDC is mandatory for every registered broker (ibkr, trading212, xtb);
+consolidation raises RuntimeError when a required broker CDC table is
+missing or empty.
 """
 
 from __future__ import annotations
@@ -142,6 +143,21 @@ class TestConsolidateCdc:
             ],
             fernet_key,
         )
+        xtb_table = self._make_cdc_table(
+            "XTB",
+            [
+                {
+                    "event_id": "xtb-1",
+                    "event_type": "DEPOSIT",
+                    "raw_event_type": "Deposit",
+                    "source": "XTB_REPORT",
+                    "event_datetime": "2024-02-01",
+                    "security_ccy": "PLN",
+                    "cash_amount": 500.0,
+                }
+            ],
+            fernet_key,
+        )
 
         # Mock DeltaTable and write_deltalake
         call_count = [0]
@@ -149,7 +165,7 @@ class TestConsolidateCdc:
         def mock_delta_table(path, **kwargs):
             call_count[0] += 1
             if "xtb" in str(path):
-                raise Exception("no data")
+                return type("DT", (), {"to_pyarrow_table": lambda self: xtb_table})()
             if "trading212" in str(path):
                 return type("DT", (), {"to_pyarrow_table": lambda self: t212_table})()
             if "ibkr" in str(path):
@@ -171,10 +187,11 @@ class TestConsolidateCdc:
             result = consolidate_cdc_events()
 
         assert result is not None
-        assert result.num_rows == 2
+        assert result.num_rows == 3
         brokers = result.column("broker").to_pylist()
         assert "Trading 212" in brokers
         assert "IBKR" in brokers
+        assert "XTB" in brokers
 
     def test_consolidate_raises_when_required_broker_missing(
         self, fernet_key: bytes
@@ -267,8 +284,8 @@ class TestConsolidateCdc:
             ):
                 consolidate_cdc_events()
 
-    def test_consolidate_skips_xtb_when_missing(self, fernet_key: bytes) -> None:
-        """XTB CDC table is optional: consolidation succeeds even if it's missing."""
+    def test_consolidate_raises_when_xtb_missing(self, fernet_key: bytes) -> None:
+        """XTB CDC table is required: consolidation raises if it's missing."""
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -322,13 +339,13 @@ class TestConsolidateCdc:
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
-            result = consolidate_cdc_events()
+            with pytest.raises(
+                RuntimeError, match="Required CDC table xtb_cdc not found"
+            ):
+                consolidate_cdc_events()
 
-        assert result is not None
-        assert result.num_rows == 2
-
-    def test_consolidate_skips_xtb_when_empty(self, fernet_key: bytes) -> None:
-        """XTB CDC table is optional: consolidation succeeds even if it's empty."""
+    def test_consolidate_raises_when_xtb_empty(self, fernet_key: bytes) -> None:
+        """XTB CDC table is required: consolidation raises if it's empty."""
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -383,10 +400,10 @@ class TestConsolidateCdc:
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
-            result = consolidate_cdc_events()
-
-        assert result is not None
-        assert result.num_rows == 2
+            with pytest.raises(
+                RuntimeError, match="Required CDC table xtb_cdc is empty"
+            ):
+                consolidate_cdc_events()
 
     def test_consolidate_overwrites_cdc_events_re_read(
         self, fernet_key: bytes, tmp_path: Path
@@ -435,6 +452,22 @@ class TestConsolidateCdc:
             fernet_key,
             "trading212_cdc",
         )
+        self._write_cdc_delta(
+            "XTB",
+            [
+                {
+                    "event_id": "xtb-1",
+                    "event_type": "DEPOSIT",
+                    "raw_event_type": "Deposit",
+                    "source": "XTB_REPORT",
+                    "event_datetime": "2024-02-01",
+                    "security_ccy": "PLN",
+                    "cash_amount": 500.0,
+                }
+            ],
+            fernet_key,
+            "xtb_cdc",
+        )
 
         # Pre-populate the OUTPUT table with a sentinel/stale row.
         sentinel = self._make_cdc_table(
@@ -463,33 +496,34 @@ class TestConsolidateCdc:
 
         # Run the writer.
         result = consolidate_cdc_events()
-        assert result.num_rows == 2
+        assert result.num_rows == 3
 
         # Re-open the persisted Delta table and verify overwrite semantics.
         readback = DeltaTable(out_path, storage_options=storage.storage_options)
         persisted = readback.to_pyarrow_table()
         brokers = persisted.column("broker").to_pylist()
-        # overwrite: sentinel GONE -> 2 rows; append would retain sentinel -> 3 rows.
-        assert persisted.num_rows == 2
+        # overwrite: sentinel GONE -> 3 rows; append would retain sentinel -> 4 rows.
+        assert persisted.num_rows == 3
         assert "STALE_SENTINEL" not in brokers
         assert "IBKR" in brokers
         assert "Trading 212" in brokers
+        assert "XTB" in brokers
 
-    def test_consolidate_includes_nonempty_optional_broker(
+    def test_consolidate_includes_xtb_required_broker(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """A NON-empty optional-broker CDC table is included in the consolidation.
+        """A non-empty required XTB CDC table is included in the consolidation.
 
-        Writes a non-empty ``xtb_cdc`` Delta table (the only optional broker in
-        the CDC path) alongside the required broker tables, runs the writer,
-        and asserts the XTB rows appear in the result.  Catches the
-        ``if table.num_rows > 0 -> == 0`` inverted-condition mutation (A2 D4).
+        Writes a non-empty ``xtb_cdc`` Delta table alongside the other required
+        broker tables, runs the writer, and asserts the XTB rows appear in the
+        result.  Catches the ``if table.num_rows > 0 -> == 0`` inverted-condition
+        mutation (A2 D4).  XTB is a required broker (D21): a missing/empty
+        ``xtb_cdc`` raises, but a non-empty one is included like any other broker.
 
-        Note: this exercises the CDC *consolidation* optional-broker success
-        path with an inline XTB CDC table (broker-neutral schema), NOT the
-        deferred F3 XTB *connector* fixture (xlsx positions).  The XTB CDC
-        event schema is identical to every other broker's, so no F3 fixture
-        is required.
+        Note: this exercises the CDC *consolidation* path with an inline XTB CDC
+        table (broker-neutral schema), NOT the XTB *connector* fixture (xlsx
+        positions).  The XTB CDC event schema is identical to every other
+        broker's, so no connector fixture is required.
         """
 
         self._real_storage(tmp_path)
@@ -545,7 +579,7 @@ class TestConsolidateCdc:
 
         result = consolidate_cdc_events()
         brokers = result.column("broker").to_pylist()
-        # The non-empty optional XTB table must be included (3 rows total).
+        # The non-empty required XTB table must be included (3 rows total).
         # Under the D4 mutation (num_rows > 0 -> == 0), the non-empty XTB
         # table is skipped -> 2 rows, no XTB.
         assert result.num_rows == 3

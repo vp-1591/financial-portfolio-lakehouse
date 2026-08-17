@@ -278,11 +278,29 @@ class TestCmdRunConnector:
         rc = cmd_run_connector(args)
         assert rc == 1
 
-    def test_xtb_without_file_returns_1(self, monkeypatch) -> None:
-        """XTB without --xtb-file in dedicated subcommand returns 1."""
+    @patch("pipeline.run.run_validation")
+    @patch("pipeline.run.transform_connector")
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_xtb_without_file_returns_0(
+        self,
+        mock_key: MagicMock,
+        mock_transform: MagicMock,
+        mock_validate: MagicMock,
+    ) -> None:
+        """XTB without --xtb-file skips gracefully (returns 0).
+
+        XTB is a required scheduled connector, so the daily run calls it with
+        no file; when no file-arrival upload exists it must skip (return 0)
+        rather than fail the run. The real fetch_connector returns SKIPPED for
+        xtb without --xtb-file (run.py:132-133) without touching storage, and
+        cmd_run_connector maps a SKIPPED fetch to exit 0. transform and
+        validation must not run on a skipped fetch.
+        """
         args = argparse.Namespace(connector="xtb", xtb_file=None)
         rc = cmd_run_connector(args)
-        assert rc == 1
+        assert rc == 0
+        mock_transform.assert_not_called()
+        mock_validate.assert_not_called()
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
@@ -551,7 +569,7 @@ class TestCmdFullSfnTrigger:
             sfn_mod,
             "resolve_all_arns",
             lambda *a, **k: (
-                {"ibkr": "arn:ibkr", "trading212": "arn:t212"},
+                {"ibkr": "arn:ibkr", "trading212": "arn:t212", "xtb": "arn:xtb"},
                 "arn:cons",
             ),
         )

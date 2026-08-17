@@ -38,6 +38,19 @@ the environment prefix (`S3_DEFAULT_PREFIX = "pipeline"`), so the real key
 the trigger never fired in either environment. The full overhaul plan
 (`docs/xtb/xtb_overhaul_plan.md`) records the 22 binding decisions (D1–D22).
 
+**Refinement (pre-merge two-pass review of this PR):** the initial D15/D21
+framing treated XTB as optional — excluded from the daily schedule and from
+`NON_EMPTY_REQUIRED`, with `xtb_cdc` allowed to be absent. Review surfaced two
+problems with that framing while the PR was still open: (a) `_latest_per_account`
+called `parse_report` **unguarded** on every historical `XTB_REPORT` raw row,
+so one malformed row (text date cell, out-of-range Excel serial, empty-currency
+fully-closed account) propagated through `transform_connector` and killed both
+`transform_snapshot` and `transform_cdc` for all accounts until purged; and (b)
+a required XTB is simpler and safer than an optional one — the daily run must
+complete regardless, and `run-connector xtb` already returned `SKIPPED` with no
+file. D15/D18/D21 below are the refined (shipped) form; the optionality framing
+they replace was never merged.
+
 ## Decision
 
 Rewrite `pipeline/connectors/xtb/parser.py` and `transform.py` from scratch
@@ -116,12 +129,20 @@ the XLSX library (D13). The new parser produces a typed `XtbReport` from all
    `filter_latest_snapshot` for XTB — it keys on `source` alone and
    `account_id` is not in `RAW_SCHEMA`, so it collapses distinct accounts
    (`PLN_123…` + `EUR_456…`) to the single latest row. Instead both
-   `transform_snapshot` and `transform_cdc` iterate **all**
-   `source=="XTB_REPORT"` rows, parse each, keep the latest `fetched_at`
-   **per `account_id`** (deterministic `(fetched_at, source_file)` tiebreaker —
-   guard 9), and emit per-account output. CDC does **not** union all uploaded
-   payloads: under the full-history-export assumption (D22) the latest report
-   per account is that account's complete event log. `dedup_cdc_events` on
+   `transform_snapshot` and `transform_cdc` group `source=="XTB_REPORT"` rows
+   **by `account_id` derived from `source_file`** (filename pattern
+   `{CCY}_{account_id}_{from}_{to}.xlsx`) **without parsing**, keep the latest
+   `fetched_at` **per `account_id`** (deterministic `(fetched_at,
+   source_file)` tiebreaker — guard 9), and parse only that one latest row per
+   account. Each parse is **guarded**: a malformed latest row falls back to the
+   previous good row for that account, and if all rows for an account fail the
+   account is skipped with a warning — one bad historical row can no longer kill
+   the connector. The report's R1 `account_id` is authoritative: a
+   filename-vs-R1 mismatch is logged and R1 wins. Rows whose filename doesn't
+   match the pattern fall back to a guarded parse for account-id discovery (no
+   silent data loss). CDC does **not** union all uploaded payloads: under the
+   full-history-export assumption (D22) the latest report per account is that
+   account's complete event log. `dedup_cdc_events` on
    `(event_type, event_id, account_id)` is a safety net (ADR 0105 parity;
    `account_id` keeps same-ID events from different accounts distinct).
 
@@ -135,17 +156,20 @@ the XLSX library (D13). The new parser produces a typed `XtbReport` from all
 11. **Derive consolidate CDC candidates from the registry (D15).** Remove
     `_OPTIONAL_CDC_BROKERS = ["xtb"]` from `consolidate_cdc.py`; derive
     candidates from `connectors.all()` (lazy import to avoid the import
-    cycle). Keep `_REQUIRED_CDC_BROKERS = ["ibkr","trading212"]` as the ADR
-    0087 required-non-empty gate. `account_id` is added to the consolidate
-    dedup subset so multi-account brokers don't drop same-ID events across
-    accounts.
+    cycle). `_REQUIRED_CDC_BROKERS = ["ibkr","trading212","xtb"]` is the
+    ADR 0087 required-non-empty gate — XTB is now required (D21), so a
+    missing/empty `xtb_cdc` raises at consolidate like any other broker.
+    `account_id` is added to the consolidate dedup subset so multi-account
+    brokers don't drop same-ID events across accounts.
 
 12. **EventBridge file-arrival trigger (D19) + upload-path fix (D20).** Prod:
     EventBridge S3 Object-Created on `pipeline/xtb_uploads/` → Step Functions
     `RunConnectors` with `file_arrival_connectors = ["ibkr","trading212",
     "xtb"]`, passing a single `--xtb-file` S3 URI per execution; multi-account
-    accumulates across triggers. The daily schedule excludes XTB, so
-    `xtb_cdc` may legitimately be absent on that path (informs D14/D15/D21).
+    accumulates across triggers. The daily schedule **includes** XTB
+    (`schedule_connectors = ["ibkr","trading212","xtb"]`); `run-connector xtb`
+    skips gracefully (return 0) when no file has arrived yet, so the daily run
+    completes and `xtb_cdc` is required (informs D14/D15/D21).
     The upload landing-zone path drops the `staging`/`staging_demo` segment
     and renames `xtb` → `xtb_uploads`: `S3Backend.staging_path(segment,
     filename)` emits `{prefix}/{segment}/{filename}` and
@@ -157,24 +181,29 @@ the XLSX library (D13). The new parser produces a typed `XtbReport` from all
     `--mode staging`; both are removed. Terraform `xtb_staging_prefix` →
     `pipeline/xtb_uploads/` (prod), `pipeline_demo/xtb_uploads/` (demo).
 
-13. **`xtb_cdc` stays excluded from `NON_EMPTY_REQUIRED` (D21).** The prod
-    daily schedule does not run XTB, so `xtb_cdc` may legitimately be absent.
-    Three CDC-non-empty gates agree: per-connector validation (D14,
-    unconditional but the table may simply be absent → skipped),
-    consolidate required/optional (D15), and `quality.py`
-    `NON_EMPTY_REQUIRED` (unchanged).
+13. **`xtb_cdc` is required in `NON_EMPTY_REQUIRED` (D21).** XTB is a required
+    connector: the daily schedule includes XTB (skips when no file has arrived),
+    and `xtb_cdc` must exist in the lake — stale is OK because CDC is
+    cumulative. Three CDC-non-empty gates agree: per-connector validation (D14,
+    unconditional), consolidate required-brokers (D15 — `xtb` in
+    `_REQUIRED_CDC_BROKERS`), and `quality.py`
+    `NON_EMPTY_REQUIRED = {cdc_events, ibkr_cdc, trading212_cdc, xtb_cdc}`.
+    The full optionality removal — no hardcoded required list, gate derived
+    from the registry — is a follow-up issue, not this PR.
 
 ## Constraints
 
 - The raw layer still stores original `.xlsx` bytes unmodified and parsing
   happens in the transform (silver) layer — unchanged since ADR 0047. Account
-  ID remains a silver-layer concept, derived from the parsed workbook, never
-  in `RAW_SCHEMA`.
-- `_REQUIRED_CDC_BROKERS = ["ibkr","trading212"]` remains the only hardcoded
+  ID remains a silver-layer concept — now derived primarily from `source_file`
+  (the filename pattern) for grouping, with the parsed workbook's R1
+  `account_id` authoritative on mismatch; it is never added to `RAW_SCHEMA`.
+- `_REQUIRED_CDC_BROKERS = ["ibkr","trading212","xtb"]` is the hardcoded
   CDC-required list; a missing/empty required broker CDC table still raises
-  (the ADR 0087 required-non-empty gate, carried forward unchanged).
-  `NON_EMPTY_REQUIRED = {cdc_events, ibkr_cdc, trading212_cdc}` is unchanged;
-  `xtb_cdc` stays excluded (D21).
+  (the ADR 0087 required-non-empty gate, now extended to XTB per D21).
+  `NON_EMPTY_REQUIRED = {cdc_events, ibkr_cdc, trading212_cdc, xtb_cdc}` —
+  `xtb_cdc` is required (D21). Removing the hardcoded list in favor of a
+  registry-derived gate is a follow-up issue, not this PR.
 - T212 `fetch_cdc` raising `RuntimeError` on all-empty endpoints (ADR 0087
   decision #4) and `transform_connector`'s empty-raw WARNING (ADR 0087
   decision #5) remain in force — unchanged.
@@ -237,10 +266,12 @@ decided in ADR 0048 §Decision).
 This ADR **partially supersedes ADR 0087**: its `cdc_supported` flag (decision
 #2) and `_OPTIONAL_CDC_BROKERS` optional-list (decision #3's mechanism) are
 removed by D14/D15 — per-connector CDC validation is now unconditional and
-consolidate derives candidates from the registry. Carried forward unchanged:
-the `check_non_empty` quality check + `NON_EMPTY_REQUIRED` (decision #1),
-the required-broker missing/empty `RuntimeError` (decision #3 behavior),
-T212 `fetch_cdc` raise on all-empty (decision #4), and `transform_connector`
+consolidate derives candidates from the registry. The `NON_EMPTY_REQUIRED`
+set and `_REQUIRED_CDC_BROKERS` list (decision #1) are **extended** to include
+`xtb_cdc`/`xtb` (D21) — XTB is now a required broker, not exempt. Carried
+forward unchanged: the `check_non_empty` quality check mechanism, the
+required-broker missing/empty `RuntimeError` (decision #3 behavior), T212
+`fetch_cdc` raise on all-empty (decision #4), and `transform_connector`
 empty-raw WARNING (decision #5) — see ADR 0087 §Decision.
 
 This ADR **partially supersedes ADR 0100 for XTB**: per-source
@@ -258,7 +289,7 @@ account-currency) remain active and are not superseded.
 
 ## Validation
 
-- Full suite: 785 tests pass; `ruff check --fix . && ruff format .` clean;
+- Full suite: 791 tests pass; `ruff check --fix . && ruff format .` clean;
   `pyright pipeline/ tests/` 0 errors.
 - `tests/test_xtb_connector.py` — `TestXtbParser` (26): 3-sheet parsing,
   dataclass field scope (YAGNI), aggregate-vs-child distinction (child lots
@@ -279,7 +310,13 @@ account-currency) remain active and are not superseded.
   sell-only fee enrichment D8, 2dp rounding, shared bronze, cross-account
   same-ID coexist. `TestXtbRealSampleTransformIntegration`: real anonymized
   sample through both transforms (2 EQUITY + 1 CASH; deposit/interest/sell;
-  Commission=0 → fee_amount 0.0).
+  Commission=0 → fee_amount 0.0). `TestAccountIdFromFilename` (4): filename
+  pattern `{CCY}_{account_id}_{from}_{to}.xlsx` → account_id; no-underscore,
+  non-digit segment, empty → None. `TestLatestPerAccountGuarded` (5):
+  filename-grouped two-account latest-only parse, malformed latest row
+  falls back to the older good row, all-rows-fail skips the account, R1 wins
+  on filename-vs-R1 mismatch (logged), non-matching filename uses the
+  fallback parse path.
 - `tests/test_cdc_analytics.py` — `TestXtbEventDatetimeRegression` (3):
   `_add_period_columns` accepts the XTB ISO `event_datetime`; end-to-end
   `transform_cdc` → `build_cash_flow_summary` keeps 2026-07 and 2026-08
@@ -288,12 +325,25 @@ account-currency) remain active and are not superseded.
   `pipeline/xtb_uploads/<file>` / `pipeline_demo/xtb_uploads/<file>`; new
   `test_staging_path_no_xtb_subfolder` literal-key guard so a refactor
   re-introducing a connector segment fails loudly.
-- `tests/test_consolidate_cdc.py` — XTB-skip tests assert the registry path
-  (XTB is a registered candidate; absent CDC → skipped); dedup subset
-  includes `account_id`.
+- `tests/test_consolidate_cdc.py` — XTB is now a **required** CDC broker:
+  missing/empty `xtb_cdc` raises `RuntimeError` (the two former optional-skip
+  tests flipped to assert the raise); `test_consolidate_merges_all_brokers`
+  and `_overwrites_cdc_events_re_read` write `xtb_cdc`; dedup subset includes
+  `account_id`.
 - `tests/test_connector_registry.py` / `test_run_subcommands.py` —
   `cdc_supported`/`enabled_env_var` removed; `cdc_raw_layer = "cdc"` added;
   `test_cdc_supported_*` dropped; XTB validation unconditional.
+  `test_xtb_without_file_returns_0`: `run-connector xtb` with no `--xtb-file`
+  skips gracefully (return 0) — XTB is a required scheduled connector that
+  skips when no file has arrived. `TestCmdFullSfnTrigger` stubs include the
+  xtb connector ARN (`DEFAULT_CONNECTORS` now lists xtb).
+- `tests/test_quality.py` — `test_non_empty_required_registry` asserts
+  `xtb_cdc in NON_EMPTY_REQUIRED`; the three end-to-end tests
+  (`test_returns_zero_on_all_pass`, `test_fail_on_warn_flag`,
+  `test_write_and_read_results`) write `xtb_cdc`.
+- `tests/test_sfn.py` — `test_queries_history_and_each_log_group` expects the
+  four log groups (`ibkr`, `trading212`, `xtb`, `consolidate-allocate`) since
+  `fetch_failure_details` iterates `[*DEFAULT_CONNECTORS, CONSOLIDATE_FAMILY]`.
 - `tests/test_migrate_xtb_purge_legacy_raw.py` — idempotent, dry-run, skips
   absent tables (mirrors `migrate_snapshot_schema_unify.py`).
 - Post-deploy (manual): `SELECT * FROM xtb_snapshot LIMIT 5` and

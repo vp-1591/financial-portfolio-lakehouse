@@ -24,7 +24,11 @@ from pipeline.connectors.xtb.parser import (
     normalize_header,
     parse_report,
 )
-from pipeline.connectors.xtb.transform import transform_cdc, transform_snapshot
+from pipeline.connectors.xtb.transform import (
+    _account_id_from_filename,
+    transform_cdc,
+    transform_snapshot,
+)
 from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.raw.models import RAW_SCHEMA
 from tests.fixtures.xtb import (
@@ -1478,3 +1482,171 @@ class TestXtbRealSampleTransformIntegration:
         assert len(sell_rows) == 1
         assert sell_rows[0]["fee_amount"] is not None
         assert decrypt_float(sell_rows[0]["fee_amount"], fernet_key) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Finding-1 fix: filename-derived account_id + guarded latest-per-account
+# parse. A malformed row can no longer kill the transform for all accounts.
+# ---------------------------------------------------------------------------
+
+
+def _malformed_xlsx_bytes(account_id: str = DEFAULT_ACCOUNT_ID) -> bytes:
+    """Build a workbook whose parse raises (empty summary-block Currency, guard 4)."""
+    open_rows: list[tuple[object, ...]] = [
+        ("Account number", account_id),
+        ("Open Positions",),
+        ("Data as of report generated", "2026-08-03"),
+        ("Product", "Metric", "Amount", "Currency"),
+        ("My Trades", "Value", 0, None),  # empty Currency -> guard 4 raises
+    ]
+    return build_xlsx_bytes_from_sheets({"Open Positions": open_rows})
+
+
+class TestAccountIdFromFilename:
+    """Unit tests for the filename-derived account_id helper (finding-1 fix)."""
+
+    def test_valid_pattern(self) -> None:
+        assert (
+            _account_id_from_filename("PLN_12345678_2006-01-01_2026-08-03.xlsx")
+            == "12345678"
+        )
+
+    def test_no_underscore(self) -> None:
+        assert _account_id_from_filename("report.xlsx") is None
+
+    def test_non_digit_account_segment(self) -> None:
+        assert (
+            _account_id_from_filename("PLN_account_2006-01-01_2026-08-03.xlsx") is None
+        )
+
+    def test_empty(self) -> None:
+        assert _account_id_from_filename("") is None
+
+
+class TestLatestPerAccountGuarded:
+    """Finding-1 fix: filename grouping + guarded parse with fallback.
+
+    The account_id is read from the filename pattern
+    ``{CCY}_{account_id}_{from}_{to}.xlsx``; only the latest row per account is
+    parsed, and a malformed latest row falls back to the previous good row. A
+    fully-failing account is skipped (no crash) while other accounts survive.
+    """
+
+    @pytest.fixture()
+    def fernet_key(self) -> bytes:
+        return generate_key()
+
+    def test_filename_grouping_two_accounts(self, fernet_key: bytes) -> None:
+        """Pattern filenames: two accounts both survive, only latest parsed."""
+        t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw_a = _build_raw_from_bytes(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t,
+            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",
+        )
+        raw_b = _build_raw_from_bytes(
+            build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
+            fernet_key,
+            fetched_at=t,
+            source_file="EUR_222_2006-01-01_2026-08-03.xlsx",
+        )
+        combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
+        result = transform_snapshot(combined, fernet_key)
+
+        assert set(result.column("account_id").to_pylist()) == {"111", "222"}
+        # 2 EQUITY + 1 CASH per account = 6 rows.
+        assert result.num_rows == 6
+
+    def test_malformed_latest_falls_back_to_older_row(
+        self, fernet_key: bytes, caplog
+    ) -> None:
+        """A malformed latest row falls back to the previous good row (no crash)."""
+        t_old = datetime(2026, 8, 1, 6, 0, tzinfo=UTC)
+        t_new = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw_old = _build_raw_from_bytes(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t_old,
+            source_file="PLN_111_2006-01-01_2026-08-01.xlsx",
+        )
+        raw_new = _build_raw_from_bytes(
+            _malformed_xlsx_bytes("111"),
+            fernet_key,
+            fetched_at=t_new,
+            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",
+        )
+        combined = pa.concat_tables([raw_old, raw_new], schema=RAW_SCHEMA)
+
+        caplog.set_level("WARNING", logger="pipeline.connectors.xtb.transform")
+        result = transform_snapshot(combined, fernet_key)
+
+        # Fell back to the older good row -> 3 rows for account 111, no crash.
+        assert result.num_rows == 3
+        assert set(result.column("account_id").to_pylist()) == {"111"}
+        assert any("trying older row" in r.message for r in caplog.records)
+
+    def test_all_rows_for_account_fail_skips_account(
+        self, fernet_key: bytes, caplog
+    ) -> None:
+        """When every row for an account fails to parse, the account is skipped."""
+        t1 = datetime(2026, 8, 2, 6, 0, tzinfo=UTC)
+        t2 = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw_bad1 = _build_raw_from_bytes(
+            _malformed_xlsx_bytes("111"),
+            fernet_key,
+            fetched_at=t1,
+            source_file="PLN_111_2006-01-01_2026-08-02.xlsx",
+        )
+        raw_bad2 = _build_raw_from_bytes(
+            _malformed_xlsx_bytes("111"),
+            fernet_key,
+            fetched_at=t2,
+            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",
+        )
+        raw_good = _build_raw_from_bytes(
+            build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
+            fernet_key,
+            fetched_at=t2,
+            source_file="EUR_222_2006-01-01_2026-08-03.xlsx",
+        )
+        combined = pa.concat_tables([raw_bad1, raw_bad2, raw_good], schema=RAW_SCHEMA)
+
+        caplog.set_level("WARNING", logger="pipeline.connectors.xtb.transform")
+        result = transform_snapshot(combined, fernet_key)
+
+        # Only account 222 survives; account 111 skipped (no exception).
+        assert set(result.column("account_id").to_pylist()) == {"222"}
+        assert result.num_rows == 3
+
+    def test_filename_vs_r1_mismatch_r1_wins(self, fernet_key: bytes, caplog) -> None:
+        """Filename account_id != report R1 -> warning logged, R1 account_id emitted."""
+        t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw = _build_raw_from_bytes(
+            build_new_format_xlsx_bytes(account_id="999", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t,
+            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",  # filename says 111
+        )
+
+        caplog.set_level("WARNING", logger="pipeline.connectors.xtb.transform")
+        result = transform_snapshot(raw, fernet_key)
+
+        # R1 account_id (999) wins in the emitted rows.
+        assert set(result.column("account_id").to_pylist()) == {"999"}
+        assert any("!= report R1" in r.message for r in caplog.records)
+
+    def test_non_matching_filename_uses_fallback_parse(self, fernet_key: bytes) -> None:
+        """A non-pattern filename falls back to a guarded parse for account_id."""
+        t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        raw = _build_raw_from_bytes(
+            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+            fernet_key,
+            fetched_at=t,
+            source_file="report.xlsx",  # no underscore-digit pattern
+        )
+        result = transform_snapshot(raw, fernet_key)
+
+        # Fallback parse discovered account_id 111 -> 3 rows.
+        assert result.num_rows == 3
+        assert set(result.column("account_id").to_pylist()) == {"111"}

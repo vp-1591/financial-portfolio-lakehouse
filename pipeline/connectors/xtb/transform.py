@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 
 import polars as pl
 import pyarrow as pa
@@ -76,33 +77,93 @@ def _classify_xtb_event_type(raw_type: str) -> str:
     return _XTB_EVENT_TYPE_MAP.get(raw_type, "UNKNOWN")
 
 
+def _account_id_from_filename(source_file: str) -> str | None:
+    """Extract the account id from an XTB export filename.
+
+    New-format filenames follow ``{CCY}_{account_id}_{from}_{to}.xlsx`` (e.g.
+    ``PLN_12345678_2006-01-01_2026-08-03.xlsx`` -> ``12345678``). Returns
+    ``None`` when the filename does not match the pattern, so the caller can
+    fall back to a guarded parse for account_id discovery (no silent data loss).
+    """
+    parts = Path(source_file).stem.split("_")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return parts[1]
+    return None
+
+
 def _latest_per_account(
     raw: pa.Table, fernet_key: bytes
 ) -> list[tuple[DecodedRow, XtbReport]]:
-    """Parse every ``XTB_REPORT`` raw row and keep the latest per ``account_id``.
+    """Keep the latest parseable report per ``account_id`` (D18/D9, guard 9).
 
-    D18/D9: latest ``fetched_at`` per ``account_id`` (NOT
-    :func:`filter_latest_snapshot`, which keys on ``source`` alone and
-    collapses distinct accounts into one). Guard 9: when two raw rows for
-    the same account share the max ``fetched_at``, break the tie
-    deterministically by ``source_file`` so both payloads do not survive and
-    emit duplicate holdings.
+    The account id is read from the filename pattern
+    ``{CCY}_{account_id}_{from}_{to}.xlsx`` (== R1 ``Account number``), so raw
+    rows are grouped WITHOUT parsing. Only the latest row per account is parsed,
+    and every parse is guarded: a malformed latest row falls back to the
+    previous good row for that account, and if all rows for an account fail the
+    account is skipped with a warning (the connector can no longer be killed by
+    one bad row). Rows whose filename does not match the pattern fall back to a
+    guarded parse for account_id discovery. R1 ``account_id`` is authoritative;
+    a filename/R1 mismatch is logged. Guard 9: the sort key stays
+    ``(fetched_at, source_file)`` desc so ties on ``fetched_at`` break
+    deterministically and do not emit duplicate holdings.
 
     Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
     """
-    candidates: list[tuple[tuple[object, str], DecodedRow, XtbReport]] = []
+    by_account: dict[str, list[tuple[tuple[object, str], DecodedRow]]] = {}
+    unparsed: list[tuple[tuple[object, str], DecodedRow]] = []
     for row in iter_raw_payloads(raw, fernet_key, require_json=False):
         if row.source != "XTB_REPORT":
             continue
-        report = parse_report(row.payload_raw)
-        candidates.append(((row.fetched_at, row.source_file), row, report))
+        account_id = _account_id_from_filename(row.source_file)
+        sort_key = (row.fetched_at, row.source_file)
+        if account_id is None:
+            unparsed.append((sort_key, row))
+        else:
+            by_account.setdefault(account_id, []).append((sort_key, row))
 
-    best: dict[str, tuple[tuple[object, str], DecodedRow, XtbReport]] = {}
-    for sort_key, row, report in candidates:
-        key = report.account_id
-        if key not in best or sort_key > best[key][0]:
-            best[key] = (sort_key, row, report)
-    return [(entry[1], entry[2]) for entry in best.values()]
+    # Fallback: rows whose filename doesn't match the pattern — parse (guarded)
+    # to discover account_id rather than silently dropping the account.
+    for sort_key, row in unparsed:
+        try:
+            report = parse_report(row.payload_raw)
+        except Exception as exc:
+            logger.warning(
+                "XTB: cannot derive account_id from %r and parse failed (%s); skipping",
+                row.source_file,
+                exc,
+            )
+            continue
+        if not report.account_id:
+            logger.warning("XTB: no account_id in %r; skipping", row.source_file)
+            continue
+        by_account.setdefault(report.account_id, []).append((sort_key, row))
+
+    # Parse only the latest row per account; fall back to older rows on failure.
+    result: list[tuple[DecodedRow, XtbReport]] = []
+    for account_id, rows in by_account.items():
+        rows.sort(key=lambda t: t[0], reverse=True)
+        for sort_key, row in rows:
+            try:
+                report = parse_report(row.payload_raw)
+            except Exception as exc:
+                logger.warning(
+                    "XTB account %s: parse failed for %s (%s); trying older row",
+                    account_id,
+                    row.source_file,
+                    exc,
+                )
+                continue
+            if report.account_id and report.account_id != account_id:
+                logger.warning(
+                    "XTB: filename account_id %s != report R1 %s for %s",
+                    account_id,
+                    report.account_id,
+                    row.source_file,
+                )
+            result.append((row, report))
+            break
+    return result
 
 
 def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:

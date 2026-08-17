@@ -5,11 +5,13 @@ into ``normalized/cdc_events``, producing a unified broker-neutral CDC
 table suitable for dashboard queries.
 
 Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
-CDC is mandatory for ibkr and trading212 — a missing or empty required
-broker CDC table raises RuntimeError (the required-non-empty gate, carried
-forward unchanged from ADR 0087 §Decision).  Other registered brokers (e.g.
-XTB) are optional: a missing or empty CDC table is skipped (the prod daily
-schedule does not run XTB, so ``xtb_cdc`` may legitimately be absent — D21).
+CDC is mandatory for every registered broker (ibkr, trading212, xtb) — a
+missing or empty required broker CDC table raises RuntimeError (the
+required-non-empty gate, carried forward from ADR 0087 §Decision; XTB added
+D21).  XTB is triggered by the EventBridge S3 file-arrival rule; the daily
+``run-connector xtb`` step skips gracefully when no file has arrived, and once
+a file has been ingested ``xtb_cdc`` is present and required like any other
+broker.
 
 D15: the candidate broker set is derived from the connector registry
 (``connectors.all()``), not a hardcoded ``_OPTIONAL_CDC_BROKERS`` list. Only
@@ -33,7 +35,7 @@ from pipeline.storage import get_storage
 logger = logging.getLogger(__name__)
 
 # Brokers whose CDC tables are required — must be present and non-empty.
-_REQUIRED_CDC_BROKERS = ["ibkr", "trading212"]
+_REQUIRED_CDC_BROKERS = ["ibkr", "trading212", "xtb"]
 
 
 def consolidate_cdc_events() -> pa.Table:
@@ -46,8 +48,7 @@ def consolidate_cdc_events() -> pa.Table:
     The candidate broker set is derived from the connector registry
     (``connectors.all()``) — D15. Required brokers
     (:data:`_REQUIRED_CDC_BROKERS`) must be present and non-empty (raise on
-    missing/empty). Other registered brokers are optional: a missing or
-    empty CDC table is skipped (logged at DEBUG).
+    missing/empty).
 
     Raises :class:`RuntimeError` if a required broker CDC table is missing
     or empty.  Returns the concatenated table (guaranteed non-empty because

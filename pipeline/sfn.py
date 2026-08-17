@@ -70,10 +70,11 @@ STATE_MACHINE_NAMES: dict[str, str] = {
     "prod": "portfolio-pipeline-orchestrator",
 }
 
-# Connectors run by ``full --mode staging|prod``.  XTB is excluded — it
-# requires an uploaded file and is triggered by the EventBridge S3 file
-# arrival rule, not by the CI/manual ``full`` run.
-DEFAULT_CONNECTORS: list[str] = ["ibkr", "trading212"]
+# Connectors run by ``full --mode staging|prod``.  XTB is included: the daily
+# ``run-connector xtb`` step skips gracefully when no file has arrived yet
+# (file-arrival is handled by the EventBridge S3 rule), and once ingested
+# ``xtb_cdc`` is required like any other broker.
+DEFAULT_CONNECTORS: list[str] = ["ibkr", "trading212", "xtb"]
 
 DEFAULT_TIMEOUT_SECONDS = 900
 DEFAULT_POLL_INTERVAL_SECONDS = 30
