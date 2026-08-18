@@ -450,11 +450,11 @@ class TestCheckNonEmpty:
         assert "0 rows" in result.details
 
     def test_non_empty_required_registry(self) -> None:
-        """NON_EMPTY_REQUIRED includes cdc_events, ibkr_cdc, trading212_cdc, xtb_cdc."""
+        """NON_EMPTY_REQUIRED includes cdc_events, ibkr_cdc, trading212_cdc; xtb_cdc is optional."""
         assert "cdc_events" in NON_EMPTY_REQUIRED
         assert "ibkr_cdc" in NON_EMPTY_REQUIRED
         assert "trading212_cdc" in NON_EMPTY_REQUIRED
-        assert "xtb_cdc" in NON_EMPTY_REQUIRED
+        assert "xtb_cdc" not in NON_EMPTY_REQUIRED
 
 
 # ---------------------------------------------------------------------------

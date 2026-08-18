@@ -2,5 +2,5 @@
 # Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md
 scheduled               = false
 schedule_cron           = "cron(0 6 * * ? *)"
-schedule_connectors     = ["ibkr", "trading212", "xtb"]
+schedule_connectors     = ["ibkr", "trading212"]
 file_arrival_connectors = ["ibkr", "trading212", "xtb"]

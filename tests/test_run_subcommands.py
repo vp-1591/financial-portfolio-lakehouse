@@ -569,7 +569,7 @@ class TestCmdFullSfnTrigger:
             sfn_mod,
             "resolve_all_arns",
             lambda *a, **k: (
-                {"ibkr": "arn:ibkr", "trading212": "arn:t212", "xtb": "arn:xtb"},
+                {"ibkr": "arn:ibkr", "trading212": "arn:t212"},
                 "arn:cons",
             ),
         )

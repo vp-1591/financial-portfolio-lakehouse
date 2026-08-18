@@ -70,11 +70,14 @@ STATE_MACHINE_NAMES: dict[str, str] = {
     "prod": "portfolio-pipeline-orchestrator",
 }
 
-# Connectors run by ``full --mode staging|prod``.  XTB is included: the daily
-# ``run-connector xtb`` step skips gracefully when no file has arrived yet
-# (file-arrival is handled by the EventBridge S3 rule), and ``xtb_cdc`` is
-# consolidated whenever present (it is not in the required gate).
-DEFAULT_CONNECTORS: list[str] = ["ibkr", "trading212", "xtb"]
+# Connectors run by ``full --mode staging|prod``.  XTB is excluded: it is
+# driven solely by the EventBridge S3 file-arrival trigger (fetch + transform
+# only when a new file is uploaded), so scheduled/CI runs do not launch a
+# no-op ``run-connector xtb`` task.  ``run-consolidate-analytics`` still reads
+# XTB silver (``xtb_snapshot``/``xtb_cdc``) on every run via the connector
+# registry, whenever present.
+# Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
+DEFAULT_CONNECTORS: list[str] = ["ibkr", "trading212"]
 
 DEFAULT_TIMEOUT_SECONDS = 900
 DEFAULT_POLL_INTERVAL_SECONDS = 30
@@ -388,10 +391,25 @@ def fetch_failure_details(
         sections.append("--- Execution Failure ---")
         sections.extend(parse_generic_failure(exec_failed))
 
-    start_date = sfn_client.describe_execution(executionArn=execution_arn)["startDate"]
-    start_ms = int(start_date.timestamp() * 1000)
+    exec_desc = sfn_client.describe_execution(executionArn=execution_arn)
+    start_ms = int(exec_desc["startDate"].timestamp() * 1000)
 
-    for name in [*DEFAULT_CONNECTORS, CONSOLIDATE_FAMILY_NAME]:
+    # Derive the connector list from the failed execution's own input so XTB
+    # container logs are still captured for failed *file-arrival* executions
+    # (where XTB runs) even though XTB is no longer in DEFAULT_CONNECTORS.
+    # Fall back to DEFAULT_CONNECTORS if the input cannot be parsed or is not
+    # a JSON object (e.g. "[]"). An input that parses but yields no connectors
+    # (e.g. "{}") queries only the consolidate-allocate log group.
+    # Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
+    try:
+        connector_names = [
+            c["name"]
+            for c in json.loads(exec_desc.get("input") or "{}").get("connectors", [])
+        ]
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        connector_names = list(DEFAULT_CONNECTORS)
+
+    for name in [*connector_names, CONSOLIDATE_FAMILY_NAME]:
         log_group = f"/ecs/portfolio-pipeline-{env_label}-{name}"
         sections.append(f"=== Container logs: {name} ===")
         sections.append(f"Log group: {log_group}")
