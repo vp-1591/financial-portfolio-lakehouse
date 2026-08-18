@@ -161,6 +161,14 @@ def _latest_per_account(
                     report.account_id,
                     row.source_file,
                 )
+            if report.dropped_cash_rows:
+                logger.warning(
+                    "XTB account %s: %d cash-operation row(s) dropped (empty Time "
+                    "cell) in %s",
+                    account_id,
+                    report.dropped_cash_rows,
+                    row.source_file,
+                )
             result.append((row, report))
             break
     return result
