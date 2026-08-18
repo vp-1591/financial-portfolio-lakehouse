@@ -4,7 +4,7 @@
 #
 # Apply order:
 #   1. shared/ apply — creates ECR + ECS cluster + IAM roles
-#   2. demo/ and prod/ apply — each creates its own state machine,
+#   2. staging/ and prod/ apply — each creates its own state machine,
 #      EventBridge rules, and environment-specific resources
 #
 # No two-phase apply needed — shared/ no longer contains the state machine.

@@ -58,7 +58,7 @@ terraform apply
 #    terraform output ecs_cluster_arn
 
 # 3. Per-environment infrastructure — each independently
-cd terraform/demo
+cd terraform/staging
 terraform init
 terraform apply
 
@@ -86,7 +86,7 @@ because every parameter has `lifecycle { ignore_changes = [value] }`.
 #### Demo environment
 
 Replace `<kms-key-id>` with the output of `terraform output kms_key_arn` from
-`terraform/demo/`.
+`terraform/staging/`.
 
 | SSM parameter name | Env var in container | Description |
 |---|---|---|
@@ -99,7 +99,7 @@ Replace `<kms-key-id>` with the output of `terraform output kms_key_arn` from
 **Bash / Git Bash:**
 
 ```bash
-KMS_KEY_ID=$(terraform -chdir=terraform/demo output -raw kms_key_arn)
+KMS_KEY_ID=$(terraform -chdir=terraform/staging output -raw kms_key_arn)
 
 aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id "$KMS_KEY_ID" --overwrite
@@ -111,7 +111,7 @@ aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"
 **PowerShell:**
 
 ```powershell
-$KMS_KEY_ID = (terraform -chdir=terraform/demo output -raw kms_key_arn)
+$KMS_KEY_ID = (terraform -chdir=terraform/staging output -raw kms_key_arn)
 
 aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
 aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite

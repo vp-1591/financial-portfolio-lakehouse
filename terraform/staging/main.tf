@@ -11,7 +11,7 @@
 #   - S3 bucket notification for EventBridge
 #
 # Usage:
-#   cd terraform/demo
+#   cd terraform/staging
 #   cp backend.tf.sample backend.tf   # first time only
 #   # Edit backend.tf — set bucket to your S3 state bucket name
 #   terraform init
@@ -257,7 +257,7 @@ resource "aws_iam_user_policy_attachment" "pipeline_demo" {
 
 # Attach the ECR push/pull policy (defined in terraform/shared/) so the
 # demo pipeline user can push Docker images during deploy and pull them at runtime.
-# terraform/shared/ must be applied before terraform/demo/.
+# terraform/shared/ must be applied before terraform/staging/.
 data "aws_iam_policy" "ecr_push_pull" {
   name = "pipeline-ecr-push-pull"
 }
