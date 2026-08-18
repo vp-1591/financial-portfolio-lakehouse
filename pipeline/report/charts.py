@@ -175,11 +175,9 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
     if cash_flow.is_empty():
         return _empty_figure("Cash Flow Breakdown")
 
-    # Use target_value if available, fall back to cash_amount
-    if cash_flow["target_value"].null_count() < cash_flow.height:
-        value_col = "target_value"
-    else:
-        value_col = "cash_amount"
+    # Invariant enforced upstream (ADR 0111): target_value is non-null in the
+    # gold table, so it is summed unconditionally — no cash_amount fallback.
+    value_col = "target_value"
 
     event_types = sorted(cash_flow["event_type"].unique().to_list())
     months = sorted(cash_flow["period_month"].unique().to_list())

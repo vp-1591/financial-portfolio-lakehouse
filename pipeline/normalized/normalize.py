@@ -124,17 +124,22 @@ def normalize_currency(
     # Compute target_fx_rate and target_value for each row
     target_fx_rates: list[float | None] = []
     target_values: list[float | None] = []
+    failed_currencies: set[str] = set()
 
     for row in df.iter_rows(named=True):
         security_ccy = str(row.get("security_ccy", "") or "").upper()
         cash_amount = row.get("cash_amount_decrypted")
         broker_rate = row.get("target_fx_rate_decrypted")
 
-        # Skip rows with null cash_amount (shouldn't happen but be safe)
-        if cash_amount is None:
-            target_fx_rates.append(None)
-            target_values.append(None)
-            continue
+        # A missing source currency would be silently converted at rate 1.0
+        # (consolidate.py returns the value unchanged for an empty currency),
+        # relabeling a native-currency amount as the target currency.
+        if not security_ccy:
+            raise RuntimeError(
+                "cdc_events row has missing security_ccy; cannot determine the "
+                "source currency for conversion. Fix the source data and re-run "
+                "normalize-cdc."
+            )
 
         # Same currency: no conversion needed
         if security_ccy == target_ccy:
@@ -153,15 +158,20 @@ def normalize_currency(
             rate = converter.convert(1.0, security_ccy)
             target_fx_rates.append(rate)
             target_values.append(cash_amount * rate)
-        except Exception as exc:
-            logger.warning(
-                "Could not convert %s to %s: %s; leaving target_value null",
-                security_ccy,
-                target_ccy,
-                exc,
-            )
+        except Exception:
+            failed_currencies.add(security_ccy)
             target_fx_rates.append(None)
             target_values.append(None)
+
+    # No fallback: a failed conversion is an error, not a silent null.
+    # Surfacing it here (before the write) keeps the table from being
+    # overwritten with rows whose target_value/target_fx_rate are null.
+    if failed_currencies:
+        raise RuntimeError(
+            "Could not convert "
+            f"{sorted(failed_currencies)} to {target_ccy}. "
+            "Pass --fx-rate CURRENCY=RATE to provide manual rates."
+        )
 
     # Encrypt and replace target columns
     df = df.with_columns(

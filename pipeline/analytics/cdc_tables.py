@@ -46,8 +46,7 @@ def _resolve_fernet_key(fernet_key: bytes | None) -> bytes:
 # Binary (Fernet-encrypted) columns in cdc_events that need decryption.
 _ENCRYPTED_COLUMNS: list[tuple[str, str]] = [
     ("cash_amount", "cash_amount_decrypted"),
-    ("target_fx_rate", "target_fx_rate_decrypted"),
-    ("target_value", "target_value_decrypted"),
+    ("target_value", "target_value_resolved"),
     ("gross_amount", "gross_amount_decrypted"),
     ("fee_amount", "fee_amount_decrypted"),
     ("tax_amount", "tax_amount_decrypted"),
@@ -211,19 +210,33 @@ def _read_cdc_events(
         if col in df.columns:
             df = _decrypt_column(df, col, alias, fernet_key)
 
-    # Resolve target_value: fall back to cash_amount * target_fx_rate where null.
-    # This handles rows where normalize_currency() hasn't been run yet.
-    if "target_value_decrypted" in df.columns:
-        df = df.with_columns(
-            pl.when(pl.col("target_value_decrypted").is_null())
-            .then(pl.col("cash_amount_decrypted") * pl.col("target_fx_rate_decrypted"))
-            .otherwise(pl.col("target_value_decrypted"))
-            .alias("target_value_resolved")
+    # No fallback: null or missing target columns are surfaced, not patched.
+    # Decision: docs/adr/0111-remove-cash-amount-fallback-for-null-target-value.md
+    missing = [
+        col for col in ("target_value_resolved", "target_ccy") if col not in df.columns
+    ]
+    if missing:
+        raise RuntimeError(
+            "cdc_events table is missing target_value/target_ccy columns; "
+            "run normalize-cdc before analytics."
         )
-    else:
-        # No target columns at all — fall back to cash_amount
-        df = df.with_columns(
-            pl.col("cash_amount_decrypted").alias("target_value_resolved")
+    null_target = df.filter(
+        pl.col("target_value_resolved").is_null() | pl.col("target_ccy").is_null()
+    )
+    if null_target.height > 0:
+        # security_ccy is schema-nullable (Delta Lake marks all fields nullable
+        # and it is not in REQUIRED_FIELDS for cdc_events), and the null
+        # target_value rows being reported are exactly the rows that can carry
+        # a null security_ccy — filter them before sorting so the error message
+        # itself does not crash with a TypeError.
+        affected_ccys = sorted(
+            {c for c in null_target["security_ccy"].unique().to_list() if c is not None}
+        )
+        raise RuntimeError(
+            f"{null_target.height} cdc_events row(s) have null target_value or "
+            f"target_ccy (security_ccy: {affected_ccys}). Run normalize-cdc and "
+            "pass --fx-rate CURRENCY=RATE to provide manual rates for "
+            "unconvertible currencies."
         )
 
     # Add period columns.
@@ -359,18 +372,6 @@ def build_dividend_income(
     # produces Null type, which breaks PyArrow schema inference.
     agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
 
-    # Fill null target_ccy with the target currency string.
-    # This handles groups where all events had null target_ccy (pre-normalize).
-    # Get the first non-null target_ccy from the full dataset as a fallback.
-    target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
-    default_target_ccy = target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
-    agg = agg.with_columns(
-        pl.when(pl.col("target_ccy").is_null())
-        .then(pl.lit(default_target_ccy))
-        .otherwise(pl.col("target_ccy"))
-        .alias("target_ccy")
-    )
-
     # Encrypt gold value columns before writing.
     agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
 
@@ -437,15 +438,6 @@ def build_interest_income(
     )
     agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
 
-    target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
-    default_target_ccy = target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
-    agg = agg.with_columns(
-        pl.when(pl.col("target_ccy").is_null())
-        .then(pl.lit(default_target_ccy))
-        .otherwise(pl.col("target_ccy"))
-        .alias("target_ccy")
-    )
-
     # Encrypt gold value columns before writing.
     agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)
 
@@ -509,15 +501,6 @@ def build_cash_flow_summary(
         .sort(["period_month", "broker", "event_type"])
     )
     agg = agg.with_columns(pl.col("target_value").cast(pl.Float64))
-
-    target_ccy_values = df.filter(pl.col("target_ccy").is_not_null())["target_ccy"]
-    default_target_ccy = target_ccy_values[0] if len(target_ccy_values) > 0 else "EUR"
-    agg = agg.with_columns(
-        pl.when(pl.col("target_ccy").is_null())
-        .then(pl.lit(default_target_ccy))
-        .otherwise(pl.col("target_ccy"))
-        .alias("target_ccy")
-    )
 
     # Encrypt gold value columns before writing.
     agg = _encrypt_gold_values(agg, ["cash_amount", "target_value"], fernet_key)

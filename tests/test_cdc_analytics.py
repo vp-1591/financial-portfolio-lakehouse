@@ -395,10 +395,16 @@ class TestBuildDividendIncome:
         assert abs(_decrypt_value(result["target_value"][0], fernet_key) - 52.5) < 0.01
         assert result["event_count"][0] == 2
 
-    def test_handles_null_target_value_with_fx_rate_fallback(
+    def test_raises_on_null_target_value_even_with_fx_rate(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """When target_value is null but target_fx_rate exists, use cash_amount * target_fx_rate."""
+        """Null target_value raises even when target_fx_rate exists.
+
+        The old behavior substituted cash_amount * target_fx_rate (90.0 here).
+        Per the no-fallback directive, a null target_value is now surfaced as
+        an error: the row was never converted, so deriving a value here would
+        be a silent guess.
+        """
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -422,23 +428,20 @@ class TestBuildDividendIncome:
                     "cash_amount": 100.0,
                     "ticker": "AAPL",
                     "target_ccy": "EUR",
-                    "target_value": None,  # Null: should fall back to 100 * 0.9 = 90
+                    "target_value": None,
                     "target_fx_rate": 0.9,
                 },
             ],
         )
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
-        result = build_dividend_income(fernet_key=fernet_key)
-        assert result.height == 1
-        assert abs(_decrypt_value(result["cash_amount"][0], fernet_key) - 100.0) < 0.01
-        # target_value should be 100 * 0.9 = 90.0
-        assert abs(_decrypt_value(result["target_value"][0], fernet_key) - 90.0) < 0.01
+        with pytest.raises(RuntimeError, match="null target_value"):
+            build_dividend_income(fernet_key=fernet_key)
 
-    def test_handles_completely_null_target_value(
+    def test_raises_on_completely_null_target_value(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """When both target_value and target_fx_rate are null, target_value stays null."""
+        """Null target_value and target_ccy raise instead of producing null gold rows."""
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -469,10 +472,101 @@ class TestBuildDividendIncome:
         )
         _write_cdc_to_delta(cdc, tmp_path, storage)
 
-        result = build_dividend_income(fernet_key=fernet_key)
-        assert result.height == 1
-        assert abs(_decrypt_value(result["cash_amount"][0], fernet_key) - 50.0) < 0.01
-        assert result["target_value"][0] is None
+        with pytest.raises(RuntimeError, match="null target_value"):
+            build_dividend_income(fernet_key=fernet_key)
+
+    def test_null_security_ccy_among_null_target_value_rows_raises(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """Null security_ccy among null target_value rows raises, not TypeError.
+
+        security_ccy is schema-nullable (Delta Lake marks all fields nullable
+        and it is not in REQUIRED_FIELDS for cdc_events), so a legacy row with
+        null target_value can also carry a null security_ccy.  The raise must
+        filter nulls before sorting the affected currencies instead of
+        crashing with ``TypeError: '<' not supported``.
+        """
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "DIVIDEND",
+                    "event_id": "div-1",
+                    "event_datetime": "2026-03-01",
+                    "broker": "XTB",
+                    "security_ccy": None,
+                    "cash_amount": 50.0,
+                    "ticker": "CD Projekt",
+                    "target_ccy": None,
+                    "target_value": None,
+                    "target_fx_rate": None,
+                },
+                {
+                    "event_type": "DIVIDEND",
+                    "event_id": "div-2",
+                    "event_datetime": "2026-03-02",
+                    "broker": "IBKR",
+                    "security_ccy": "USD",
+                    "cash_amount": 100.0,
+                    "ticker": "AAPL",
+                    "target_ccy": None,
+                    "target_value": None,
+                    "target_fx_rate": None,
+                },
+            ],
+        )
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        with pytest.raises(RuntimeError, match="null target_value"):
+            build_dividend_income(fernet_key=fernet_key)
+
+    def test_raises_on_missing_target_value_column(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """A cdc_events table without target_value raises instead of aliasing cash_amount."""
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "DIVIDEND",
+                    "event_id": "div-1",
+                    "event_datetime": "2026-03-01",
+                    "broker": "IBKR",
+                    "security_ccy": "EUR",
+                    "cash_amount": 42.5,
+                    "ticker": "VWCE",
+                    "target_ccy": "EUR",
+                    "target_value": 42.5,
+                },
+            ],
+        )
+        cdc = cdc.drop_columns(["target_value"])
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        with pytest.raises(RuntimeError, match="missing"):
+            build_dividend_income(fernet_key=fernet_key)
 
     def test_writes_delta_table(self, fernet_key: bytes, tmp_path: Path) -> None:
         """The result is written to the analytics Delta table and can be read back."""
@@ -1439,13 +1533,14 @@ class TestXtbEventDatetimeRegression:
     def test_xtb_cdc_rows_survive_analytics_end_to_end(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """End-to-end: transform_cdc -> Delta -> build_cash_flow_summary.
+        """End-to-end: transform_cdc -> normalize -> Delta -> build_cash_flow_summary.
 
         Builds a raw XTB snapshot, runs the real transform_cdc (which emits
-        ISO event_datetime strings), writes the CDC events to Delta, and runs
-        build_cash_flow_summary. Asserts the XTB events are aggregated into the
-        expected period_month / period_quarter buckets (no rows dropped by
-        _add_period_columns).
+        ISO event_datetime strings), writes the CDC events to Delta, runs
+        normalize_currency (the fixture account ccy is PLN, so a manual rate
+        is required), and runs build_cash_flow_summary. Asserts the XTB events
+        are aggregated into the expected period_month / period_quarter buckets
+        (no rows dropped by _add_period_columns).
         """
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
@@ -1464,6 +1559,12 @@ class TestXtbEventDatetimeRegression:
         # sell); all should survive into the analytics table.
         assert cdc.num_rows == 6
         _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        # transform_cdc leaves target_value/target_fx_rate null for PLN rows;
+        # analytics now raises on null target_value, so normalize first.
+        from pipeline.normalized.normalize import normalize_currency
+
+        normalize_currency(fernet_key=fernet_key, manual_rates={"PLN": 0.25})
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         # Events span 2026-07 (deposit, stock purchase) and 2026-08 (interest,

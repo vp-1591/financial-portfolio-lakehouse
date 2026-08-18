@@ -384,27 +384,6 @@ class TestCashFlowBreakdown:
         trace = next(t for t in fig.data if t.name == "INTEREST")
         assert list(trace.y) == [45.0]
 
-    def test_falls_back_to_cash_amount(self) -> None:
-        """Falls back to cash_amount when target_value is all null."""
-        df = pl.DataFrame(
-            {
-                "period_month": ["2026-01"],
-                "event_type": ["INTEREST"],
-                "cash_amount": [50.0],
-                "target_value": [None],
-            },
-            schema={
-                "period_month": pl.String,
-                "event_type": pl.String,
-                "cash_amount": pl.Float64,
-                "target_value": pl.Float64,
-            },
-        )
-        fig = cash_flow_breakdown(df)
-
-        trace = next(t for t in fig.data if t.name == "INTEREST")
-        assert list(trace.y) == [50.0]
-
     def test_no_toggle_when_no_outliers(self) -> None:
         """No updatemenus when all event types have similar peaks."""
         df = _cash_flow(

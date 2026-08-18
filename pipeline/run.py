@@ -637,6 +637,9 @@ def _normalize_cdc(args: argparse.Namespace) -> int:
     except FileNotFoundError as exc:
         logger.error("CDC events table not found for currency normalization: %s", exc)
         return 1
+    except RuntimeError as exc:
+        logger.error("Currency normalization failed: %s", exc)
+        return 1
     return 0
 
 

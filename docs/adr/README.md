@@ -121,6 +121,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0108 | XTB New-Format Connector Overhaul | 2026-08-17 | superseded | 0110 |
 | 0109 | Remove ISIN Override CLI Feature | 2026-08-17 | active | — |
 | 0110 | XTB Driven Solely by the File-Arrival Trigger | 2026-08-18 | active | — |
+| 0111 | Remove cash_amount Fallback for Null target_value | 2026-08-18 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
