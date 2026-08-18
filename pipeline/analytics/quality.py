@@ -197,14 +197,14 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
 # Tables that must contain at least one row.  CDC is mandatory: an empty
 # CDC table indicates misconfiguration or a fully-blank account, both of
 # which must fail the pipeline rather than silently produce no analytics.
-# XTB is not in the consolidate required gate (its CDC is consolidated
-# whenever present); xtb_cdc remains here until the hardcoded required
-# list is removed (issue #132).
+# XTB is fully optional until a file arrives (driven by the EventBridge
+# file-arrival trigger) and is not in any required gate: its CDC is
+# consolidated whenever present.
+# Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
 NON_EMPTY_REQUIRED: set[str] = {
     "cdc_events",
     "ibkr_cdc",
     "trading212_cdc",
-    "xtb_cdc",
 }
 
 

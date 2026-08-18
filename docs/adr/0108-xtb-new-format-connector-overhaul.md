@@ -1,5 +1,7 @@
 # 0108 — XTB New-Format Connector Overhaul
 
+> **Partially superseded by [ADR 0110](./0110-xtb-file-arrival-only-ingestion.md)** — XTB is no longer a scheduled connector (D19) or a required gate (D15/D21): it is driven solely by the EventBridge file-arrival trigger, and `xtb_cdc` is removed from `NON_EMPTY_REQUIRED`. The new-format parser, shared bronze (D17), `account_id` derivation (D18), and upload-path change (D20) carry forward unchanged, see 0110 §Decision and §Constraints.
+
 ## Context
 
 XTB changed its Excel export to a new 3-sheet format — **Open Positions**,

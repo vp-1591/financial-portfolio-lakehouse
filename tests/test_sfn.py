@@ -315,7 +315,18 @@ class TestFetchFailureDetails:
                 }
             ]
         }
-        sfn_client.describe_execution.return_value = {"startDate": start}
+        sfn_client.describe_execution.return_value = {
+            "startDate": start,
+            "input": json.dumps(
+                {
+                    "connectors": [
+                        {"name": "ibkr"},
+                        {"name": "trading212"},
+                        {"name": "xtb"},
+                    ]
+                }
+            ),
+        }
 
         logs_client = MagicMock()
         logs_client.filter_log_events.return_value = {
@@ -327,7 +338,8 @@ class TestFetchFailureDetails:
         # History surfaced.
         assert "=== Execution History ===" in out
         assert "exitCode=1" in out
-        # All four log groups queried with the scoped start time.
+        # Log groups derived from the execution input (incl. xtb for a
+        # file-arrival execution), all queried with the scoped start time.
         expected_start_ms = int(start.timestamp() * 1000)
         queried_groups = [
             c.kwargs["logGroupName"]
@@ -344,6 +356,26 @@ class TestFetchFailureDetails:
         # Log messages rendered.
         assert "line one" in out
         assert "line two" in out
+
+    def test_falls_back_to_default_connectors_on_bad_input(self) -> None:
+        sfn_client = MagicMock()
+        sfn_client.get_execution_history.return_value = {"events": []}
+        sfn_client.describe_execution.return_value = {
+            "startDate": datetime(2026, 7, 23, 10, 0, 0, tzinfo=UTC),
+            "input": "not-json",
+        }
+        logs_client = MagicMock()
+        logs_client.filter_log_events.return_value = {"events": []}
+        sfn.fetch_failure_details(sfn_client, logs_client, "arn:exec", "staging")
+        queried_groups = [
+            c.kwargs["logGroupName"]
+            for c in logs_client.filter_log_events.call_args_list
+        ]
+        assert queried_groups == [
+            "/ecs/portfolio-pipeline-demo-ibkr",
+            "/ecs/portfolio-pipeline-demo-trading212",
+            "/ecs/portfolio-pipeline-demo-consolidate-allocate",
+        ]
 
     def test_log_fetch_failure_is_best_effort(self) -> None:
         sfn_client = MagicMock()

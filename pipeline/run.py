@@ -448,12 +448,12 @@ def _trigger_sfn_execution(args: argparse.Namespace, mode: str) -> int:
     Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md.
     """
     # The --with-xtb and --xtb-file flags are local-docker-only; they do not
-    # apply to the SFN-triggered run. XTB itself IS part of the daily schedule
-    # (DEFAULT_CONNECTORS in sfn.py): the ``run-connector xtb`` step skips
-    # gracefully when no file has arrived yet, and the EventBridge S3
-    # file-arrival rule runs it automatically once a report is uploaded via
-    # ``upload-xtb``. Reject the flags here so callers don't expect a local
-    # file to reach the SFN execution.
+    # apply to the SFN-triggered run. XTB is NOT part of the scheduled run at
+    # all (DEFAULT_CONNECTORS in sfn.py excludes it): the EventBridge S3
+    # file-arrival rule runs XTB fetch + transform automatically once a report
+    # is uploaded via ``upload-xtb``, and ``run-consolidate-analytics`` picks
+    # up XTB silver on every run. Reject the flags here so callers don't
+    # expect a local file to reach the SFN execution.
     if getattr(args, "with_xtb", False) or getattr(args, "xtb_file", None):
         print(
             "--with-xtb/--xtb-file are not supported in staging/prod 'full'. "
@@ -872,9 +872,9 @@ def main() -> int:
         action="store_true",
         default=False,
         help=(
-            "Vestigial flag kept to reject accidental use: XTB is always part of "
-            "the daily schedule (skips when no file has arrived). In staging/prod "
-            "use 'upload-xtb' + the EventBridge file-arrival trigger instead."
+            "Vestigial flag kept to reject accidental use: XTB is not part of "
+            "the scheduled run at all. In staging/prod use 'upload-xtb' + the "
+            "EventBridge file-arrival trigger instead."
         ),
     )
     full_parser.add_argument(

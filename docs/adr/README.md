@@ -118,8 +118,9 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0105 | Fix T212 CDC Dedup and Cross-Endpoint Concat Type Mismatch | 2026-08-14 | active | — |
 | 0106 | Enforce Analytics Schema at the Write Boundary (Polars Int32/Int64 Drift) | 2026-08-15 | active | — |
 | 0107 | Move orchestrator connector/schedule config to committed connectors.auto.tfvars | 2026-08-16 | active | — |
-| 0108 | XTB New-Format Connector Overhaul | 2026-08-17 | active | — |
+| 0108 | XTB New-Format Connector Overhaul | 2026-08-17 | superseded | 0110 |
 | 0109 | Remove ISIN Override CLI Feature | 2026-08-17 | active | — |
+| 0110 | XTB Driven Solely by the File-Arrival Trigger | 2026-08-18 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
