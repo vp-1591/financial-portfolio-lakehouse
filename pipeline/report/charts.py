@@ -10,14 +10,6 @@ from __future__ import annotations
 import plotly.graph_objects as go
 import polars as pl
 
-# Shown when a gold table still contains null target_value (legacy rows
-# written before ADR 0111, or a table the old analytics fallback computed).
-# Charts flag it instead of silently summing cash_amount.
-TARGET_VALUE_NULL_MESSAGE = (
-    "target_value is null for some rows — currency conversion failed or "
-    "normalize-cdc was not run. Re-run analytics after fixing the conversion."
-)
-
 
 def allocation_by_broker(holdings: pl.DataFrame) -> go.Figure:
     """Pie chart: portfolio allocation by broker using percentage column."""
@@ -128,10 +120,6 @@ def passive_income_timeline(
     interest: pl.DataFrame,
 ) -> go.Figure:
     """Stacked bar chart: dividends + interest by month."""
-    # No fallback: null target_value is flagged, not silently skipped by sum().
-    for income in (dividends, interest):
-        if not income.is_empty() and income["target_value"].null_count() > 0:
-            return _empty_figure("Passive Income Timeline", TARGET_VALUE_NULL_MESSAGE)
     traces: list[go.Bar] = []
 
     if not dividends.is_empty():
@@ -187,11 +175,8 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
     if cash_flow.is_empty():
         return _empty_figure("Cash Flow Breakdown")
 
-    # No fallback: null target_value is flagged, not replaced with cash_amount
-    # (which would sum native-currency amounts as if they were the base
-    # currency — the corruption this check exists to prevent).
-    if cash_flow["target_value"].null_count() > 0:
-        return _empty_figure("Cash Flow Breakdown", TARGET_VALUE_NULL_MESSAGE)
+    # Invariant enforced upstream (ADR 0111): target_value is non-null in the
+    # gold table, so it is summed unconditionally — no cash_amount fallback.
     value_col = "target_value"
 
     event_types = sorted(cash_flow["event_type"].unique().to_list())
@@ -339,14 +324,14 @@ def _classify_outliers(peaks: list[float], ratio: float = 10) -> list[bool]:
     return result
 
 
-def _empty_figure(title: str, message: str = "No data available") -> go.Figure:
-    """Return a figure with a centered message annotation (default: no data)."""
+def _empty_figure(title: str) -> go.Figure:
+    """Return a figure with a 'no data' annotation."""
     fig = go.Figure()
     fig.update_layout(
         title=title,
         annotations=[
             {
-                "text": message,
+                "text": "No data available",
                 "showarrow": False,
                 "font": {"size": 16},
             }

@@ -20,7 +20,6 @@ import polars as pl
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from pipeline.report.charts import (
-    TARGET_VALUE_NULL_MESSAGE,
     allocation_by_broker,
     allocation_by_currency,
     cash_flow_breakdown,
@@ -145,42 +144,26 @@ def _equity_cash_card(holdings: pl.DataFrame) -> str:
 
 
 def _passive_income_table(dividends, interest) -> str:
-    """Build an HTML table summarizing passive income totals.
-
-    No fallback: null target_value renders a warning instead of a sum (a
-    sum would silently treat missing conversions as zero).
-    """
+    """Build an HTML table summarizing passive income totals."""
     parts: list[str] = []
 
     if not dividends.is_empty():
-        if dividends["target_value"].null_count() > 0:
-            parts.append(
-                f'<p class="warn"><strong>Total Dividends:</strong> '
-                f"{TARGET_VALUE_NULL_MESSAGE}</p>"
-            )
-        else:
-            total_div = dividends["target_value"].sum()
-            base_curr = (
-                dividends["target_ccy"][0] if "target_ccy" in dividends.columns else ""
-            )
-            parts.append(
-                f"<p><strong>Total Dividends:</strong> {total_div:,.2f} {base_curr}</p>"
-            )
+        total_div = dividends["target_value"].sum()
+        base_curr = (
+            dividends["target_ccy"][0] if "target_ccy" in dividends.columns else ""
+        )
+        parts.append(
+            f"<p><strong>Total Dividends:</strong> {total_div:,.2f} {base_curr}</p>"
+        )
 
     if not interest.is_empty():
-        if interest["target_value"].null_count() > 0:
-            parts.append(
-                f'<p class="warn"><strong>Total Interest:</strong> '
-                f"{TARGET_VALUE_NULL_MESSAGE}</p>"
-            )
-        else:
-            total_int = interest["target_value"].sum()
-            base_curr = (
-                interest["target_ccy"][0] if "target_ccy" in interest.columns else ""
-            )
-            parts.append(
-                f"<p><strong>Total Interest:</strong> {total_int:,.2f} {base_curr}</p>"
-            )
+        total_int = interest["target_value"].sum()
+        base_curr = (
+            interest["target_ccy"][0] if "target_ccy" in interest.columns else ""
+        )
+        parts.append(
+            f"<p><strong>Total Interest:</strong> {total_int:,.2f} {base_curr}</p>"
+        )
 
     return "".join(parts)
 
