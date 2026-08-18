@@ -397,9 +397,9 @@ def fetch_failure_details(
     # Derive the connector list from the failed execution's own input so XTB
     # container logs are still captured for failed *file-arrival* executions
     # (where XTB runs) even though XTB is no longer in DEFAULT_CONNECTORS.
-    # Fall back to DEFAULT_CONNECTORS if the input cannot be parsed, is not a
-    # JSON object (e.g. "[]"), or yields no connectors (e.g. "{}" or an
-    # execution started without input) so connector logs are never dropped.
+    # Fall back to DEFAULT_CONNECTORS if the input cannot be parsed or is not
+    # a JSON object (e.g. "[]"). An input that parses but yields no connectors
+    # (e.g. "{}") queries only the consolidate-allocate log group.
     # Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
     try:
         connector_names = [
@@ -407,8 +407,6 @@ def fetch_failure_details(
             for c in json.loads(exec_desc.get("input") or "{}").get("connectors", [])
         ]
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
-        connector_names = list(DEFAULT_CONNECTORS)
-    if not connector_names:
         connector_names = list(DEFAULT_CONNECTORS)
 
     for name in [*connector_names, CONSOLIDATE_FAMILY_NAME]:

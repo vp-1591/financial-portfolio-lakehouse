@@ -362,7 +362,6 @@ class TestFetchFailureDetails:
         [
             "not-json",  # unparseable
             "[]",  # valid JSON but not an object -> AttributeError
-            "{}",  # object without connectors -> empty list
         ],
     )
     def test_falls_back_to_default_connectors_on_bad_input(
@@ -384,6 +383,27 @@ class TestFetchFailureDetails:
         assert queried_groups == [
             "/ecs/portfolio-pipeline-demo-ibkr",
             "/ecs/portfolio-pipeline-demo-trading212",
+            "/ecs/portfolio-pipeline-demo-consolidate-allocate",
+        ]
+
+    def test_input_without_connectors_queries_only_consolidate(self) -> None:
+        # An input that parses but yields no connectors (e.g. "{}") does not
+        # fall back to DEFAULT_CONNECTORS; only the consolidate-allocate log
+        # group is queried.
+        sfn_client = MagicMock()
+        sfn_client.get_execution_history.return_value = {"events": []}
+        sfn_client.describe_execution.return_value = {
+            "startDate": datetime(2026, 7, 23, 10, 0, 0, tzinfo=UTC),
+            "input": "{}",
+        }
+        logs_client = MagicMock()
+        logs_client.filter_log_events.return_value = {"events": []}
+        sfn.fetch_failure_details(sfn_client, logs_client, "arn:exec", "staging")
+        queried_groups = [
+            c.kwargs["logGroupName"]
+            for c in logs_client.filter_log_events.call_args_list
+        ]
+        assert queried_groups == [
             "/ecs/portfolio-pipeline-demo-consolidate-allocate",
         ]
 
