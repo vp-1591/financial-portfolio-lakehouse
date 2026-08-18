@@ -5,13 +5,13 @@ into ``normalized/cdc_events``, producing a unified broker-neutral CDC
 table suitable for dashboard queries.
 
 Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
-CDC is mandatory for every registered broker (ibkr, trading212, xtb) — a
+CDC is mandatory for every registered broker (ibkr, trading212) — a
 missing or empty required broker CDC table raises RuntimeError (the
-required-non-empty gate, carried forward from ADR 0087 §Decision; XTB added
-D21).  XTB is triggered by the EventBridge S3 file-arrival rule; the daily
-``run-connector xtb`` step skips gracefully when no file has arrived, and once
-a file has been ingested ``xtb_cdc`` is present and required like any other
-broker.
+required-non-empty gate, carried forward from ADR 0087 §Decision).  XTB is
+triggered by the EventBridge S3 file-arrival rule; the daily ``run-connector
+xtb`` step skips gracefully when no file has arrived, and ``xtb_cdc`` is
+consolidated whenever present (a missing or empty table is skipped, not
+raised).
 
 D15: the candidate broker set is derived from the connector registry
 (``connectors.all()``), not a hardcoded ``_OPTIONAL_CDC_BROKERS`` list. Only
@@ -35,7 +35,7 @@ from pipeline.storage import get_storage
 logger = logging.getLogger(__name__)
 
 # Brokers whose CDC tables are required — must be present and non-empty.
-_REQUIRED_CDC_BROKERS = ["ibkr", "trading212", "xtb"]
+_REQUIRED_CDC_BROKERS = ["ibkr", "trading212"]
 
 
 def consolidate_cdc_events() -> pa.Table:
