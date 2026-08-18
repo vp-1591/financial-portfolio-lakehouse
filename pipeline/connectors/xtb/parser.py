@@ -96,6 +96,7 @@ class XtbReport:
     free_cash: (
         float | None
     )  # Cash Operations Total -> snapshot CASH holding (D22); None if absent
+    dropped_cash_rows: int = 0  # rows skipped for an empty Time cell (transform warns)
 
 
 # ---------------------------------------------------------------------------
@@ -333,22 +334,25 @@ _CO_HEADER_COL1 = ("instrument",)
 def _parse_cash_operations(
     rows: list[list[Any]],
     account_id: str,
-) -> tuple[list[XtbCashOperation], float | None]:
-    """Parse Cash Operations -> (operations, free_cash).
+) -> tuple[list[XtbCashOperation], float | None, int]:
+    """Parse Cash Operations -> (operations, free_cash, dropped_count).
 
     Extracts only ``Type, Ticker, Time, Amount, ID, Comment, Position ID``
     (Instrument/Category/Product dropped). The ``Total`` row's Amount is read
     into ``free_cash`` (2dp) BEFORE excluding it (D22). Total rows are
     excluded from ``cash_operations`` (D10). ``Subaccount transfer`` rows are
     filtered out entirely here (D7 — single place). ``position_id`` is string-
-    coerced (guard 1). Amounts rounded to 2dp (D11).
+    coerced (guard 1). Amounts rounded to 2dp (D11). Rows whose Time cell is
+    empty are skipped and counted in ``dropped_count`` so the transform can
+    warn (no silent data loss).
     """
     header_index = _find_cash_header(rows)
     if header_index is None:
-        return [], None
+        return [], None, 0
 
     operations: list[XtbCashOperation] = []
     free_cash: float | None = None
+    dropped = 0
     for row in rows[header_index + 1 :]:
         if not row or row[0] is None:
             continue
@@ -365,6 +369,7 @@ def _parse_cash_operations(
             continue
         time = _to_utc_datetime(row[4] if len(row) > 4 else None)
         if time is None:
+            dropped += 1
             continue
         amount = round(as_float(row[5]) if len(row) > 5 else 0.0, 2)
         operations.append(
@@ -379,7 +384,7 @@ def _parse_cash_operations(
                 position_id=_str_cell(row[9]) if len(row) > 9 else "",
             )
         )
-    return operations, free_cash
+    return operations, free_cash, dropped
 
 
 def _find_cash_header(rows: list[list[Any]]) -> int | None:
@@ -492,9 +497,11 @@ def parse_report(data: bytes, account_id_override: str | None = None) -> XtbRepo
         open_positions, account_ccy = [], ""
 
     if cash_rows is not None:
-        cash_operations, free_cash = _parse_cash_operations(cash_rows, account_id)
+        cash_operations, free_cash, dropped_cash_rows = _parse_cash_operations(
+            cash_rows, account_id
+        )
     else:
-        cash_operations, free_cash = [], None
+        cash_operations, free_cash, dropped_cash_rows = [], None, 0
 
     if closed_rows is not None:
         closed_positions = _parse_closed_positions(closed_rows)
@@ -508,4 +515,5 @@ def parse_report(data: bytes, account_id_override: str | None = None) -> XtbRepo
         closed_positions=closed_positions,
         cash_operations=cash_operations,
         free_cash=free_cash,
+        dropped_cash_rows=dropped_cash_rows,
     )

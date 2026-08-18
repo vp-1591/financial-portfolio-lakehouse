@@ -479,6 +479,33 @@ class TestXtbParser:
         assert all(p.account_id == "OVR-1" for p in report.open_positions)
         assert all(op.account_id == "OVR-1" for op in report.cash_operations)
 
+    # --- empty-Time cash rows: dropped and counted (no silent loss) ---
+
+    def test_empty_time_cash_row_dropped_and_counted(self) -> None:
+        """An empty Time cell skips the row but is counted for the transform warning."""
+        sheets = {
+            "Open Positions": _op_sheet(DEFAULT_ACCOUNT_ID, DEFAULT_ACCOUNT_CCY),
+            "Cash Operations": _cash_sheet(
+                DEFAULT_ACCOUNT_ID,
+                [
+                    (
+                        "Deposit",
+                        "",
+                        _naive(2026, 7, 10, 0, 0),
+                        1000.0,
+                        "900011122",
+                        "deposit",
+                        "",
+                    ),
+                    ("Withdrawal", "", None, -200.0, "900011123", "withdrawal", ""),
+                ],
+            ),
+            "Closed Positions": _closed_sheet(DEFAULT_ACCOUNT_ID, []),
+        }
+        report = parse_report(build_xlsx_bytes_from_sheets(sheets))
+        assert report.dropped_cash_rows == 1
+        assert [op.operation_type for op in report.cash_operations] == ["Deposit"]
+
     # --- dataclass field scope (YAGNI) ---
 
     def test_dataclass_field_scope(self) -> None:
@@ -1650,3 +1677,41 @@ class TestLatestPerAccountGuarded:
         # Fallback parse discovered account_id 111 -> 3 rows.
         assert result.num_rows == 3
         assert set(result.column("account_id").to_pylist()) == {"111"}
+
+    def test_dropped_cash_rows_warned(self, fernet_key: bytes, caplog) -> None:
+        """Empty-Time cash rows are dropped with a warning, not silently (finding 3)."""
+        t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        sheets = {
+            "Open Positions": _op_sheet(DEFAULT_ACCOUNT_ID, DEFAULT_ACCOUNT_CCY),
+            "Cash Operations": _cash_sheet(
+                DEFAULT_ACCOUNT_ID,
+                [
+                    (
+                        "Deposit",
+                        "",
+                        _naive(2026, 7, 10, 0, 0),
+                        1000.0,
+                        "900011122",
+                        "deposit",
+                        "",
+                    ),
+                    ("Withdrawal", "", None, -200.0, "900011123", "withdrawal", ""),
+                ],
+            ),
+            "Closed Positions": _closed_sheet(DEFAULT_ACCOUNT_ID, []),
+        }
+        raw = _build_raw_from_bytes(
+            build_xlsx_bytes_from_sheets(sheets),
+            fernet_key,
+            fetched_at=t,
+            source_file="PLN_12345678_2006-01-01_2026-08-03.xlsx",
+        )
+
+        caplog.set_level("WARNING", logger="pipeline.connectors.xtb.transform")
+        cdc = transform_cdc(raw, fernet_key)
+
+        # The Withdrawal is absent from CDC, but the drop is signaled.
+        assert [r["raw_event_type"] for r in cdc.to_pylist()] == ["Deposit"]
+        assert any(
+            "dropped" in r.message and "empty Time" in r.message for r in caplog.records
+        )
