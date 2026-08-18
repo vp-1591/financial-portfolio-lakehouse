@@ -157,8 +157,12 @@ resource "aws_sfn_state_machine" "orchestrator" {
 # Terraform — no ASL or CLI edit needed.
 #
 # The input_template uses <xtb_file> as a placeholder that EventBridge replaces
-# with the actual S3 object key from the event. jsonencode() produces valid JSON
-# with <xtb_file> as a literal string value, which EventBridge then substitutes.
+# with the actual S3 object key from the event. The placeholder must NOT be
+# passed through jsonencode(): Go's encoding/json HTML-escapes '<', '>', '&'
+# (to <, >, &), which would corrupt the token into <xtb_file>
+# and EventBridge would never substitute it. The template below therefore uses
+# the sentinel __XTB_FILE__ inside jsonencode() (underscores are not escaped)
+# and replace() swaps it for the literal <xtb_file> token at render time.
 
 resource "aws_cloudwatch_event_rule" "xtb_file_arrival" {
   name        = "portfolio-pipeline-xtb-file-arrival-${var.env}"
@@ -194,8 +198,11 @@ resource "aws_cloudwatch_event_target" "xtb_file_arrival" {
       xtb_file = "$.detail.object.key"
     }
     # The input_template uses constant values for connector list and ARN map,
-    # with $.detail.object.key interpolated for the XTB file URI.
-    input_template = <<-TEMPLATE
+    # with $.detail.object.key interpolated for the XTB file URI. The XTB
+    # command embeds the __XTB_FILE__ sentinel (not <xtb_file>) because
+    # jsonencode() HTML-escapes '<' / '>' / '&'; replace() below restores the
+    # literal <xtb_file> token EventBridge's input transformer substitutes.
+    input_template = replace(<<-TEMPLATE
     {
       "connectors": ${jsonencode([
         for name in var.file_arrival_connectors : {
@@ -203,7 +210,7 @@ resource "aws_cloudwatch_event_target" "xtb_file_arrival" {
           task_def_arn = lookup(var.task_def_arns, name, "")
           command = name == "xtb" ? [
             "run-connector", name, "--mode", local.mode_flag, "--xtb-file",
-            "s3://${var.xtb_staging_bucket_name}/<xtb_file>"
+            "s3://${var.xtb_staging_bucket_name}/__XTB_FILE__"
           ] : [
             "run-connector", name, "--mode", local.mode_flag, "--target-currency", "EUR"
           ]
@@ -213,6 +220,7 @@ resource "aws_cloudwatch_event_target" "xtb_file_arrival" {
       "consolidate_command": ["run-consolidate-analytics", "--mode", "${local.mode_flag}", "--target-currency", "EUR"]
     }
     TEMPLATE
+    , "__XTB_FILE__", "<xtb_file>")
   }
 }
 
