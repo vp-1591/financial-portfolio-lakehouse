@@ -284,8 +284,8 @@ class TestConsolidateCdc:
             ):
                 consolidate_cdc_events()
 
-    def test_consolidate_raises_when_xtb_missing(self, fernet_key: bytes) -> None:
-        """XTB CDC table is required: consolidation raises if it's missing."""
+    def test_consolidate_skips_when_xtb_missing(self, fernet_key: bytes) -> None:
+        """XTB is not in the required gate: a missing xtb_cdc is skipped."""
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -339,13 +339,15 @@ class TestConsolidateCdc:
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
-            with pytest.raises(
-                RuntimeError, match="Required CDC table xtb_cdc not found"
-            ):
-                consolidate_cdc_events()
+            result = consolidate_cdc_events()
+            # XTB is skipped; the required brokers still consolidate.
+            assert result.num_rows == 2
+            brokers = result.column("broker").to_pylist()
+            assert "IBKR" in brokers
+            assert "Trading 212" in brokers
 
-    def test_consolidate_raises_when_xtb_empty(self, fernet_key: bytes) -> None:
-        """XTB CDC table is required: consolidation raises if it's empty."""
+    def test_consolidate_skips_when_xtb_empty(self, fernet_key: bytes) -> None:
+        """XTB is not in the required gate: an empty xtb_cdc is skipped."""
 
         t212_table = self._make_cdc_table(
             "Trading 212",
@@ -400,10 +402,12 @@ class TestConsolidateCdc:
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
-            with pytest.raises(
-                RuntimeError, match="Required CDC table xtb_cdc is empty"
-            ):
-                consolidate_cdc_events()
+            result = consolidate_cdc_events()
+            # XTB is skipped; the required brokers still consolidate.
+            assert result.num_rows == 2
+            brokers = result.column("broker").to_pylist()
+            assert "IBKR" in brokers
+            assert "Trading 212" in brokers
 
     def test_consolidate_overwrites_cdc_events_re_read(
         self, fernet_key: bytes, tmp_path: Path
@@ -509,16 +513,16 @@ class TestConsolidateCdc:
         assert "Trading 212" in brokers
         assert "XTB" in brokers
 
-    def test_consolidate_includes_xtb_required_broker(
+    def test_consolidate_includes_xtb_cdc(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """A non-empty required XTB CDC table is included in the consolidation.
+        """A non-empty XTB CDC table is included in the consolidation.
 
         Writes a non-empty ``xtb_cdc`` Delta table alongside the other required
         broker tables, runs the writer, and asserts the XTB rows appear in the
         result.  Catches the ``if table.num_rows > 0 -> == 0`` inverted-condition
-        mutation (A2 D4).  XTB is a required broker (D21): a missing/empty
-        ``xtb_cdc`` raises, but a non-empty one is included like any other broker.
+        mutation (A2 D4).  XTB is not in the required gate, but a non-empty
+        ``xtb_cdc`` is still consolidated like any other broker.
 
         Note: this exercises the CDC *consolidation* path with an inline XTB CDC
         table (broker-neutral schema), NOT the XTB *connector* fixture (xlsx
@@ -579,7 +583,7 @@ class TestConsolidateCdc:
 
         result = consolidate_cdc_events()
         brokers = result.column("broker").to_pylist()
-        # The non-empty required XTB table must be included (3 rows total).
+        # The non-empty XTB table must be included (3 rows total).
         # Under the D4 mutation (num_rows > 0 -> == 0), the non-empty XTB
         # table is skipped -> 2 rows, no XTB.
         assert result.num_rows == 3

@@ -72,8 +72,8 @@ STATE_MACHINE_NAMES: dict[str, str] = {
 
 # Connectors run by ``full --mode staging|prod``.  XTB is included: the daily
 # ``run-connector xtb`` step skips gracefully when no file has arrived yet
-# (file-arrival is handled by the EventBridge S3 rule), and once ingested
-# ``xtb_cdc`` is required like any other broker.
+# (file-arrival is handled by the EventBridge S3 rule), and ``xtb_cdc`` is
+# consolidated whenever present (it is not in the required gate).
 DEFAULT_CONNECTORS: list[str] = ["ibkr", "trading212", "xtb"]
 
 DEFAULT_TIMEOUT_SECONDS = 900
