@@ -14,7 +14,7 @@
 #
 # Apply order:
 #   1. shared/ apply — creates ECR + IAM policy + cluster + SFN role
-#   2. demo/ and prod/ apply — each creates its own state machine, EventBridge
+#   2. staging/ and prod/ apply — each creates its own state machine, EventBridge
 #      rules, and environment-specific resources
 #
 # Usage:

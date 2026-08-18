@@ -61,7 +61,7 @@ MODE_TO_ENV_LABEL: dict[str, str] = {"staging": "demo", "prod": "prod"}
 # ``--mode`` value → Step Functions state machine name.  The ARN is resolved
 # at runtime via ``list_state_machines`` so no env var or hardcoded ARN is
 # needed — the names come from Terraform
-# (``terraform/demo/main.tf``: ``state_machine_name =
+# (``terraform/staging/main.tf``: ``state_machine_name =
 # "portfolio-pipeline-orchestrator-demo"``,
 # ``terraform/prod/main.tf``: ``state_machine_name =
 # "portfolio-pipeline-orchestrator"``).
