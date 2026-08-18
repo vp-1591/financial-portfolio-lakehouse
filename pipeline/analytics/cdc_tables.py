@@ -46,7 +46,6 @@ def _resolve_fernet_key(fernet_key: bytes | None) -> bytes:
 # Binary (Fernet-encrypted) columns in cdc_events that need decryption.
 _ENCRYPTED_COLUMNS: list[tuple[str, str]] = [
     ("cash_amount", "cash_amount_decrypted"),
-    ("target_fx_rate", "target_fx_rate_decrypted"),
     ("target_value", "target_value_resolved"),
     ("gross_amount", "gross_amount_decrypted"),
     ("fee_amount", "fee_amount_decrypted"),
@@ -218,14 +217,21 @@ def _read_cdc_events(
     ]
     if missing:
         raise RuntimeError(
-            "cdc_events table is missing "
-            f"{', '.join(missing)} columns; run normalize-cdc before analytics."
+            "cdc_events table is missing target_value/target_ccy columns; "
+            "run normalize-cdc before analytics."
         )
     null_target = df.filter(
         pl.col("target_value_resolved").is_null() | pl.col("target_ccy").is_null()
     )
     if null_target.height > 0:
-        affected_ccys = sorted(null_target["security_ccy"].unique().to_list())
+        # security_ccy is schema-nullable (Delta Lake marks all fields nullable
+        # and it is not in REQUIRED_FIELDS for cdc_events), and the null
+        # target_value rows being reported are exactly the rows that can carry
+        # a null security_ccy — filter them before sorting so the error message
+        # itself does not crash with a TypeError.
+        affected_ccys = sorted(
+            {c for c in null_target["security_ccy"].unique().to_list() if c is not None}
+        )
         raise RuntimeError(
             f"{null_target.height} cdc_events row(s) have null target_value or "
             f"target_ccy (security_ccy: {affected_ccys}). Run normalize-cdc and "

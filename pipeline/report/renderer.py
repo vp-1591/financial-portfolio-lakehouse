@@ -20,6 +20,7 @@ import polars as pl
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from pipeline.report.charts import (
+    TARGET_VALUE_NULL_MESSAGE,
     allocation_by_broker,
     allocation_by_currency,
     cash_flow_breakdown,
@@ -154,10 +155,8 @@ def _passive_income_table(dividends, interest) -> str:
     if not dividends.is_empty():
         if dividends["target_value"].null_count() > 0:
             parts.append(
-                '<p class="warn"><strong>Total Dividends:</strong> '
-                "target_value is null for some rows — currency conversion "
-                "failed or normalize-cdc was not run. Re-run analytics after "
-                "fixing the conversion.</p>"
+                f'<p class="warn"><strong>Total Dividends:</strong> '
+                f"{TARGET_VALUE_NULL_MESSAGE}</p>"
             )
         else:
             total_div = dividends["target_value"].sum()
@@ -171,10 +170,8 @@ def _passive_income_table(dividends, interest) -> str:
     if not interest.is_empty():
         if interest["target_value"].null_count() > 0:
             parts.append(
-                '<p class="warn"><strong>Total Interest:</strong> '
-                "target_value is null for some rows — currency conversion "
-                "failed or normalize-cdc was not run. Re-run analytics after "
-                "fixing the conversion.</p>"
+                f'<p class="warn"><strong>Total Interest:</strong> '
+                f"{TARGET_VALUE_NULL_MESSAGE}</p>"
             )
         else:
             total_int = interest["target_value"].sum()

@@ -31,7 +31,7 @@ Alternatives rejected:
 - The gold tables keep nullable `target_value` (schema unchanged); the raise enforces non-null at runtime, so no schema migration.
 - Charts flag — they do not raise — so a gold table computed by the old analytics code still renders a report with an explicit warning.
 - Empty CDC tables stay valid: 0 rows -> no nulls -> no raise.
-- The null-`cash_amount` -> null-`target_value` path in `normalize_currency()` is unchanged.
+- The null-`cash_amount` skip in `normalize_currency()` is deleted: it was defensive code (no connector emits null `cash_amount` — IBKR/XTB coerce to 0.0, T212 trades are a product) and it silently wrote exactly the null `target_value` rows this ADR forbids. A row with missing/empty `security_ccy` now raises instead of silently converting at rate 1.0.
 
 ## Consequences
 
@@ -42,7 +42,7 @@ Alternatives rejected:
 
 ## Validation
 
-- `tests/test_cdc_analytics.py`: `test_raises_on_null_target_value_even_with_fx_rate`, `test_raises_on_completely_null_target_value`, and `test_raises_on_missing_target_value_column` assert `RuntimeError`; `test_xtb_cdc_rows_survive_analytics_end_to_end` runs `normalize_currency(manual_rates={"PLN": 0.25})` before `build_cash_flow_summary`.
-- `tests/test_normalize_currency.py`: `test_converter_failure_raises_runtime_error` monkeypatches `CurrencyConverter.fetch_rate` to raise `PortfolioConnectorError` and asserts `normalize_currency` raises `RuntimeError` matching "Could not convert".
+- `tests/test_cdc_analytics.py`: `test_raises_on_null_target_value_even_with_fx_rate`, `test_raises_on_completely_null_target_value`, and `test_raises_on_missing_target_value_column` assert `RuntimeError`; `test_null_security_ccy_among_null_target_value_rows_raises` asserts `RuntimeError` (not `TypeError`) when a null `security_ccy` sits among null `target_value` rows; `test_xtb_cdc_rows_survive_analytics_end_to_end` runs `normalize_currency(manual_rates={"PLN": 0.25})` before `build_cash_flow_summary`.
+- `tests/test_normalize_currency.py`: `test_converter_failure_raises_runtime_error` monkeypatches `CurrencyConverter.fetch_rate` to raise `PortfolioConnectorError` and asserts `normalize_currency` raises `RuntimeError` matching "Could not convert"; `test_missing_security_ccy_raises_runtime_error` asserts `RuntimeError` matching "missing security_ccy" for a null `security_ccy` row (the old `test_null_cash_amount_handled_gracefully` was deleted with the skip).
 - `tests/test_charts.py`: `test_flags_on_null_target_value` for both `cash_flow_breakdown` and `passive_income_timeline` asserts a flag figure (title, empty traces, message annotation) instead of a cash_amount sum.
-- Full suite: 799 tests pass; `ruff check --fix`, `ruff format`, and `pyright pipeline/ tests/` clean.
+- Full suite: 800 tests pass; `ruff check --fix`, `ruff format`, and `pyright pipeline/ tests/` clean.

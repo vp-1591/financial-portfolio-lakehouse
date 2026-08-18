@@ -293,62 +293,36 @@ class TestNormalizeCurrency:
                 converter=converter,
             )
 
-    def test_null_cash_amount_handled_gracefully(self, tmp_path) -> None:
-        """Rows with null cash_amount get null target_value and target_fx_rate."""
+    def test_missing_security_ccy_raises_runtime_error(self, tmp_path) -> None:
+        """A row with missing/empty security_ccy raises instead of converting at rate 1.0.
+
+        An empty source currency would fall through consolidate.py's
+        ``if not source_currency: return value`` and silently relabel the
+        native-currency amount as the target currency at rate 1.0 — the exact
+        corruption the null-target checks are meant to catch.
+        """
         fernet_key = generate_key()
-
-        now = datetime.now(UTC)
-        records = [
-            {
-                "fetched_at": now,
-                "broker": "IBKR",
-                "account_id": "U123",
-                "event_id": "evt-null",
-                "source": "CashTransaction",
-                "event_type": "DIVIDEND",
-                "raw_event_type": "Dividends",
-                "event_datetime": "2024-01-15",
-                "security_ccy": "USD",
-                "cash_amount": None,  # null cash_amount
-                "settle_date": None,
-                "ticker": None,
-                "isin": None,
-                "description": None,
-                "quantity": None,
-                "price": None,
-                "side": None,
-                "gross_amount": None,
-                "fee_amount": None,
-                "tax_amount": None,
-                "target_fx_rate": None,
-                "target_value": None,
-                "target_ccy": None,
-            }
-        ]
-
-        # Build a table with null cash_amount manually
-        table = build_normalized_table(
-            records,
-            cdc_events_normalized_schema,
+        table = _make_cdc_table(
+            [
+                {
+                    "security_ccy": None,
+                    "cash_amount": 500.0,
+                }
+            ],
             fernet_key,
-            encrypt_columns=["cash_amount"],
         )
 
         table_path = str(tmp_path / "cdc_events")
         write_deltalake(table_path, table, mode="overwrite")
 
-        converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
+        converter = CurrencyConverter("EUR")
 
-        result = normalize_currency(
-            table_path=table_path,
-            fernet_key=fernet_key,
-            converter=converter,
-        )
-
-        assert result.num_rows == 1
-        # null cash_amount → null target_value and target_fx_rate
-        assert result.column("target_fx_rate")[0].as_py() is None
-        assert result.column("target_value")[0].as_py() is None
+        with pytest.raises(RuntimeError, match="missing security_ccy"):
+            normalize_currency(
+                table_path=table_path,
+                fernet_key=fernet_key,
+                converter=converter,
+            )
 
     def test_gbx_converted_via_gbp_divided_by_100(self, tmp_path) -> None:
         """GBX (British pence) should convert via GBP rate / 100.

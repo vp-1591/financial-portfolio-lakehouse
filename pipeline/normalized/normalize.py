@@ -131,11 +131,15 @@ def normalize_currency(
         cash_amount = row.get("cash_amount_decrypted")
         broker_rate = row.get("target_fx_rate_decrypted")
 
-        # Skip rows with null cash_amount (shouldn't happen but be safe)
-        if cash_amount is None:
-            target_fx_rates.append(None)
-            target_values.append(None)
-            continue
+        # A missing source currency would be silently converted at rate 1.0
+        # (consolidate.py returns the value unchanged for an empty currency),
+        # relabeling a native-currency amount as the target currency.
+        if not security_ccy:
+            raise RuntimeError(
+                "cdc_events row has missing security_ccy; cannot determine the "
+                "source currency for conversion. Fix the source data and re-run "
+                "normalize-cdc."
+            )
 
         # Same currency: no conversion needed
         if security_ccy == target_ccy:
@@ -154,13 +158,7 @@ def normalize_currency(
             rate = converter.convert(1.0, security_ccy)
             target_fx_rates.append(rate)
             target_values.append(cash_amount * rate)
-        except Exception as exc:
-            logger.warning(
-                "Could not convert %s to %s: %s; leaving target_value null",
-                security_ccy,
-                target_ccy,
-                exc,
-            )
+        except Exception:
             failed_currencies.add(security_ccy)
             target_fx_rates.append(None)
             target_values.append(None)

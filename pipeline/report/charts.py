@@ -10,6 +10,14 @@ from __future__ import annotations
 import plotly.graph_objects as go
 import polars as pl
 
+# Shown when a gold table still contains null target_value (legacy rows
+# written before ADR 0111, or a table the old analytics fallback computed).
+# Charts flag it instead of silently summing cash_amount.
+TARGET_VALUE_NULL_MESSAGE = (
+    "target_value is null for some rows — currency conversion failed or "
+    "normalize-cdc was not run. Re-run analytics after fixing the conversion."
+)
+
 
 def allocation_by_broker(holdings: pl.DataFrame) -> go.Figure:
     """Pie chart: portfolio allocation by broker using percentage column."""
@@ -123,12 +131,7 @@ def passive_income_timeline(
     # No fallback: null target_value is flagged, not silently skipped by sum().
     for income in (dividends, interest):
         if not income.is_empty() and income["target_value"].null_count() > 0:
-            return _empty_figure(
-                "Passive Income Timeline",
-                "target_value is null for some rows — currency conversion "
-                "failed or normalize-cdc was not run. Re-run analytics after "
-                "fixing the conversion.",
-            )
+            return _empty_figure("Passive Income Timeline", TARGET_VALUE_NULL_MESSAGE)
     traces: list[go.Bar] = []
 
     if not dividends.is_empty():
@@ -188,12 +191,7 @@ def cash_flow_breakdown(cash_flow: pl.DataFrame) -> go.Figure:
     # (which would sum native-currency amounts as if they were the base
     # currency — the corruption this check exists to prevent).
     if cash_flow["target_value"].null_count() > 0:
-        return _empty_figure(
-            "Cash Flow Breakdown",
-            "target_value is null for some rows — currency conversion failed "
-            "or normalize-cdc was not run. Re-run analytics after fixing the "
-            "conversion.",
-        )
+        return _empty_figure("Cash Flow Breakdown", TARGET_VALUE_NULL_MESSAGE)
     value_col = "target_value"
 
     event_types = sorted(cash_flow["event_type"].unique().to_list())

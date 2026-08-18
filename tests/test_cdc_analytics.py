@@ -475,6 +475,62 @@ class TestBuildDividendIncome:
         with pytest.raises(RuntimeError, match="null target_value"):
             build_dividend_income(fernet_key=fernet_key)
 
+    def test_null_security_ccy_among_null_target_value_rows_raises(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """Null security_ccy among null target_value rows raises, not TypeError.
+
+        security_ccy is schema-nullable (Delta Lake marks all fields nullable
+        and it is not in REQUIRED_FIELDS for cdc_events), so a legacy row with
+        null target_value can also carry a null security_ccy.  The raise must
+        filter nulls before sorting the affected currencies instead of
+        crashing with ``TypeError: '<' not supported``.
+        """
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        cdc = _make_cdc_table(
+            fernet_key,
+            [
+                {
+                    "event_type": "DIVIDEND",
+                    "event_id": "div-1",
+                    "event_datetime": "2026-03-01",
+                    "broker": "XTB",
+                    "security_ccy": None,
+                    "cash_amount": 50.0,
+                    "ticker": "CD Projekt",
+                    "target_ccy": None,
+                    "target_value": None,
+                    "target_fx_rate": None,
+                },
+                {
+                    "event_type": "DIVIDEND",
+                    "event_id": "div-2",
+                    "event_datetime": "2026-03-02",
+                    "broker": "IBKR",
+                    "security_ccy": "USD",
+                    "cash_amount": 100.0,
+                    "ticker": "AAPL",
+                    "target_ccy": None,
+                    "target_value": None,
+                    "target_fx_rate": None,
+                },
+            ],
+        )
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        with pytest.raises(RuntimeError, match="null target_value"):
+            build_dividend_income(fernet_key=fernet_key)
+
     def test_raises_on_missing_target_value_column(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
