@@ -75,14 +75,16 @@ class _FakeS3FileSystem:
 
     def __init__(self) -> None:
         self.store: dict[str, bytes] = {}
-        self.upload_calls: list[tuple[str, str]] = []
+        self.copy_calls: list[tuple[str, str]] = []
+        self.copy_kwargs: list[dict[str, object]] = []
         self.delete_calls: list[str] = []
         self.raise_on_delete: bool = False
 
-    def upload_file(self, local_path: str, remote_path: str) -> None:
-        self.upload_calls.append((local_path, remote_path))
-        with open(local_path, "rb") as fh:
-            self.store[remote_path] = fh.read()
+    def copy_files(self, source: str, destination: str, **kwargs: object) -> None:
+        self.copy_calls.append((source, destination))
+        self.copy_kwargs.append(kwargs)
+        with open(source, "rb") as fh:
+            self.store[destination] = fh.read()
 
     def open_input_stream(self, remote_path: str) -> _FakeStream:
         if remote_path not in self.store:
@@ -100,9 +102,10 @@ class _FakeS3FileSystem:
 
 @pytest.fixture()
 def _fake_s3fs(monkeypatch: pytest.MonkeyPatch):
-    """Patch ``_make_s3fs`` to return an in-memory fake filesystem."""
+    """Patch ``_make_s3fs`` and ``pafs.copy_files`` to use an in-memory fake."""
     fake = _FakeS3FileSystem()
     monkeypatch.setattr(s3_module, "_make_s3fs", lambda: fake)
+    monkeypatch.setattr(s3_module.pafs, "copy_files", fake.copy_files)
     return fake
 
 
@@ -121,22 +124,24 @@ class TestUploadToStaging:
         assert _fake_s3fs.store == {
             "my-bucket/pipeline/staging/xtb/report.xlsx": b"payload-bytes"
         }
-        assert _fake_s3fs.upload_calls == [
+        assert _fake_s3fs.copy_calls == [
             (str(local), "my-bucket/pipeline/staging/xtb/report.xlsx")
         ]
+        # The S3 filesystem is passed as the copy destination.
+        assert _fake_s3fs.copy_kwargs == [{"destination_filesystem": _fake_s3fs}]
 
     def test_missing_local_file_raises_file_not_found(self, _fake_s3fs) -> None:
         with pytest.raises(FileNotFoundError, match="File not found"):
             upload_to_staging("/does/not/exist.xlsx", "s3://bucket/key.xlsx")
         # No upload attempted when the local file is missing.
-        assert _fake_s3fs.upload_calls == []
+        assert _fake_s3fs.copy_calls == []
 
     def test_non_s3_uri_raises_value_error(self, tmp_path, _fake_s3fs) -> None:
         local = tmp_path / "report.xlsx"
         local.write_bytes(b"x")
         with pytest.raises(ValueError, match="Not an S3 URI"):
             upload_to_staging(str(local), "/local/path/key.xlsx")
-        assert _fake_s3fs.upload_calls == []
+        assert _fake_s3fs.copy_calls == []
 
 
 class TestReadS3Bytes:
