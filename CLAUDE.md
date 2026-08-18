@@ -81,6 +81,7 @@ When a staging deploy fails, the application error (Python tracebacks) is in the
 - When creating infrastructure, prefer infrastructure-as-code (Terraform in this project, or AWS CDK / CloudFormation) over direct CLI commands.
 - When working with infrastructure, follow AWS Well-Architected Framework principles.
 - Do not use em dashes in AWS resource names or descriptions. Use hyphens instead.
+- Do not apply prod terraform.
 
 ### Secret Safety
 
