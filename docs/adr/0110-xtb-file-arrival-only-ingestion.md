@@ -42,10 +42,9 @@ list, so it reads XTB silver whenever present without re-parsing. Only a
 file-arrival run refreshes XTB silver.
 
 `xtb_cdc` is removed from `NON_EMPTY_REQUIRED`
-(`pipeline/analytics/quality.py`), closing issue #132: XTB is fully optional
-until a file arrives and is not in any required gate. This completes the
-removal started by `fee7cde` (which dropped `xtb` from
-`_REQUIRED_CDC_BROKERS`).
+(`pipeline/analytics/quality.py`): XTB is fully optional until a file arrives
+and is not in any required gate. This completes the removal started by
+`fee7cde` (which dropped `xtb` from `_REQUIRED_CDC_BROKERS`).
 
 `fetch_failure_details` (`pipeline/sfn.py`) now derives the connector list
 from the failed execution's own `input` (a JSON string with
@@ -64,7 +63,7 @@ gracefully when no file has arrived" — no longer true).
   task every run and contradicts ADR 0091 #6.
 - Keep `xtb_cdc` in `NON_EMPTY_REQUIRED` as an explicit "ingested at least
   once" check: a bare `pipeline validate` fails on missing/empty `xtb_cdc`
-  before any file has arrived — a dormant landmine (issue #132).
+  before any file has arrived — a dormant landmine.
 
 ## Constraints
 
