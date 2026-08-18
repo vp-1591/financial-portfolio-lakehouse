@@ -439,3 +439,47 @@ class TestNormalizeCurrency:
         value = decrypt_float(persisted2.column("target_value")[0].as_py(), fernet_key)
         assert value == pytest.approx(42.5)
         assert persisted2.column("target_ccy")[0].as_py() == "EUR"
+
+    def test_converter_failure_raises_runtime_error(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A failed currency conversion raises instead of writing null target_value.
+
+        Per the no-fallback directive, normalize_currency must surface a
+        converter failure rather than silently leaving target_value null for
+        the analytics layer to patch later.
+        """
+        from pipeline.normalized.consolidate import PortfolioConnectorError
+
+        fernet_key = generate_key()
+        table = _make_cdc_table(
+            [
+                {
+                    "broker": "Trading 212",
+                    "security_ccy": "PLN",
+                    "cash_amount": 500.0,
+                    # No target_fx_rate — the converter is the only rate source
+                }
+            ],
+            fernet_key,
+        )
+
+        table_path = str(tmp_path / "cdc_events")
+        write_deltalake(table_path, table, mode="overwrite")
+
+        converter = CurrencyConverter("EUR")
+
+        def _fail(source_currency: str) -> float:
+            raise PortfolioConnectorError(
+                f"Could not fetch FX rate {source_currency}->EUR. "
+                "Pass --fx-rate PLN=RATE to provide it."
+            )
+
+        monkeypatch.setattr(converter, "fetch_rate", _fail)
+
+        with pytest.raises(RuntimeError, match="Could not convert"):
+            normalize_currency(
+                table_path=table_path,
+                fernet_key=fernet_key,
+                converter=converter,
+            )

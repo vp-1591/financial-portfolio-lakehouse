@@ -144,26 +144,46 @@ def _equity_cash_card(holdings: pl.DataFrame) -> str:
 
 
 def _passive_income_table(dividends, interest) -> str:
-    """Build an HTML table summarizing passive income totals."""
+    """Build an HTML table summarizing passive income totals.
+
+    No fallback: null target_value renders a warning instead of a sum (a
+    sum would silently treat missing conversions as zero).
+    """
     parts: list[str] = []
 
     if not dividends.is_empty():
-        total_div = dividends["target_value"].sum()
-        base_curr = (
-            dividends["target_ccy"][0] if "target_ccy" in dividends.columns else ""
-        )
-        parts.append(
-            f"<p><strong>Total Dividends:</strong> {total_div:,.2f} {base_curr}</p>"
-        )
+        if dividends["target_value"].null_count() > 0:
+            parts.append(
+                '<p class="warn"><strong>Total Dividends:</strong> '
+                "target_value is null for some rows — currency conversion "
+                "failed or normalize-cdc was not run. Re-run analytics after "
+                "fixing the conversion.</p>"
+            )
+        else:
+            total_div = dividends["target_value"].sum()
+            base_curr = (
+                dividends["target_ccy"][0] if "target_ccy" in dividends.columns else ""
+            )
+            parts.append(
+                f"<p><strong>Total Dividends:</strong> {total_div:,.2f} {base_curr}</p>"
+            )
 
     if not interest.is_empty():
-        total_int = interest["target_value"].sum()
-        base_curr = (
-            interest["target_ccy"][0] if "target_ccy" in interest.columns else ""
-        )
-        parts.append(
-            f"<p><strong>Total Interest:</strong> {total_int:,.2f} {base_curr}</p>"
-        )
+        if interest["target_value"].null_count() > 0:
+            parts.append(
+                '<p class="warn"><strong>Total Interest:</strong> '
+                "target_value is null for some rows — currency conversion "
+                "failed or normalize-cdc was not run. Re-run analytics after "
+                "fixing the conversion.</p>"
+            )
+        else:
+            total_int = interest["target_value"].sum()
+            base_curr = (
+                interest["target_ccy"][0] if "target_ccy" in interest.columns else ""
+            )
+            parts.append(
+                f"<p><strong>Total Interest:</strong> {total_int:,.2f} {base_curr}</p>"
+            )
 
     return "".join(parts)
 

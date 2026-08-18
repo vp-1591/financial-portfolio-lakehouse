@@ -124,6 +124,7 @@ def normalize_currency(
     # Compute target_fx_rate and target_value for each row
     target_fx_rates: list[float | None] = []
     target_values: list[float | None] = []
+    failed_currencies: set[str] = set()
 
     for row in df.iter_rows(named=True):
         security_ccy = str(row.get("security_ccy", "") or "").upper()
@@ -160,8 +161,19 @@ def normalize_currency(
                 target_ccy,
                 exc,
             )
+            failed_currencies.add(security_ccy)
             target_fx_rates.append(None)
             target_values.append(None)
+
+    # No fallback: a failed conversion is an error, not a silent null.
+    # Surfacing it here (before the write) keeps the table from being
+    # overwritten with rows whose target_value/target_fx_rate are null.
+    if failed_currencies:
+        raise RuntimeError(
+            "Could not convert "
+            f"{sorted(failed_currencies)} to {target_ccy}. "
+            "Pass --fx-rate CURRENCY=RATE to provide manual rates."
+        )
 
     # Encrypt and replace target columns
     df = df.with_columns(

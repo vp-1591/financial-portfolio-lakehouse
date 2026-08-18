@@ -384,8 +384,12 @@ class TestCashFlowBreakdown:
         trace = next(t for t in fig.data if t.name == "INTEREST")
         assert list(trace.y) == [45.0]
 
-    def test_falls_back_to_cash_amount(self) -> None:
-        """Falls back to cash_amount when target_value is all null."""
+    def test_flags_on_null_target_value(self) -> None:
+        """Null target_value returns a flag figure instead of summing cash_amount.
+
+        The old behavior fell back to cash_amount, summing native-currency
+        amounts as if they were the base currency. No fallback: flag it.
+        """
         df = pl.DataFrame(
             {
                 "period_month": ["2026-01"],
@@ -402,8 +406,9 @@ class TestCashFlowBreakdown:
         )
         fig = cash_flow_breakdown(df)
 
-        trace = next(t for t in fig.data if t.name == "INTEREST")
-        assert list(trace.y) == [50.0]
+        assert fig.layout.title.text == "Cash Flow Breakdown"
+        assert len(fig.data) == 0  # flag figure, no traces  # type: ignore[arg-type]
+        assert "target_value is null" in fig.layout.annotations[0]["text"]
 
     def test_no_toggle_when_no_outliers(self) -> None:
         """No updatemenus when all event types have similar peaks."""
@@ -653,6 +658,25 @@ class TestPassiveIncomeTimeline:
         fig = passive_income_timeline(div, interest)
 
         assert fig.layout.barmode == "stack"
+
+    def test_flags_on_null_target_value(self) -> None:
+        """Null target_value returns a flag figure instead of silently summing.
+
+        sum() would skip the nulls and show a partial total with no warning;
+        the no-fallback directive says flag instead.
+        """
+        div = _dividends(
+            [
+                {"period_month": "2026-01", "target_value": 50.0},
+                {"period_month": "2026-02", "target_value": None},
+            ]
+        )
+        interest = _interest([{"period_month": "2026-01", "target_value": 25.0}])
+        fig = passive_income_timeline(div, interest)
+
+        assert fig.layout.title.text == "Passive Income Timeline"
+        assert len(fig.data) == 0  # flag figure, no traces  # type: ignore[arg-type]
+        assert "target_value is null" in fig.layout.annotations[0]["text"]
 
 
 # ---------------------------------------------------------------------------
