@@ -71,19 +71,6 @@ def parse_fx_rate(value: str) -> tuple[str, float]:
     return currency, rate
 
 
-def parse_isin_override(value: str) -> tuple[str, str]:
-    if "=" not in value:
-        raise argparse.ArgumentTypeError("ISIN overrides must use TICKER=ISIN format.")
-    ticker, isin = value.split("=", 1)
-    ticker = ticker.strip()
-    isin = isin.strip().upper()
-    if not ticker:
-        raise argparse.ArgumentTypeError("ISIN override ticker cannot be empty.")
-    if not isin:
-        raise argparse.ArgumentTypeError("ISIN override value cannot be empty.")
-    return ticker, isin
-
-
 def cmd_keygen(args: argparse.Namespace) -> int:
     """Generate a Fernet encryption key."""
     keygen_main()
@@ -221,7 +208,12 @@ def transform_connector(connector, fernet_key: bytes) -> int:
     storage_opts = get_storage().storage_options
 
     for layer in ("snapshot", "cdc"):
-        raw_path = get_raw_path(connector.name, layer)
+        # D17: the CDC transform reads from the connector's cdc_raw_layer
+        # (default "cdc"; XTB overrides to "snapshot" for shared bronze). The
+        # snapshot layer always reads the snapshot raw. The normalized output
+        # is still written to ``normalized/{name}_{layer}`` below.
+        raw_layer = layer if layer == "snapshot" else connector.cdc_raw_layer
+        raw_path = get_raw_path(connector.name, raw_layer)
         try:
             dt = DeltaTable(raw_path, storage_options=storage_opts)
         except Exception:
@@ -274,9 +266,6 @@ def transform_connector(connector, fernet_key: bytes) -> int:
 
 def cmd_consolidate(args: argparse.Namespace) -> int:
     """Consolidate normalized broker snapshots into the holdings table."""
-    import csv
-    from pathlib import Path
-
     from deltalake import DeltaTable
 
     from pipeline.crypto import load_key
@@ -288,23 +277,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     from pipeline.normalized.extract import extract_holdings
 
     fernet_key = load_key()
-
-    # Load ISIN overrides
-    isin_overrides: dict[str, str] = {}
-    if args.isin:
-        isin_overrides.update(dict(args.isin))
-    if args.isin_map_file:
-        for map_file in args.isin_map_file:
-            path = Path(map_file)
-            if not path.exists():
-                print(f"ISIN map file does not exist: {path}", file=sys.stderr)
-                return 1
-            with path.open(newline="", encoding="utf-8-sig") as f:
-                for row in csv.DictReader(f):
-                    ticker = (row.get("ticker") or row.get("Ticker") or "").strip()
-                    isin = (row.get("isin") or row.get("ISIN") or "").strip().upper()
-                    if ticker and isin:
-                        isin_overrides[ticker] = isin
 
     # Manual FX rates
     manual_rates: dict[str, float] = {}
@@ -344,7 +316,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         holdings=all_holdings,
         fernet_key=fernet_key,
         converter=converter,
-        isin_overrides=isin_overrides,
     )
     logger.debug("Consolidated: %d rows written", table.num_rows)
     return 0
@@ -357,29 +328,9 @@ def cmd_analytics(args: argparse.Namespace) -> int:
     income, interest income, cash flow summary).  If CDC events are not
     available, logs a warning and continues — holdings still succeeds.
     """
-    import csv
-    from pathlib import Path
-
     from pipeline.crypto import load_key
 
     fernet_key = load_key()
-
-    # Load ISIN overrides
-    isin_overrides: dict[str, str] = {}
-    if args.isin:
-        isin_overrides.update(dict(args.isin))
-    if args.isin_map_file:
-        for map_file in args.isin_map_file:
-            path = Path(map_file)
-            if not path.exists():
-                print(f"ISIN map file does not exist: {path}", file=sys.stderr)
-                return 1
-            with path.open(newline="", encoding="utf-8-sig") as f:
-                for row in csv.DictReader(f):
-                    ticker = (row.get("ticker") or row.get("Ticker") or "").strip()
-                    isin = (row.get("isin") or row.get("ISIN") or "").strip().upper()
-                    if ticker and isin:
-                        isin_overrides[ticker] = isin
 
     # Build portfolio_holdings gold table (reads security_value,
     # position_type, security_ccy, and target_ccy from consolidated_holdings).
@@ -496,13 +447,18 @@ def _trigger_sfn_execution(args: argparse.Namespace, mode: str) -> int:
 
     Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md.
     """
-    # XTB is not supported in the SFN-triggered full run — it requires an
-    # uploaded file and is driven by the EventBridge S3 file-arrival rule.
+    # The --with-xtb and --xtb-file flags are local-docker-only; they do not
+    # apply to the SFN-triggered run. XTB itself IS part of the daily schedule
+    # (DEFAULT_CONNECTORS in sfn.py): the ``run-connector xtb`` step skips
+    # gracefully when no file has arrived yet, and the EventBridge S3
+    # file-arrival rule runs it automatically once a report is uploaded via
+    # ``upload-xtb``. Reject the flags here so callers don't expect a local
+    # file to reach the SFN execution.
     if getattr(args, "with_xtb", False) or getattr(args, "xtb_file", None):
         print(
-            "XTB is not supported in staging/prod 'full'. Use 'upload-xtb' to "
-            "push the file to S3; the EventBridge file-arrival trigger runs "
-            "the XTB connector automatically.",
+            "--with-xtb/--xtb-file are not supported in staging/prod 'full'. "
+            "Use 'upload-xtb' to push the file to S3; the EventBridge "
+            "file-arrival trigger runs the XTB connector automatically.",
             file=sys.stderr,
         )
         return 1
@@ -598,8 +554,6 @@ def _run_connectors_parallel(args: argparse.Namespace) -> int:
     base_ns = argparse.Namespace(
         target_currency=getattr(args, "target_currency", "EUR"),
         fx_rate=getattr(args, "fx_rate", []),
-        isin=getattr(args, "isin", []),
-        isin_map_file=getattr(args, "isin_map_file", []),
         xtb_file=getattr(args, "xtb_file", None),
         mode=get_mode(),
     )
@@ -696,27 +650,23 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     inject_secrets()
     connector = get(args.connector)
 
-    # XTB requires --xtb-file in dedicated subcommand mode.
-    if connector.name == "xtb" and not getattr(args, "xtb_file", None):
-        print("Error: run-connector xtb requires --xtb-file", file=sys.stderr)
-        return 1
-
     fernet_key = load_key()
     rc = fetch_connector(connector, args, fernet_key)
     if rc == FetchResult.SKIPPED:
-        # Connector has no credentials — skip transform and validation gracefully.
+        # Connector has no credentials or required input (e.g. XTB without
+        # --xtb-file) — skip transform and validation gracefully.
         return 0
     if rc == FetchResult.ERROR:
         return 1
     rc = transform_connector(connector, fernet_key)
     if rc:
         return rc
-    # Validate connector's normalized tables after transform
-    # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
-    # Only validate CDC table for connectors that support CDC (XTB does not).
-    tables = [f"{connector.name}_snapshot"]
-    if connector.cdc_supported:
-        tables.append(f"{connector.name}_cdc")
+    # Validate connector's normalized tables after transform.
+    # D14: validation is unconditional — CDC is mandatory for every connector
+    # now that XTB produces CDC via the shared bronze (D17). The
+    # ``cdc_supported`` flag is removed.
+    # Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
+    tables = [f"{connector.name}_snapshot", f"{connector.name}_cdc"]
     return run_validation(
         fernet_key=fernet_key,
         tables=tables,
@@ -922,8 +872,9 @@ def main() -> int:
         action="store_true",
         default=False,
         help=(
-            "Include the XTB connector (staging/prod only; not yet implemented — "
-            "use upload-xtb + EventBridge file-arrival trigger instead)"
+            "Vestigial flag kept to reject accidental use: XTB is always part of "
+            "the daily schedule (skips when no file has arrived). In staging/prod "
+            "use 'upload-xtb' + the EventBridge file-arrival trigger instead."
         ),
     )
     full_parser.add_argument(
@@ -941,20 +892,6 @@ def main() -> int:
         type=parse_fx_rate,
         default=[],
         help="Manual FX rate override as CURRENCY=RATE",
-    )
-    full_parser.add_argument(
-        "--isin",
-        action="append",
-        type=parse_isin_override,
-        default=[],
-        help="ISIN override as TICKER=ISIN",
-    )
-    full_parser.add_argument(
-        "--isin-map-file",
-        action="append",
-        type=str,
-        default=[],
-        help="CSV file with ticker,isin columns",
     )
 
     # upload-xtb
@@ -1000,20 +937,6 @@ def main() -> int:
         type=parse_fx_rate,
         default=[],
         help="Manual FX rate override as CURRENCY=RATE",
-    )
-    run_consolidate_analytics_parser.add_argument(
-        "--isin",
-        action="append",
-        type=parse_isin_override,
-        default=[],
-        help="ISIN override as TICKER=ISIN",
-    )
-    run_consolidate_analytics_parser.add_argument(
-        "--isin-map-file",
-        action="append",
-        type=str,
-        default=[],
-        help="CSV file with ticker,isin columns",
     )
 
     args = parser.parse_args()

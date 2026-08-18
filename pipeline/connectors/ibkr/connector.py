@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class IbkrConnector:
     name = "ibkr"
     display_name = "IBKR"
-    cdc_supported = True
+    cdc_raw_layer = "cdc"
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         flex_token = resolve_secret("IBKR_FLEX_TOKEN")

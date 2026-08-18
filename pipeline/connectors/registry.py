@@ -28,6 +28,21 @@ def get(name: str) -> BrokerConnector:
         ) from None
 
 
+def unregister(name: str) -> None:
+    """Remove a connector from the registry.
+
+    Used by tests to clean up connectors registered during a test so they do
+    not leak into ``all()`` for the rest of the session.  Raises
+    :class:`ValueError` if ``name`` is not registered (mirroring :func:`get`).
+    """
+    try:
+        del _CONNECTORS[name]
+    except KeyError:
+        raise ValueError(
+            f"Unknown connector '{name}'. Available: {', '.join(sorted(_CONNECTORS))}"
+        ) from None
+
+
 def all() -> list[BrokerConnector]:
     """Return all registered connectors."""
     return list(_CONNECTORS.values())

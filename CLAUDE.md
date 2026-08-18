@@ -92,3 +92,7 @@ When a staging deploy fails, the application error (Python tracebacks) is in the
 ## Tmp references
 
 - Do not mention any tmp scripts/reports in any tracked documentation or code 
+
+## Edits
+
+For each file you modify, add the import and its usage in the same Edit operation — do not add imports separately from the code that uses them, as ruff will strip unused imports between edits.

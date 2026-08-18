@@ -98,18 +98,6 @@ class TestArgparseDispatch:
         connector = get("xtb")
         assert connector.name == "xtb"
 
-    def test_cdc_supported_ibkr(self) -> None:
-        """IBKR supports CDC."""
-        assert get("ibkr").cdc_supported is True
-
-    def test_cdc_supported_trading212(self) -> None:
-        """Trading 212 supports CDC."""
-        assert get("trading212").cdc_supported is True
-
-    def test_cdc_supported_xtb(self) -> None:
-        """XTB does not support CDC."""
-        assert get("xtb").cdc_supported is False
-
 
 # ---------------------------------------------------------------------------
 # fetch_connector / transform_connector isolation
@@ -290,11 +278,29 @@ class TestCmdRunConnector:
         rc = cmd_run_connector(args)
         assert rc == 1
 
-    def test_xtb_without_file_returns_1(self, monkeypatch) -> None:
-        """XTB without --xtb-file in dedicated subcommand returns 1."""
+    @patch("pipeline.run.run_validation")
+    @patch("pipeline.run.transform_connector")
+    @patch("pipeline.run.load_key", return_value=b"test-key")
+    def test_xtb_without_file_returns_0(
+        self,
+        mock_key: MagicMock,
+        mock_transform: MagicMock,
+        mock_validate: MagicMock,
+    ) -> None:
+        """XTB without --xtb-file skips gracefully (returns 0).
+
+        XTB is a required scheduled connector, so the daily run calls it with
+        no file; when no file-arrival upload exists it must skip (return 0)
+        rather than fail the run. The real fetch_connector returns SKIPPED for
+        xtb without --xtb-file (run.py:132-133) without touching storage, and
+        cmd_run_connector maps a SKIPPED fetch to exit 0. transform and
+        validation must not run on a skipped fetch.
+        """
         args = argparse.Namespace(connector="xtb", xtb_file=None)
         rc = cmd_run_connector(args)
-        assert rc == 1
+        assert rc == 0
+        mock_transform.assert_not_called()
+        mock_validate.assert_not_called()
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
@@ -310,9 +316,10 @@ class TestCmdRunConnector:
         args = argparse.Namespace(connector="xtb", xtb_file=["report.xlsx"])
         rc = cmd_run_connector(args)
         assert rc == 0
+        # D14: validation is unconditional — CDC table is always validated.
         mock_validate.assert_called_once_with(
             fernet_key=b"test-key",
-            tables=["xtb_snapshot"],
+            tables=["xtb_snapshot", "xtb_cdc"],
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
@@ -361,8 +368,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 0
@@ -402,8 +407,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
@@ -429,8 +432,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
@@ -455,8 +456,6 @@ class TestCmdRunConsolidateAnalytics:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_run_consolidate_analytics(args)
         assert rc == 1
@@ -487,8 +486,6 @@ class TestCmdFullDockerMode:
             xtb_file=None,
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_full(args)
         assert rc == 0
@@ -513,8 +510,6 @@ class TestCmdFullDockerMode:
             xtb_file=None,
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
         )
         rc = cmd_full(args)
         assert rc == 1
@@ -537,8 +532,6 @@ class TestCmdFullSfnTrigger:
             "wait": False,
             "target_currency": "EUR",
             "fx_rate": [],
-            "isin": [],
-            "isin_map_file": [],
         }
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -576,7 +569,7 @@ class TestCmdFullSfnTrigger:
             sfn_mod,
             "resolve_all_arns",
             lambda *a, **k: (
-                {"ibkr": "arn:ibkr", "trading212": "arn:t212"},
+                {"ibkr": "arn:ibkr", "trading212": "arn:t212", "xtb": "arn:xtb"},
                 "arn:cons",
             ),
         )
@@ -729,8 +722,6 @@ class TestRunConnectorsParallel:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
             xtb_file=None,
             mode="docker",
         )
@@ -749,8 +740,6 @@ class TestRunConnectorsParallel:
         args = argparse.Namespace(
             target_currency="EUR",
             fx_rate=[],
-            isin=[],
-            isin_map_file=[],
             xtb_file=None,
             mode="docker",
         )

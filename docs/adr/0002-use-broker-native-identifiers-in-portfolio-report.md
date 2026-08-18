@@ -1,5 +1,7 @@
 # Use Broker-Native Identifiers in Portfolio Report
 
+> **Superseded by [ADR 0109](./0109-remove-isin-override-cli-feature.md)** — only the ISIN-override-inputs clause (§Consequences, "ISIN override inputs remain available for rows where users have authoritative mappings") is reversed; the broker-native identifier design (generic `Identifier` column, IBKR `IBKR:<conid>`, Trading 212 / XTB `ISIN:<value>` from broker data) carries forward unchanged, see 0109 §Decision.
+
 ## Context
 
 The consolidated portfolio report needs enough information for downstream LLM

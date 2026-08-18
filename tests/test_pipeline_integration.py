@@ -43,7 +43,6 @@ from pipeline.raw.models import RAW_SCHEMA
 from pipeline.secrets import reset_mode
 from pipeline.storage import StorageConfig, use_storage
 from tests.local_backend import LocalBackend
-from tests.test_xtb_connector import _build_xlsx_bytes
 
 
 class TestEncryptRawPayloadsSetColumn:
@@ -219,14 +218,17 @@ class TestTransformDecryptsPayloads:
         """XTB transform_snapshot must decrypt .xlsx payloads from raw Delta tables."""
         key = generate_key()
 
-        xlsx_bytes = _build_xlsx_bytes(include_isin=True)
+        # D17: new-format workbook with source="XTB_REPORT" (shared bronze).
+        from tests.fixtures.xtb import build_new_format_xlsx_bytes
+
+        xlsx_bytes = build_new_format_xlsx_bytes()
         encrypted_payload = encrypt(xlsx_bytes, key)
 
         raw = pa.table(
             {
                 "fetched_at": [None],
                 "broker": ["XTB"],
-                "source": ["OPEN POSITION"],
+                "source": ["XTB_REPORT"],
                 "payload": [encrypted_payload],
                 "payload_hash": ["abc"],
                 "source_file": ["test.xlsx"],

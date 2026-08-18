@@ -171,15 +171,15 @@ class TestXtbFetchKwargs:
 
 
 class TestFetchCdcKwargs:
-    """CDC kwargs: T212 returns snapshot kwargs, IBKR/XTB return {}."""
+    """CDC kwargs: T212 returns snapshot kwargs, IBKR returns {}.
+
+    XTB no longer has ``fetch_cdc_kwargs`` (D17 shared bronze — CDC is derived
+    from the snapshot raw, no separate CDC fetch)."""
 
     def test_ibkr_returns_empty(self) -> None:
         set_mode("docker")
         assert get("ibkr").fetch_cdc_kwargs() == {}
         reset_mode()
-
-    def test_xtb_returns_empty(self) -> None:
-        assert get("xtb").fetch_cdc_kwargs() == {}
 
     def test_t212_returns_snapshot_kwargs(self, monkeypatch) -> None:
         monkeypatch.setenv("T212_API_KEY", "test-key")

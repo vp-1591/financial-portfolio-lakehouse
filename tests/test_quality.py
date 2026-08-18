@@ -450,11 +450,11 @@ class TestCheckNonEmpty:
         assert "0 rows" in result.details
 
     def test_non_empty_required_registry(self) -> None:
-        """NON_EMPTY_REQUIRED includes cdc_events, ibkr_cdc, trading212_cdc but not xtb_cdc."""
+        """NON_EMPTY_REQUIRED includes cdc_events, ibkr_cdc, trading212_cdc, xtb_cdc."""
         assert "cdc_events" in NON_EMPTY_REQUIRED
         assert "ibkr_cdc" in NON_EMPTY_REQUIRED
         assert "trading212_cdc" in NON_EMPTY_REQUIRED
-        assert "xtb_cdc" not in NON_EMPTY_REQUIRED
+        assert "xtb_cdc" in NON_EMPTY_REQUIRED
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +543,7 @@ class TestRunValidation:
         write_deltalake(
             storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
         )
+        write_deltalake(storage.normalized_path("xtb_cdc"), cdc, mode="overwrite")
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -640,6 +641,7 @@ class TestRunValidation:
         write_deltalake(
             storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
         )
+        write_deltalake(storage.normalized_path("xtb_cdc"), cdc, mode="overwrite")
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -691,6 +693,7 @@ class TestDataQualityRoundTrip:
         write_deltalake(
             storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
         )
+        write_deltalake(storage.normalized_path("xtb_cdc"), cdc, mode="overwrite")
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,

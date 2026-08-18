@@ -1,5 +1,7 @@
 # 0100: Fix Snapshot Dedup Per Source and T212 Snapshot Encryption
 
+> **Partially superseded by [ADR 0108](./0108-xtb-new-format-connector-overhaul.md) for XTB only** — per-source `filter_latest_snapshot` is replaced by per-`account_id` latest (D18) because XTB raw lacks `account_id` and multiple accounts share one `source`. The per-source dedup (decision #1) and the T212 `security_value` encryption fix (decision #2) carry forward unchanged for T212 and IBKR, see 0108 §Constraints.
+
 ## Context
 
 Two bugs in the Trading 212 snapshot pipeline:

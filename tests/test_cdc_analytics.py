@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest
 from deltalake import DeltaTable, write_deltalake
 
 from pipeline.analytics.cdc_tables import (
+    _add_period_columns,
     build_cash_flow_summary,
     build_dividend_income,
     build_interest_income,
@@ -21,9 +23,12 @@ from pipeline.analytics.models import (
     interest_income_schema,
 )
 from pipeline.connectors.transform_utils import build_normalized_table
-from pipeline.crypto import decrypt_float, encrypt_float, generate_key
+from pipeline.connectors.xtb.transform import transform_cdc
+from pipeline.crypto import decrypt_float, encrypt, encrypt_float, generate_key
 from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.raw.models import RAW_SCHEMA
 from pipeline.storage import StorageConfig, use_storage
+from tests.fixtures.xtb import build_new_format_xlsx_bytes
 from tests.local_backend import LocalBackend
 
 # ---------------------------------------------------------------------------
@@ -1388,3 +1393,104 @@ class TestDateParsing:
         result = build_interest_income(fernet_key=fernet_key)
         assert result.height == 1
         assert result["period_month"][0] == "2026-02"
+
+
+# ---------------------------------------------------------------------------
+# TestXtbEventDatetimeRegression — Stage 4 (overhaul plan §3 Stage 4)
+# ---------------------------------------------------------------------------
+
+
+class TestXtbEventDatetimeRegression:
+    """Regression: XTB CDC rows with ISO event_datetime survive _add_period_columns.
+
+    The old XTB parser emitted Excel-serial strings like "46236.875" which
+    broke ``_add_period_columns`` (no strptime format matched -> rows were
+    dropped before aggregation). The Stage 1 rewrite (D3) emits real tz-aware
+    UTC datetimes, and the Stage 2 transform emits ISO-8601 strings via
+    ``datetime.isoformat()`` (e.g. ``2026-08-02T07:00:00+00:00``). This test
+    locks that fix in by running the full transform -> analytics path.
+    """
+
+    def test_xtb_iso_datetime_parsed_by_add_period_columns(self) -> None:
+        """Focused unit test: an XTB-shaped ISO datetime survives _add_period_columns.
+
+        The old failure was the serial-string "46236.875"; the fix is emitting
+        a real ISO datetime. ``_add_period_columns`` should parse it via the
+        ``%Y-%m-%dT%H:%M:%S%.f%z`` branch and produce period columns.
+        """
+        df = pl.DataFrame({"event_datetime": ["2026-08-02T07:00:00+00:00"]})
+        result = _add_period_columns(df)
+        assert result.height == 1  # not dropped
+        assert result["period_month"][0] == "2026-08"
+        assert result["period_quarter"][0] == "2026-Q3"
+
+    def test_xtb_excel_serial_string_would_be_dropped(self) -> None:
+        """The old broken format "46236.875" is dropped (regression baseline).
+
+        This documents the pre-fix behaviour: a serial string matches no
+        strptime format, so ``_add_period_columns`` drops the row. The XTB
+        transform no longer emits this format (D3) — the end-to-end test below
+        confirms the real output survives.
+        """
+        df = pl.DataFrame({"event_datetime": ["46236.875"]})
+        result = _add_period_columns(df)
+        assert result.height == 0  # unparseable -> dropped
+
+    def test_xtb_cdc_rows_survive_analytics_end_to_end(
+        self, fernet_key: bytes, tmp_path: Path
+    ) -> None:
+        """End-to-end: transform_cdc -> Delta -> build_cash_flow_summary.
+
+        Builds a raw XTB snapshot, runs the real transform_cdc (which emits
+        ISO event_datetime strings), writes the CDC events to Delta, and runs
+        build_cash_flow_summary. Asserts the XTB events are aggregated into the
+        expected period_month / period_quarter buckets (no rows dropped by
+        _add_period_columns).
+        """
+        storage = StorageConfig(
+            data_dir=str(tmp_path / "data"),
+            raw_dir=str(tmp_path / "data" / "raw"),
+            normalized_dir=str(tmp_path / "data" / "normalized"),
+            analytics_dir=str(tmp_path / "data" / "analytics"),
+            secrets_dir=str(tmp_path / ".secrets"),
+            encryption_key_file=str(tmp_path / ".secrets" / "encryption.key"),
+            backend=LocalBackend(tmp_path / "data"),
+        )
+        use_storage(storage)
+
+        raw = _build_xtb_raw(fernet_key)
+        cdc = transform_cdc(raw, fernet_key)
+        # The fixture has 6 events (deposit, interest, tax, transfer, purchase,
+        # sell); all should survive into the analytics table.
+        assert cdc.num_rows == 6
+        _write_cdc_to_delta(cdc, tmp_path, storage)
+
+        result = build_cash_flow_summary(fernet_key=fernet_key)
+        # Events span 2026-07 (deposit, stock purchase) and 2026-08 (interest,
+        # tax, transfer, stock sell). Both months must appear — if
+        # _add_period_columns dropped rows, one or both buckets would be
+        # missing.
+        months = set(result["period_month"].to_list())
+        assert "2026-07" in months
+        assert "2026-08" in months
+        quarters = set(result["period_quarter"].to_list())
+        assert quarters == {"2026-Q3"}
+        # 5 distinct event types in the fixture: DEPOSIT, INTEREST, TAX,
+        # TRADE, TRANSFER -> at least 5 type buckets across the 2 months.
+        assert result.height >= 5
+
+
+def _build_xtb_raw(fernet_key: bytes) -> pa.Table:
+    """Build a raw XTB snapshot table (shared bronze, D17) for analytics tests."""
+    payload = build_new_format_xlsx_bytes()
+    return pa.table(
+        {
+            "fetched_at": [datetime.now(UTC)],
+            "broker": ["XTB"],
+            "source": ["XTB_REPORT"],
+            "payload": [encrypt(payload, fernet_key)],
+            "payload_hash": [hashlib.sha256(payload).hexdigest()],
+            "source_file": ["report.xlsx"],
+        },
+        schema=RAW_SCHEMA,
+    )

@@ -1,7 +1,7 @@
 """Consolidate normalized snapshots into a unified holdings table.
 
-Provides currency conversion, ticker normalization, ISIN override, and
-percentage aggregation, operating on normalized Delta tables.
+Provides currency conversion, ticker normalization, and percentage
+aggregation, operating on normalized Delta tables.
 """
 
 from __future__ import annotations
@@ -190,10 +190,6 @@ class TransientHttpError(PortfolioConnectorError):
     """HTTP/network error that may succeed on retry (timeout, 5xx, DNS failure)."""
 
 
-def format_identifier(kind: str, value: str) -> str:
-    return f"{kind}:{value}" if value else ""
-
-
 def normalize_trading212_ticker(ticker: str) -> str:
     if ticker.startswith("CASH "):
         return ticker
@@ -216,19 +212,10 @@ def normalize_trading212_ticker(ticker: str) -> str:
     return ticker
 
 
-def normalize_isin_lookup_key(ticker: str) -> str:
-    return ticker.strip().upper()
-
-
 def aggregate_percentages(
     holdings: Iterable[Holding],
     converter: CurrencyConverter,
-    isin_overrides: dict[str, str] | None = None,
 ) -> list[PortfolioRow]:
-    normalized_isin_overrides = {
-        normalize_isin_lookup_key(ticker): format_identifier("ISIN", isin)
-        for ticker, isin in (isin_overrides or {}).items()
-    }
     totals: dict[tuple[str, str], float] = {}
     metadata: dict[tuple[str, str], tuple[str, str, str]] = {}
     for holding in holdings:
@@ -239,12 +226,8 @@ def aggregate_percentages(
             key,
             ("", "", ""),
         )
-        override_isin = normalized_isin_overrides.get(
-            normalize_isin_lookup_key(holding.ticker),
-            "",
-        )
         metadata[key] = (
-            current_identifier or holding.identifier or override_isin,
+            current_identifier or holding.identifier,
             current_currency or holding.security_currency,
             current_description or holding.description,
         )
@@ -274,7 +257,6 @@ def consolidate_holdings(
     holdings: list[Holding],
     fernet_key: bytes,
     converter: CurrencyConverter,
-    isin_overrides: dict[str, str] | None = None,
     table_path: str | None = None,
 ) -> pa.Table:
     """Consolidate holdings into the normalized holdings Delta table.
@@ -287,8 +269,6 @@ def consolidate_holdings(
         Fernet key for encrypting value columns.
     converter:
         Currency converter for FX rate calculations.
-    isin_overrides:
-        Manual ISIN overrides by ticker.
     table_path:
         Delta table path to write to. Defaults to
         ``NORMALIZED_CONSOLIDATED_HOLDINGS``.
@@ -306,10 +286,6 @@ def consolidate_holdings(
     get_storage().backend.ensure_parent(table_path)
 
     now = datetime.now(UTC)
-    normalized_isin_overrides = {
-        normalize_isin_lookup_key(ticker): isin
-        for ticker, isin in (isin_overrides or {}).items()
-    }
 
     fetched_ats: list[datetime] = []
     brokers: list[str] = []
@@ -324,14 +300,8 @@ def consolidate_holdings(
 
     for holding in holdings:
         converted_value = converter.convert(holding.value, holding.currency)
-        override_isin = normalized_isin_overrides.get(
-            normalize_isin_lookup_key(holding.ticker), ""
-        )
-        identifier = (
-            holding.identifier or format_identifier("ISIN", override_isin)
-            if override_isin
-            else holding.identifier
-        )
+        # Decision: docs/adr/0109-remove-isin-override-cli-feature.md
+        identifier = holding.identifier
 
         fetched_ats.append(now)
         brokers.append(holding.broker)

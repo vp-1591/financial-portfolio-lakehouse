@@ -1,0 +1,47 @@
+# XTB sample dump: PLN_12345678_2006-01-01_2026-08-03.xlsx
+# sheets: ['Closed Positions', 'Cash Operations', 'Open Positions']
+
+===== SHEET: Closed Positions  (xl/worksheets/sheet1.xml) =====
+R001: Account number | 12345678
+R002: Closed Positions
+R003: Date from (UTC) | 38718
+R004: Date to (UTC) | 46237.25
+R005: Instrument | Ticker | Category | Type | Volume | Open Price | Open Time (UTC) | Close Price | Close Time (UTC) | Product | Profit/Loss | Gross Profit | Purchase Value | Sale Value | Stop Loss | Take Profit | Commission | Margin | Swap | Rollover | Open Conversion Rate | Close Conversion Rate | Close Origin | Position ID | Comment
+R006: Core S&P 500 | SXR8.DE | ETF | BUY | 10.0001 | 100 | 46204.291666666657 | 120 | 46236.291666666657 | Investment Plans | 740.01 | 740.01 | 4300.04 | 5040.05 |  |  | 0 |  |  |  | 4.3 | 4.2 | xStation5 | 1111122222
+R007: Profit/loss |  |  |  |  |  |  |  |  |  | 740.01 | 740.01
+
+===== SHEET: Cash Operations  (xl/worksheets/sheet2.xml) =====
+R001: Account number | 12345678
+R002: Cash Operations
+R003: Date from (UTC) | 38718
+R004: Date to (UTC) | 46237.25
+R005: Type | Instrument | Ticker | Category | Time | Amount | ID | Comment | Product | Position ID
+R006: Free funds interest tax |  |  |  | 46236.875694444447 | -19 | 1000011142 | Free-funds Interest Tax 2026-07 | My Trades
+R007: Free funds interest |  |  |  | 46236.875 | 100.01 | 1000011122 | Free-funds Interest 2026-07 | My Trades
+R008: Transfer |  |  |  | 46236.833333333343 | -1000 | 900051122 | Currency conversion, PLN to EUR from TA: 12345678 to: 12345670, Exchange rate:0.230001 | My Trades
+R009: Stock purchase | Core S&P 500 | SXR8.DE | ETF | 46236.333333333343 | -3257.1 | 900045000 | OPEN BUY 7 @ 110.00 | Investment Plans | 1334567890
+R010: Stock sell | Core S&P 500 | SXR8.DE | ETF | 46236.291666666657 | 5040.05 | 900041122 | CLOSE BUY 10.0001 @ 120.00 | Investment Plans | 1111122222
+R011: Stock purchase | Core S&P 500 | SXR8.DE | ETF | 46213.333333333343 | -1660 | 900035424 | OPEN BUY 4 @ 100.00 | Investment Plans | 1244567891
+R012: Stock purchase | NASDAQ 100 | SXRV.DE | ETF | 46213.333333333343 | -3320 | 900035423 | OPEN BUY 4 @ 200.00 | Investment Plans | 1244567890
+R013: Stock purchase | Core S&P 500 | SXR8.DE | ETF | 46204.291666666657 | -4300.04 | 900035422 | OPEN BUY 10.0001 @ 100.00 | Investment Plans | 1111122222
+R014: Subaccount transfer |  |  |  | 46204.270833333343 | 10000 | 900011174 | Transfer from 12345678 to 12348765 | Investment Plans
+R015: Subaccount transfer |  |  |  | 46204.270833333343 | -10000 | 900011173 | Transfer from 12345678 to 12348765 | My Trades
+R016: Deposit |  |  |  | 46203.472337962958 | 10000 | 900011122 | Adyen BLIK deposit, Adyen BLIK provider transaction id=bf402ac1-00aa-4e42-8a02-6481ebcc49a5, Adyen BLIK, id=22979000 | My Trades
+R017: Total |  |  |  |  | 1583.92
+
+===== SHEET: Open Positions  (xl/worksheets/sheet3.xml) =====
+R001: Account number | 12345678
+R002: Open Positions
+R003: Data as of report generated | 46237.25
+R004: Product | Metric | Amount | Currency
+R005: My Trades | Value | 0 | PLN
+R006: My Trades | Profit | 0 | PLN
+R007: Investment Plans | Value | 9177.84 | PLN
+R008: Investment Plans | Profit | 940.7399999999991 | PLN
+R009: Note | Summary values and open positions are shown as of the report generation time |  | 
+R010: Product | Instrument/Position | Ticker | Category | Type | Volume | Value | Current price | Open price | Open time (UTC) | Stop Loss | Take Profit | Net Profit % | Net Profit | Gross Profit | Margin | Open Commission | Swap | Rollover
+R011: Investment Plan | Core S&P 500 | SXR8.DE | ETF |  | 11 | 5544 |  | 106.36 |  |  |  | 29.77 | 626.89999999999941 | 626.89999999999941 |  |  |  | 
+R012: Investment Plan | 1334567890 | SXR8.DE |  | BUY | 7 | 3528 | 120 | 110 | 46236.333333333343 |  |  | 8.32 | 270.89999999999958 | 270.89999999999958
+R013: Investment Plan | 1244567891 | SXR8.DE |  | BUY | 4 | 2016 | 120 | 100 | 46213.333333333343 |  |  | 21.45 | 355.99999999999977 | 355.99999999999977
+R014: Investment Plan | NASDAQ 100 | SXRV.DE | ETF |  | 4 | 3633.84 |  | 200 |  |  |  | 9.4499999999999993 | 313.83999999999969 | 313.83999999999969 | 
+R015: Investment Plan | 1244567890 | SXRV.DE |  | BUY | 4 | 3633.84 | 216.3 | 200 | 46213.333333333343 |  |  | 9.4499999999999993 | 313.83999999999969 | 313.83999999999969 |  |  |  | 

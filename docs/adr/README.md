@@ -12,7 +12,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 |-----|-------|---------|--------|---------------|
 | 0001 | Disable Pytest Cache Provider | 2026-06-15 | active | — |
 | 0002a | Add Consolidate Step and Fix Duplicates | 2026-06-26 | active | — |
-| 0002b | Use Broker-Native Identifiers in Portfolio Report | 2026-06-15 | active | — |
+| 0002b | Use Broker-Native Identifiers in Portfolio Report | 2026-06-15 | superseded | 0109 |
 | 0003 | Medallion Architecture Pipeline | 2026-06-19 | superseded | 0084 |
 | 0004 | Pipeline End-to-End Bugfixes | 2026-06-21 | active | — |
 | 0005 | Pipeline End-to-End Bugfixes (Round 2) | 2026-06-21 | active | — |
@@ -58,7 +58,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0045 | Replace List-Append Pattern with Polars build_normalized_table | 2026-07-02 | active | — |
 | 0046 | Fix Consolidated Holdings Currency Column | 2026-07-03 | active | — |
 | 0047 | Move XLSX Parsing to Silver Layer and Remove account_id from Raw Schema | 2026-07-03 | active | — |
-| 0048 | XTB Cloud Upload — S3 Staging + EventBridge | 2026-07-06 | active | — |
+| 0048 | XTB Cloud Upload — S3 Staging + EventBridge | 2026-07-06 | superseded | 0108 |
 | 0049 | Deployment Model — Branch/Tag Environment Strategy | 2026-07-07 | superseded | 0063 |
 | 0050 | Attach ECR Policy to Pipeline User in Terraform | 2026-07-07 | active | — |
 | 0051 | Step Functions Orchestration | 2026-07-08 | superseded | 0052, 0054 |
@@ -97,7 +97,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0084 | Encrypt Gold Value Columns | 2026-07-15 | active | — |
 | 0085 | Gold Schema Migration and Analytics Error Propagation | 2026-07-16 | active | — |
 | 0086 | Add Pyright Static Type Checking | 2026-07-17 | active | — |
-| 0087 | Make CDC Mandatory and Fail on Empty Silver CDC Tables | 2026-07-21 | active | — |
+| 0087 | Make CDC Mandatory and Fail on Empty Silver CDC Tables | 2026-07-21 | superseded | 0108 |
 | 0088 | Raise on Missing AWS Credentials for DuckDB S3 | 2026-07-22 | superseded | 0103 |
 | 0089 | Fail Loudly on Missing Broker Credentials | 2026-07-22 | active | — |
 | 0090 | Replace DEMO and STORAGE_TYPE with --mode Flag | 2026-07-23 | active | — |
@@ -110,7 +110,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0097 | Remove Yahoo Finance as FX Rate Provider | 2026-07-25 | active | — |
 | 0098 | Add Retry Logic to CurrencyConverter.request_json | 2026-07-25 | active | — |
 | 0099 | Retry on IBKR Flex Transient Error 1019 | 2026-08-02 | active | — |
-| 0100 | Fix Snapshot Dedup Per Source and T212 Snapshot Encryption | 2026-08-03 | active | — |
+| 0100 | Fix Snapshot Dedup Per Source and T212 Snapshot Encryption | 2026-08-03 | superseded | 0108 |
 | 0101 | Fix IBKR Flex Attribute Names for CDC event_id Dedup | 2026-08-03 | active | — |
 | 0102 | Standardize Snapshot Schemas and Fix T212 security_ccy to Instrument Currency | 2026-08-14 | active | — |
 | 0103 | Prod boto3 Default-Chain Credential Fallback | 2026-08-14 | active | — |
@@ -118,6 +118,8 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0105 | Fix T212 CDC Dedup and Cross-Endpoint Concat Type Mismatch | 2026-08-14 | active | — |
 | 0106 | Enforce Analytics Schema at the Write Boundary (Polars Int32/Int64 Drift) | 2026-08-15 | active | — |
 | 0107 | Move orchestrator connector/schedule config to committed connectors.auto.tfvars | 2026-08-16 | active | — |
+| 0108 | XTB New-Format Connector Overhaul | 2026-08-17 | active | — |
+| 0109 | Remove ISIN Override CLI Feature | 2026-08-17 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

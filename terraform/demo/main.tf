@@ -561,7 +561,7 @@ module "orchestrator" {
   consolidate_allocate_task_def_arn = module.consolidate_allocate.task_definition_arn
   sfn_role_arn                     = data.aws_iam_role.sfn.arn
   xtb_staging_bucket_name         = aws_s3_bucket.pipeline_demo.bucket
-  xtb_staging_prefix              = "staging_demo/xtb/"
+  xtb_staging_prefix              = "pipeline_demo/xtb_uploads/"
   scheduled                        = var.scheduled
   schedule_cron                    = var.schedule_cron
   schedule_connectors              = var.schedule_connectors
