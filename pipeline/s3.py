@@ -85,7 +85,7 @@ def upload_to_staging(local_path: str | Path, s3_uri: str) -> str:
     s3fs = _make_s3fs()
 
     logger.info("Uploading %s → %s", local_path, s3_uri)
-    s3fs.upload_file(str(local_path), f"{bucket}/{key}")
+    pafs.copy_files(str(local_path), f"{bucket}/{key}", destination_filesystem=s3fs)
     logger.info("Upload complete: %s", s3_uri)
     return s3_uri
 
