@@ -189,17 +189,17 @@ AWS resources follow a hybrid model — shared orchestration, isolated data acce
 |---|---|---|
 | ECR repository | `shared/` | Both environments use the same Docker image with different tags (staging-latest, production-latest) |
 | Step Functions | `shared/` | State machines are orchestration wiring, not data. `DEMO` parameter selects the environment. |
-| ECS task definitions | `prod/` and `demo/` | Created via `terraform/modules/ecs-task/` module with `for_each = local.connectors`. Each connector gets its own task def for secret isolation. |
-| IAM roles (task execution) | `prod/` and `demo/` | Production tasks access production S3; demo tasks access demo S3. No cross-environment access. `iam:PassRole` scoped to role-name prefix, not enumerated ARNs. |
-| S3 buckets | `prod/` and `demo/` | Already isolated (ADR 0037, 0038). |
-| VPC + endpoints | `prod/` and `demo/` | Separate VPC per environment with private subnets, S3/ECR/CloudWatch interface endpoints. No public IP. Full data isolation. |
+| ECS task definitions | `prod/` and `staging/` | Created via `terraform/modules/ecs-task/` module with `for_each = local.connectors`. Each connector gets its own task def for secret isolation. |
+| IAM roles (task execution) | `prod/` and `staging/` | Production tasks access production S3; staging tasks access staging S3. No cross-environment access. `iam:PassRole` scoped to role-name prefix, not enumerated ARNs. |
+| S3 buckets | `prod/` and `staging/` | Already isolated (ADR 0037, 0038). |
+| VPC + endpoints | `prod/` and `staging/` | Separate VPC per environment with private subnets, S3/ECR/CloudWatch interface endpoints. No public IP. Full data isolation. |
 | EventBridge rules | `shared/` | S3 file arrival rule (created when `xtb_enabled=true`) and daily schedule rule (created when `scheduled=true`) are environment-agnostic. |
 
 The pattern follows the existing ECR approach (ADR 0049): `terraform/shared/`
-defines the shared infrastructure, and `prod/`/`demo/` look up shared
+defines the shared infrastructure, and `prod/`/`staging/` look up shared
 resources by name via `data` sources. ECS task definitions in `prod/` and
-`demo/` pass `DEMO=true` or `DEMO=false` as an environment variable, matching
-the environment selector established in ADR 0049. Connector task defs are
+`staging/` pass `--mode staging` or `--mode prod` as the CLI flag, matching
+the mode selector established in ADR 0090. Connector task defs are
 created via a `for_each` over a `local.connectors` map per env — adding a
 connector requires one `locals` map entry per env and SSM params, no CLI or ASL
 edit.
@@ -300,7 +300,7 @@ controlled by `scheduled` and `xtb_enabled` flags. Add a generic `run-connector
 <name>` subcommand (plus `run-consolidate-allocate`) and make connectors
 self-describing via the `BrokerConnector` protocol (`fetch_kwargs`,
 `required_secrets`, `extract_holdings`, `enabled_env_var`). Set up ECS task
-definitions via a `for_each` module pattern (in `prod/` and `demo/`), a shared
+definitions via a `for_each` module pattern (in `prod/` and `staging/`), a shared
 state machine (in `shared/`), EventBridge triggers, per-environment VPCs, and
 IAM roles. See `docs/roadmaps/phase-2-step-functions-orchestration.md` for the
 authoritative implementation plan.
