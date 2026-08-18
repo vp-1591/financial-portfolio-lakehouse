@@ -357,12 +357,22 @@ class TestFetchFailureDetails:
         assert "line one" in out
         assert "line two" in out
 
-    def test_falls_back_to_default_connectors_on_bad_input(self) -> None:
+    @pytest.mark.parametrize(
+        "input_value",
+        [
+            "not-json",  # unparseable
+            "[]",  # valid JSON but not an object -> AttributeError
+            "{}",  # object without connectors -> empty list
+        ],
+    )
+    def test_falls_back_to_default_connectors_on_bad_input(
+        self, input_value: str
+    ) -> None:
         sfn_client = MagicMock()
         sfn_client.get_execution_history.return_value = {"events": []}
         sfn_client.describe_execution.return_value = {
             "startDate": datetime(2026, 7, 23, 10, 0, 0, tzinfo=UTC),
-            "input": "not-json",
+            "input": input_value,
         }
         logs_client = MagicMock()
         logs_client.filter_log_events.return_value = {"events": []}

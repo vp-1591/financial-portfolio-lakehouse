@@ -4,14 +4,13 @@ Reads each broker's CDC normalized Delta table and concatenates all rows
 into ``normalized/cdc_events``, producing a unified broker-neutral CDC
 table suitable for dashboard queries.
 
-Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
+Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
 CDC is mandatory for every registered broker (ibkr, trading212) — a
 missing or empty required broker CDC table raises RuntimeError (the
 required-non-empty gate, carried forward from ADR 0087 §Decision).  XTB is
-triggered by the EventBridge S3 file-arrival rule; the daily ``run-connector
-xtb`` step skips gracefully when no file has arrived, and ``xtb_cdc`` is
-consolidated whenever present (a missing or empty table is skipped, not
-raised).
+not a scheduled connector: fetch+transform runs only on the EventBridge S3
+file-arrival rule, and ``xtb_cdc`` is consolidated whenever present (a
+missing or empty table is skipped, not raised).
 
 D15: the candidate broker set is derived from the connector registry
 (``connectors.all()``), not a hardcoded ``_OPTIONAL_CDC_BROKERS`` list. Only

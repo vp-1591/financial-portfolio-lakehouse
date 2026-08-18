@@ -40,8 +40,9 @@ You can pass `--xtb-file` multiple times to process several reports in one run.
 
 If `--xtb-file` is not provided, XTB is silently skipped during `full` runs.
 The `run-connector xtb` subcommand skips gracefully (return 0) when no file is
-provided — XTB is a required scheduled connector, so the daily run calls it
-with no file and it skips until a report arrives via `upload-xtb`.
+provided. XTB is not part of the scheduled/CI run — it is driven solely by the
+EventBridge file-arrival trigger, so a report arrives via `upload-xtb` and the
+rule runs the connector with the real S3 key.
 
 **Cloud upload (S3 + EventBridge):**
 ```bash
@@ -56,11 +57,12 @@ In production, XTB is event-driven. EventBridge fires on S3 Object-Created for
 the upload prefix (`pipeline/xtb_uploads/` in prod, `pipeline_demo/xtb_uploads/`
 in demo) and starts the Step Functions orchestrator's `RunConnectors` Map with
 `--xtb-file <s3-uri>` — one file per execution. The daily scheduled run
-(`schedule_connectors = ["ibkr","trading212","xtb"]`) **includes** XTB:
-`run-connector xtb` skips gracefully (return 0) when no file has arrived yet, so
-the daily run completes and `xtb_cdc` is a required, non-empty table (stale is
-OK — CDC is cumulative). Multiple accounts accumulate across triggers into the
-shared `xtb_snapshot` raw table and are unioned per-account at transform time.
+(`schedule_connectors = ["ibkr","trading212"]`) does **not** include XTB:
+fetch+transform runs only on file arrival. `run-consolidate-analytics` still
+reads `xtb_snapshot`/`xtb_cdc` silver on every run whenever present, and
+`xtb_cdc` is not a required non-empty table. Multiple accounts accumulate
+across triggers into the shared `xtb_snapshot` raw table and are unioned
+per-account at transform time.
 
 ## Implementation
 

@@ -865,7 +865,12 @@ def main() -> int:
         action="append",
         type=str,
         default=None,
-        help="Path to XTB Excel report, or an s3:// URI (can be specified multiple times)",
+        help=(
+            "Path to XTB Excel report, or an s3:// URI (can be specified "
+            "multiple times). Local/docker only: rejected in staging/prod, "
+            "where XTB runs via 'upload-xtb' + the EventBridge file-arrival "
+            "trigger instead."
+        ),
     )
     full_parser.add_argument(
         "--with-xtb",
