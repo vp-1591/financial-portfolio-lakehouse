@@ -47,7 +47,6 @@ def _resolve_fernet_key(fernet_key: bytes | None) -> bytes:
 _ENCRYPTED_COLUMNS: list[tuple[str, str]] = [
     ("cash_amount", "cash_amount_decrypted"),
     ("target_value", "target_value_resolved"),
-    ("gross_amount", "gross_amount_decrypted"),
     ("fee_amount", "fee_amount_decrypted"),
     ("tax_amount", "tax_amount_decrypted"),
     ("quantity", "quantity_decrypted"),

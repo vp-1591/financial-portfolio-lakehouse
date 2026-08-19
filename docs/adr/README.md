@@ -114,7 +114,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0101 | Fix IBKR Flex Attribute Names for CDC event_id Dedup | 2026-08-03 | active | — |
 | 0102 | Standardize Snapshot Schemas and Fix T212 security_ccy to Instrument Currency | 2026-08-14 | active | — |
 | 0103 | Prod boto3 Default-Chain Credential Fallback | 2026-08-14 | active | — |
-| 0104 | Fix T212 Trade cash_amount/gross_amount Sign Convention | 2026-08-14 | active | — |
+| 0104 | Fix T212 Trade cash_amount/gross_amount Sign Convention | 2026-08-14 | superseded | 0112 |
 | 0105 | Fix T212 CDC Dedup and Cross-Endpoint Concat Type Mismatch | 2026-08-14 | active | — |
 | 0106 | Enforce Analytics Schema at the Write Boundary (Polars Int32/Int64 Drift) | 2026-08-15 | active | — |
 | 0107 | Move orchestrator connector/schedule config to committed connectors.auto.tfvars | 2026-08-16 | active | — |
@@ -122,6 +122,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0109 | Remove ISIN Override CLI Feature | 2026-08-17 | active | — |
 | 0110 | XTB Driven Solely by the File-Arrival Trigger | 2026-08-18 | active | — |
 | 0111 | Remove cash_amount Fallback for Null target_value | 2026-08-18 | active | — |
+| 0112 | Remove YAGNI gross_amount Column from CDC Events Schema | 2026-08-19 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

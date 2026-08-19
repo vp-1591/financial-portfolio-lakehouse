@@ -994,8 +994,6 @@ class TestCdcTransform:
         assert qty == pytest.approx(10.0)
         price = decrypt_float(result.column("price")[0].as_py(), fernet_key)
         assert price == pytest.approx(150.0)
-        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(-1500.0)  # filledValue * fx_rate * direction
         # target_fx_rate, target_value, target_ccy are null for T212 orders;
         # they are computed later by normalize_currency.
         assert result.column("target_fx_rate")[0].as_py() is None
@@ -1143,8 +1141,6 @@ class TestCdcTransform:
         assert result.column("side")[0].as_py() == "SELL"
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(1500.0)  # SELL inflow stays positive
-        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(1500.0)
 
     def test_transform_cdc_order_cross_currency_fx_rate(
         self, fernet_key: bytes
@@ -1191,12 +1187,6 @@ class TestCdcTransform:
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(-(2000.0 * 0.25))
 
-        # gross_amount should also be converted from wallet to security ccy.
-        # The default filledValue is 1500.0 (wallet ccy), * 0.25 = 375.0 USD,
-        # negated for BUY.
-        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(-(1500.0 * 0.25))
-
         # target_fx_rate, target_value, target_ccy are null for T212 orders;
         # they are computed later by normalize_currency.
         assert result.column("target_fx_rate")[0].as_py() is None
@@ -1241,25 +1231,18 @@ class TestCdcTransform:
         # Negated for BUY (outflow) per ADR 0058.
         assert cash == pytest.approx(-(7500.0 * 19.949), rel=1e-6)
 
-        # gross_amount is also converted from wallet to security ccy.
-        # Default filledValue=1500.0 (wallet ccy PLN), * 19.949 ≈ 29923.5 GBX,
-        # negated for BUY.
-        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(-(1500.0 * 19.949), rel=1e-6)
-
         # target_fx_rate, target_value, target_ccy are null for T212 orders
         assert result.column("target_value")[0].as_py() is None
 
     def test_transform_cdc_order_fee_tax_converted_to_security_ccy(
         self, fernet_key: bytes
     ) -> None:
-        """T212 cross-currency orders convert fee/tax/gross from wallet ccy to security ccy.
+        """T212 cross-currency orders convert fee/tax from wallet ccy to security ccy.
 
-        Bug 5 fix: fee_amount, tax_amount, and gross_amount are multiplied by
+        Bug 5 fix: fee_amount and tax_amount are multiplied by
         walletImpact.fxRate (wallet→security) to convert from wallet currency to
         security currency.
           - wallet ccy = PLN, security ccy = USD, fx_rate = 0.25 (PLN→USD)
-          - gross_amount (wallet) = 2000 PLN → 500 USD
           - fee_amount (wallet) = 4.0 PLN → 1.0 USD
           - tax_amount (wallet) = 2.0 PLN → 0.5 USD
         """
@@ -1295,10 +1278,6 @@ class TestCdcTransform:
         # cash_amount: 2000 PLN * 0.25 = 500 USD, negated for BUY (outflow).
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(-500.0)
-
-        # gross_amount: 2000 PLN * 0.25 = 500 USD, negated for BUY.
-        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(-500.0)
 
         # fee_amount: 4.0 PLN * 0.25 = 1.0 USD (positive magnitude, unchanged)
         fee = decrypt_float(result.column("fee_amount")[0].as_py(), fernet_key)
@@ -1426,8 +1405,6 @@ class TestCdcTransform:
         assert qty == pytest.approx(100.0)
         price = decrypt_float(result.column("price")[0].as_py(), fernet_key)
         assert price == pytest.approx(0.425)
-        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(42.5)  # price * quantity
 
     def test_transform_cdc_transactions_classifies_event_types(
         self, fernet_key: bytes
@@ -1540,9 +1517,6 @@ class TestCdcTransform:
         # quantity falls back to fill.quantity (10.0)
         qty = decrypt_float(result.column("quantity")[0].as_py(), fernet_key)
         assert qty == pytest.approx(10.0)
-        # gross_amount falls back to order.value (1500.0), negated for BUY.
-        gross = decrypt_float(result.column("gross_amount")[0].as_py(), fernet_key)
-        assert gross == pytest.approx(-1500.0)
 
 
 class TestT212FixtureRoundTrip:

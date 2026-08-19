@@ -121,7 +121,6 @@ def _make_cdc_table(
                 "quantity": None,
                 "price": None,
                 "side": None,
-                "gross_amount": None,
                 "fee_amount": None,
                 "tax_amount": None,
                 "target_fx_rate": None,

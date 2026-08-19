@@ -43,7 +43,6 @@ def _make_cdc_table(
             "quantity": event.get("quantity"),
             "price": event.get("price"),
             "side": event.get("side"),
-            "gross_amount": event.get("gross_amount"),
             "fee_amount": event.get("fee_amount"),
             "tax_amount": event.get("tax_amount"),
             "target_fx_rate": event.get("target_fx_rate"),

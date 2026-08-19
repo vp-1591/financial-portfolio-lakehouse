@@ -104,7 +104,7 @@ Key behaviors of the new-format parser/transform:
 - **Trades** carry quantity/price/side parsed from the cash-operation comment
   (`OPEN/CLOSE {side} {qty} @ {price}`). The closing (`Stock sell`) row is
   enriched from Closed Positions via Position ID: `fee_amount = Commission`,
-  `gross_amount = Sale value − Purchase value`, `settle_date = Close time`. The
+  `settle_date = Close time`. The
   opening (`Stock purchase`) row gets no fee.
 - **Multi-account.** Snapshot and CDC both keep the latest payload per
   `account_id`. Rows are grouped by `account_id` derived from `source_file`

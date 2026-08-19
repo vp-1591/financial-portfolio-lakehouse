@@ -3,8 +3,8 @@
 Phase 2 (Currency Unification) replaces overloaded column names with
 unambiguous ones:
 
-- ``security_ccy`` — the currency that ``cash_amount``, ``gross_amount``,
-  ``fee_amount``, and ``tax_amount`` are denominated in.  For all event
+- ``security_ccy`` — the currency that ``cash_amount``, ``fee_amount``,
+  and ``tax_amount`` are denominated in.  For all event
   types this is the amount currency, not necessarily the instrument's
   trading currency (see ``instrument_ccy``).
 - ``instrument_ccy`` — the instrument's trading currency, when known
@@ -74,7 +74,6 @@ cdc_events_normalized_schema = pa.schema(
         pa.field("quantity", pa.binary()),  # Fernet-encrypted
         pa.field("price", pa.binary()),  # Fernet-encrypted
         pa.field("side", pa.string()),
-        pa.field("gross_amount", pa.binary()),  # Fernet-encrypted; in security_ccy
         pa.field("fee_amount", pa.binary()),  # Fernet-encrypted; in security_ccy
         pa.field("tax_amount", pa.binary()),  # Fernet-encrypted; in security_ccy
         # Target currency columns (populated by normalize_currency step)

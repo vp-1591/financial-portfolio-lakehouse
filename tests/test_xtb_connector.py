@@ -37,8 +37,6 @@ from tests.fixtures.xtb import (
     DEFAULT_ACCOUNT_ID,
     DEFAULT_CLOSED_COMMISSION,
     DEFAULT_CLOSED_POSITION_ID,
-    DEFAULT_CLOSED_PURCHASE_VALUE,
-    DEFAULT_CLOSED_SALE_VALUE,
     DEPOSIT_AMOUNT,
     INTEREST_AMOUNT,
     INTEREST_TAX_AMOUNT,
@@ -351,11 +349,9 @@ class TestXtbParser:
         for op in report.cash_operations:
             assert round(op.amount, 2) == op.amount
 
-    def test_closed_values_rounded_to_2dp(self, report: XtbReport) -> None:
+    def test_commission_rounded_to_2dp(self, report: XtbReport) -> None:
         closed = report.closed_positions[0]
         assert round(closed.commission, 2) == closed.commission
-        assert round(closed.purchase_value, 2) == closed.purchase_value
-        assert round(closed.sale_value, 2) == closed.sale_value
 
     # --- Closed Positions: nonzero commission + Profit/loss total excluded ---
 
@@ -364,8 +360,6 @@ class TestXtbParser:
         assert closed.position_id == DEFAULT_CLOSED_POSITION_ID
         assert closed.commission == pytest.approx(DEFAULT_CLOSED_COMMISSION)
         assert closed.commission != 0.0
-        assert closed.purchase_value == pytest.approx(DEFAULT_CLOSED_PURCHASE_VALUE)
-        assert closed.sale_value == pytest.approx(DEFAULT_CLOSED_SALE_VALUE)
 
     def test_profit_loss_total_excluded(self, report: XtbReport) -> None:
         # The fixture has a "Profit/loss" total row that must be excluded.
@@ -517,8 +511,6 @@ class TestXtbParser:
         assert closed_fields == {
             "position_id",
             "commission",
-            "purchase_value",
-            "sale_value",
             "close_time",
         }
         assert "swap" not in closed_fields
@@ -889,14 +881,13 @@ class TestTransformCDC:
         assert len(trades) == 2
         by_type = {r["raw_event_type"]: r for r in trades}
 
-        # Purchase row: has qty/price/side, no fee/gross/settle.
+        # Purchase row: has qty/price/side, no fee/settle.
         purchase = by_type["Stock purchase"]
         assert purchase["ticker"] == "SXR8.DE"
         assert decrypt_float(purchase["quantity"], fernet_key) == pytest.approx(10.0001)
         assert decrypt_float(purchase["price"], fernet_key) == pytest.approx(100.0)
         assert purchase["side"] == "BUY"
         assert purchase["fee_amount"] is None  # D8: fee on closing row only
-        assert purchase["gross_amount"] is None
         assert purchase["settle_date"] is None
 
         # Sell row: enriched from Closed Positions via position_id.
@@ -907,10 +898,6 @@ class TestTransformCDC:
         assert sell["side"] == "BUY"  # closing a long position
         assert decrypt_float(sell["fee_amount"], fernet_key) == pytest.approx(
             DEFAULT_CLOSED_COMMISSION
-        )
-        # Guard 2: gross_amount = sale_value - purchase_value, rounded 2dp.
-        assert decrypt_float(sell["gross_amount"], fernet_key) == pytest.approx(
-            round(DEFAULT_CLOSED_SALE_VALUE - DEFAULT_CLOSED_PURCHASE_VALUE, 2)
         )
         assert sell["settle_date"] is not None  # close_time ISO string
 
@@ -1217,12 +1204,14 @@ _CLOSED_HEADER: tuple[object, ...] = (
 
 def _closed_sheet(
     account_id: str,
-    positions: list[tuple[str, float, float, float, object, str]],
+    positions: list[tuple[str, float, object, str]],
 ) -> list[tuple[object, ...]]:
     """Build a minimal Closed Positions sheet.
 
-    Each position tuple is (ticker, commission, purchase_value, sale_value,
-    close_time, position_id).
+    Each position tuple is (ticker, commission, close_time, position_id).
+    The Profit/Loss and Purchase/Sale Value columns are left blank — the
+    parser no longer extracts purchase_value/sale_value (D8 fee enrichment
+    needs only commission and close_time).
     """
     rows: list[tuple[object, ...]] = [
         ("Account number", account_id),
@@ -1231,7 +1220,7 @@ def _closed_sheet(
         ("Date to (UTC)", "2026-08-03"),
         _CLOSED_HEADER,
     ]
-    for ticker, commission, purchase, sale, close_time, position_id in positions:
+    for ticker, commission, close_time, position_id in positions:
         rows.append(
             (
                 "Instr",
@@ -1244,10 +1233,10 @@ def _closed_sheet(
                 120,
                 close_time,
                 "My Trades",
-                sale - purchase,
-                sale - purchase,
-                purchase,
-                sale,
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
                 commission,
@@ -1321,8 +1310,6 @@ class TestXtbExcelSerialDecoding:
                     (
                         "SXR8.DE",
                         12.50,
-                        4300.04,
-                        5040.05,
                         serial,  # raw numeric Excel serial in Close time
                         DEFAULT_CLOSED_POSITION_ID,
                     ),
@@ -1419,8 +1406,6 @@ class TestXtbOpenClosedLifecycle:
                         (
                             "SXR8.DE",
                             15.00,  # nonzero commission -> fee captured once
-                            1000.0,
-                            1200.0,
                             _naive(2026, 8, 2, 7, 0),
                             "P1",
                         ),
