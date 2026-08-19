@@ -28,7 +28,7 @@ Scope size: ~27 pipeline sources, ~20 test files, 37 ADRs (historical — untouc
 **Migration A** — new script `pipeline/migrations/migrate_cdc_to_events.py`:
 1. For each `{broker}_cdc` raw and normalized Delta table present in the environment bucket: read location, rename to `{broker}_events` (Delta `ALTER TABLE RENAME` or S3 copy preserving the `_delta_log`), skip absent tables.
 2. Rename `cdc_events` → `events`.
-3. Idempotent: exit 0 when all target names already exist / sources absent; raise on auth/region/permission errors or unexpected schema (mirror `migrate_snapshot_schema_unify.py` conventions).
+3. Idempotent: exit 0 when all target names already exist / sources absent; raise on auth/region/permission errors or unexpected schema (mirror `migrate_cdc_events_drop_gross_amount.py` conventions — the current live migration; `migrate_xtb_purge_legacy_raw.py` and `migrate_snapshot_schema_unify.py` were removed).
 4. Run manually pre-deploy, per env: `.venv/Scripts/python -m pipeline.migrations.migrate_cdc_to_events --mode staging [--dry-run]`.
 5. Verify: `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals pre-migration `cdc_events` count.
 

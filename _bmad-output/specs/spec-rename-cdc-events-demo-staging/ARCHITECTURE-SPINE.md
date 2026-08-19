@@ -71,7 +71,7 @@ Dependency rule: implementers may depend on the map and on the token gates; migr
   5. A1: Delta renames `{broker}_cdc`→`{broker}_events` (raw + normalized) and `cdc_events`→`events`; plus any data-value rewrite AD-2(d) forces (historical `source = "flex_cdc"` → `"flex_events"`)
   6. verify identical row counts via `pipeline.run query --decrypt --mode staging` — table counts and, where a sentinel was renamed, transformed `events` row counts
   7. deploy the renamed code — **last**
-  The copy (step 2) precedes any apply step that could destroy or repoint the bucket — a bucket-name change is a global rename (new bucket + copy), never an in-place rename. Migration scripts follow the live pattern (`pipeline/migrations/migrate_xtb_purge_legacy_raw.py`): idempotent (exit 0 on absent or already-migrated, raise on genuine failures), `--mode` + `--dry-run`, driven through the CLI — never hand-built `DeltaTable()`.
+  The copy (step 2) precedes any apply step that could destroy or repoint the bucket — a bucket-name change is a global rename (new bucket + copy), never an in-place rename. Migration scripts follow the live pattern (`pipeline/migrations/migrate_cdc_events_drop_gross_amount.py` — the XTB purge-legacy migration was removed in PR #143): run via `python -m pipeline.migrations.<name> --mode <env> [--dry-run]`, idempotent (exit 0 on absent or already-migrated, raise on genuine failures), credentials via `pipeline.migrations._storage_options` and `pipeline.storage.get_storage`, driven through the CLI module invocation.
 
 ### AD-5 — The immutables: what this rename must not touch [ADOPTED]
 
