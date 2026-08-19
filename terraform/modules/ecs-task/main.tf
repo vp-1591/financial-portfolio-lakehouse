@@ -146,9 +146,11 @@ resource "aws_iam_role_policy" "task_s3" {
           "s3:DeleteObject",
           "s3:ListBucket",
         ]
+        # Staging uses an empty s3_prefix (bucket root), so avoid a "bucket//*"
+        # ARN (double slash) which matches no object key and denies GetObject.
         Resource = [
           var.bucket_arn,
-          "${var.bucket_arn}/${var.s3_prefix}/*",
+          var.s3_prefix == "" ? "${var.bucket_arn}/*" : "${var.bucket_arn}/${var.s3_prefix}/*",
         ]
       },
     ]
