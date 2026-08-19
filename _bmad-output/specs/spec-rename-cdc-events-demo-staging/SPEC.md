@@ -29,7 +29,7 @@ Both renames change names that live in Delta table paths / AWS resource names / 
   - **success:** `grep -rni "demo" terraform/` returns no naming-context matches (comments explaining history excepted); applied staging AWS resources carry `-staging`/`pipeline_staging` names.
 - **CAP-3 — renames preserve existing encrypted Delta data**
   - **intent:** After the migration(s) run pre-deploy, all historical broker data is queryable under the new table/path names with identical rows and intact Fernet encryption.
-  - **success:** `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals the pre-migration `cdc_events` count; migration scripts are idempotent (exit 0 on absent or already-migrated, raise on genuine failures).
+  - **success:** `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals the pre-migration `cdc_events` count; migration scripts are idempotent (exit 0 on absent or already-migrated, raise on genuine failures); staging data sits at the bucket root with no `pipeline_demo` prefix.
 - **CAP-4 — both renames ship as one reviewed PR**
   - **intent:** Reviewer can review a single PR containing both rename tracks plus migrations, updated tests, and a new ADR recording the event-layer rename.
   - **success:** PR opens with both tracks; `ruff`, `pyright`, `pytest` all pass; migrations applied to staging; a new ADR records the rename.
@@ -40,6 +40,7 @@ Both renames change names that live in Delta table paths / AWS resource names / 
 - `event_*` column names are already correct and must not change.
 - Migrations follow the existing `pipeline/migrations/` pattern: idempotent, raise on genuine failures, run manually **before** deploying code referencing new names, via `pipeline.run` CLI (never manual `DeltaTable()` construction).
 - S3 bucket name is globally unique, so `investment-portfolio-pipeline-demo` → `investment-portfolio-pipeline-staging` means a **new bucket + full encrypted-data copy**, not an in-place rename.
+- The staging data prefix is **removed entirely** (empty prefix), not renamed to `pipeline_staging` — buckets already isolate environments (ADR 0038/0039), so `pipeline`/`pipeline_demo` inside the bucket is redundant; prod's `pipeline` prefix stays (prod apply is out of scope).
 - SSM `/portfolio/demo/*` → `/portfolio/staging/*` requires creating new parameters with the same secret values and updating deploy-workflow references before retiring the old ones.
 - Terraform renames use planned state migration (`moved` blocks) or deliberate destroy/recreate — never apply prod terraform.
 - Both tracks land in one PR (explicit user direction).

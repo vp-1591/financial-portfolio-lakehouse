@@ -38,7 +38,7 @@ Rename inventory (verified 2026-08-19):
 | Kind | Old | New |
 |---|---|---|
 | S3 bucket | `investment-portfolio-pipeline-demo` | `investment-portfolio-pipeline-staging` |
-| Data prefix | `pipeline_demo` | `pipeline_staging` |
+| Data prefix | `pipeline_demo` | **removed (empty)** — buckets already isolate envs (ADR 0038/0039); prod `pipeline` prefix deferred |
 | IAM user / access key | `pipeline-demo` / `aws_iam_user.pipeline_demo` | `pipeline-staging` |
 | IAM policies | `pipeline-demo-s3-access`, `pipeline-demo-cicd` | `pipeline-staging-s3-access`, `pipeline-staging-cicd` |
 | IAM role patterns (shared) | `pipeline-task-exec-demo-*`, `pipeline-task-demo-*` | `-staging-*` |
@@ -51,7 +51,10 @@ Rename inventory (verified 2026-08-19):
 | Terraform tags / comments | `Project = "…-demo"` etc. | `-staging` |
 | Backend state key | `financial-portfolio-lakehouse-demo/terraform.tfstate` (sample) | `-staging` |
 
-**Migration B1 — S3 data copy:** bucket rename is a global rename → create `investment-portfolio-pipeline-staging`, copy all objects (`aws s3 sync` preserving encryption), rewrite `pipeline_demo` prefix → `pipeline_staging` (server-side prefix move or sync into new prefix). Re-point storage config / `.env` `S3_BUCKET` + prefix.
+**Migration B1 — S3 data copy + prefix removal:** bucket rename is a global rename → create `investment-portfolio-pipeline-staging`, copy all objects (`aws s3 sync` preserving encryption) from `pipeline_demo/*` to the **bucket root** (no prefix). Re-point storage config / `S3_BUCKET`. Prefix-removal couplings updated in the same PR:
+- `pipeline/storage.py` staging default prefix `"pipeline_demo"` → `""` (S3Backend + `query._discover_tables_s3` already support empty prefix).
+- `terraform/staging/main.tf`: `s3_prefix` var default → `""`, `xtb_staging_prefix` → `"xtb_uploads/"` (EventBridge/orchestrator filter follows via `terraform/modules/orchestrator/main.tf:179` `key = [{ prefix = var.xtb_staging_prefix }]`).
+- `tests/test_storage_config.py` empty-`S3_PREFIX` fallback assertions flip to empty-prefix-stays-empty.
 
 **Migration B2 — SSM:** create `/portfolio/staging/{IBKR_FLEX_TOKEN, IBKR_FLEX_QUERY_ID, T212_API_KEY, T212_API_SECRET, ENCRYPTION_KEY}` with the same values; update `deploy-staging.yml` + terraform `ssm` references; retire `/portfolio/demo/*` after confirm (open Q2).
 
