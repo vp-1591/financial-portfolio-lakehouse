@@ -353,7 +353,9 @@ def run_migration(client: Any, *, dry_run: bool = False) -> list[RenameReport]:
     storage = get_storage()
     storage_opts = get_storage_options_with_credentials()
     bucket = storage.backend.bucket
-    prefix = storage.backend.prefix.rstrip("/")
+    # All environments store at the bucket root (the storage-prefix concept
+    # was removed); _table_prefix("", layer, name) yields raw/{table}/ etc.
+    prefix = ""
 
     print("Migration A1: CDC -> events table renames (AD-2)")
     print(f"  Bucket: {bucket}  (prefix {prefix or '(none)'})")

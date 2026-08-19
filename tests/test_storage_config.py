@@ -24,7 +24,6 @@ import pipeline.storage
 from pipeline.secrets import reset_mode, resolve_aws_credentials, set_mode
 from pipeline.storage import (
     PROJECT_ROOT,
-    S3_DEFAULT_PREFIX,
     S3_DEFAULT_PROD_BUCKET,
     S3Backend,
     StorageConfig,
@@ -58,24 +57,29 @@ class TestResolveStorage:
         assert isinstance(config.backend, S3Backend)
         assert config.data_dir.startswith("s3://")
         assert "test-bucket" in config.data_dir
-        # Exact path assertion (A5 C6): the prefix must appear in every path,
-        # not just the bucket. A bug dropping the prefix from the docker base
-        # would misroute writes to s3://bucket/raw instead of s3://bucket/pipeline/raw.
-        assert config.data_dir == "s3://test-bucket/pipeline"
-        assert config.raw_dir == "s3://test-bucket/pipeline/raw"
-        assert config.normalized_dir == "s3://test-bucket/pipeline/normalized"
-        assert config.analytics_dir == "s3://test-bucket/pipeline/analytics"
+        # Exact path assertion (A5 C6): all environments use the bucket root,
+        # so paths are s3://bucket/... with no prefix segment.
+        assert config.data_dir == "s3://test-bucket"
+        assert config.raw_dir == "s3://test-bucket/raw"
+        assert config.normalized_dir == "s3://test-bucket/normalized"
+        assert config.analytics_dir == "s3://test-bucket/analytics"
 
-    def test_docker_mode_paths_include_prefix(self, monkeypatch):
-        """Docker mode paths include the prefix (mirror staging path test)."""
-        monkeypatch.setenv("S3_BUCKET", "pipeline-staging")
+    def test_s3_prefix_env_var_is_ignored(self, monkeypatch):
+        """S3_PREFIX is ignored: all environments store at the bucket root."""
         monkeypatch.setenv("S3_PREFIX", "custom-prefix")
-        set_mode("docker")
-        config = resolve_storage()
-        assert config.data_dir == "s3://pipeline-staging/custom-prefix"
-        assert config.raw_dir == "s3://pipeline-staging/custom-prefix/raw"
-        assert config.normalized_dir == "s3://pipeline-staging/custom-prefix/normalized"
-        assert config.analytics_dir == "s3://pipeline-staging/custom-prefix/analytics"
+        for mode, bucket in (
+            ("docker", "test-bucket"),
+            ("staging", "staging-bucket"),
+            ("prod", "prod-bucket"),
+        ):
+            monkeypatch.setenv("S3_BUCKET", bucket)
+            set_mode(mode)
+            config = resolve_storage()
+            assert config.backend.bucket == bucket
+            assert config.data_dir == f"s3://{bucket}"
+            assert config.raw_dir == f"s3://{bucket}/raw"
+            assert config.normalized_dir == f"s3://{bucket}/normalized"
+            assert config.analytics_dir == f"s3://{bucket}/analytics"
 
     def test_docker_mode_with_endpoint_url(self, monkeypatch):
         """Docker mode with S3_ENDPOINT_URL sets up MinIO endpoint."""
@@ -100,17 +104,6 @@ class TestResolveStorage:
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert config.backend.bucket == "my-staging-bucket"
-        assert config.backend.prefix == ""
-
-    def test_staging_mode_explicit_prefix(self, monkeypatch):
-        """S3_BUCKET and S3_PREFIX override defaults in staging mode."""
-        monkeypatch.setenv("S3_BUCKET", "my-staging-bucket")
-        monkeypatch.setenv("S3_PREFIX", "custom-prefix")
-        set_mode("staging")
-        config = resolve_storage()
-        assert isinstance(config.backend, S3Backend)
-        assert config.backend.bucket == "my-staging-bucket"
-        assert config.backend.prefix == "custom-prefix"
 
     def test_staging_mode_paths_no_prefix(self, monkeypatch):
         """Staging mode uses no prefix in S3 paths (buckets isolate envs)."""
@@ -128,7 +121,6 @@ class TestResolveStorage:
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert config.backend.bucket == "my-staging-bucket"
-        assert config.backend.prefix == ""
 
     def test_staging_mode_requires_bucket(self, monkeypatch):
         """Staging mode raises ValueError when no S3 bucket is configured."""
@@ -136,14 +128,6 @@ class TestResolveStorage:
         set_mode("staging")
         with pytest.raises(ValueError, match="Staging mode requires"):
             resolve_storage()
-
-    def test_staging_prefix_empty_stays_empty(self, monkeypatch):
-        """Empty S3_PREFIX stays empty in staging mode (no fallback prefix)."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_PREFIX", "")
-        set_mode("staging")
-        config = resolve_storage()
-        assert config.backend.prefix == ""
 
     def test_staging_empty_bucket_raises(self, monkeypatch):
         """Empty S3_BUCKET in staging mode raises ValueError (no suffix fallback)."""
@@ -159,26 +143,12 @@ class TestResolveStorage:
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert config.backend.bucket == "my-bucket"
-        assert config.backend.prefix == "pipeline"
-        # Exact path assertion (A5 C6): the prod prefix must appear in every
-        # path, not just the backend. A bug dropping the prefix from the prod
-        # base would misroute writes to s3://bucket/raw instead of
-        # s3://bucket/pipeline/raw.
-        assert config.data_dir == "s3://my-bucket/pipeline"
-        assert config.raw_dir == "s3://my-bucket/pipeline/raw"
-        assert config.normalized_dir == "s3://my-bucket/pipeline/normalized"
-        assert config.analytics_dir == "s3://my-bucket/pipeline/analytics"
-
-    def test_prod_mode_paths_include_prefix(self, monkeypatch):
-        """Prod mode paths include the prefix (mirror staging path test)."""
-        monkeypatch.setenv("S3_BUCKET", "prod-bucket")
-        monkeypatch.setenv("S3_PREFIX", "custom-prefix")
-        set_mode("prod")
-        config = resolve_storage()
-        assert config.data_dir == "s3://prod-bucket/custom-prefix"
-        assert config.raw_dir == "s3://prod-bucket/custom-prefix/raw"
-        assert config.normalized_dir == "s3://prod-bucket/custom-prefix/normalized"
-        assert config.analytics_dir == "s3://prod-bucket/custom-prefix/analytics"
+        # Exact path assertion (A5 C6): prod uses the bucket root, so paths
+        # are s3://bucket/... with no prefix segment.
+        assert config.data_dir == "s3://my-bucket"
+        assert config.raw_dir == "s3://my-bucket/raw"
+        assert config.normalized_dir == "s3://my-bucket/normalized"
+        assert config.analytics_dir == "s3://my-bucket/analytics"
 
     def test_prod_mode_defaults_bucket(self, monkeypatch):
         """Prod mode defaults S3_BUCKET to S3_DEFAULT_PROD_BUCKET when unset."""
@@ -187,32 +157,10 @@ class TestResolveStorage:
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert config.backend.bucket == S3_DEFAULT_PROD_BUCKET
-        assert config.backend.prefix == "pipeline"
-        assert config.data_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline"
-        assert config.raw_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline/raw"
-        assert (
-            config.normalized_dir
-            == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline/normalized"
-        )
-        assert (
-            config.analytics_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/pipeline/analytics"
-        )
-
-    def test_prod_prefix_empty_falls_back(self, monkeypatch):
-        """Empty S3_PREFIX falls back to 'pipeline'."""
-        monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        monkeypatch.setenv("S3_PREFIX", "")
-        set_mode("prod")
-        config = resolve_storage()
-        assert config.backend.prefix == "pipeline"
-
-    def test_docker_prefix_empty_falls_back(self, monkeypatch):
-        """Empty S3_PREFIX falls back to 'pipeline' in docker mode."""
-        monkeypatch.setenv("S3_BUCKET", "test-bucket")
-        monkeypatch.setenv("S3_PREFIX", "")
-        set_mode("docker")
-        config = resolve_storage()
-        assert config.backend.prefix == "pipeline"
+        assert config.data_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}"
+        assert config.raw_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/raw"
+        assert config.normalized_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/normalized"
+        assert config.analytics_dir == f"s3://{S3_DEFAULT_PROD_BUCKET}/analytics"
 
     def test_mode_not_set_raises(self):
         """resolve_storage raises RuntimeError when mode is not set."""
@@ -394,75 +342,48 @@ class TestS3Backend:
         """Clear the functools.cache between tests so each sees fresh env vars."""
         resolve_aws_credentials.cache_clear()
 
-    def test_table_path_with_prefix(self):
-        backend = S3Backend(bucket="my-bucket", prefix="pipeline")
-        assert (
-            backend.table_path("raw", "ibkr_snapshot")
-            == "s3://my-bucket/pipeline/raw/ibkr_snapshot"
-        )
-
-    def test_table_path_default_prefix(self):
+    def test_table_path(self):
         backend = S3Backend(bucket="my-bucket")
         assert (
             backend.table_path("raw", "ibkr_snapshot")
-            == f"s3://my-bucket/{S3_DEFAULT_PREFIX}/raw/ibkr_snapshot"
+            == "s3://my-bucket/raw/ibkr_snapshot"
         )
-
-    def test_table_path_custom_prefix(self):
-        backend = S3Backend(bucket="my-bucket", prefix="data")
         assert (
             backend.table_path("normalized", "consolidated_holdings")
-            == "s3://my-bucket/data/normalized/consolidated_holdings"
+            == "s3://my-bucket/normalized/consolidated_holdings"
         )
 
-    def test_table_path_strips_trailing_slash(self):
-        backend = S3Backend(bucket="my-bucket", prefix="pipeline/")
-        assert (
-            backend.table_path("raw", "ibkr_snapshot")
-            == "s3://my-bucket/pipeline/raw/ibkr_snapshot"
-        )
-
-    def test_table_path_no_prefix(self):
-        backend = S3Backend(bucket="my-bucket", prefix="")
+    def test_table_path_strips_uri_scheme(self):
+        backend = S3Backend(bucket="s3://my-bucket")
         assert (
             backend.table_path("raw", "ibkr_snapshot")
             == "s3://my-bucket/raw/ibkr_snapshot"
         )
 
     def test_ensure_parent_is_noop(self):
-        backend = S3Backend(bucket="my-bucket", prefix="pipeline")
+        backend = S3Backend(bucket="my-bucket")
         # Capture state before the call so we can assert ensure_parent is a
-        # true no-op (A5 C5): a mutation that mutates self.bucket/self.prefix
-        # must fail here, not merely "not raise".
+        # true no-op (A5 C5): a mutation that mutates self.bucket must fail
+        # here, not merely "not raise".
         bucket_before = backend.bucket
-        prefix_before = backend.prefix
         # Should not raise -- S3 doesn't need parent dirs
-        backend.ensure_parent("s3://my-bucket/pipeline/raw/ibkr_snapshot")
+        backend.ensure_parent("s3://my-bucket/raw/ibkr_snapshot")
         assert backend.bucket == bucket_before
-        assert backend.prefix == prefix_before
         assert backend.bucket == "my-bucket"
-        assert backend.prefix == "pipeline"
 
-    def test_staging_path_with_prefix(self):
+    def test_staging_path(self):
         # D20: staging_path(segment, filename) — segment is the full middle
-        # segment (e.g. "xtb_uploads"); no staging/ subfolder, no connector
-        # subfolder between segment and filename.
-        backend = S3Backend(bucket="my-bucket", prefix="pipeline")
-        assert (
-            backend.staging_path("xtb_uploads", "report.xlsx")
-            == "s3://my-bucket/pipeline/xtb_uploads/report.xlsx"
-        )
-
-    def test_staging_path_no_prefix(self):
-        backend = S3Backend(bucket="my-bucket", prefix="")
+        # segment (e.g. "xtb_uploads"); no prefix, no staging/ subfolder, no
+        # connector subfolder between segment and filename.
+        backend = S3Backend(bucket="my-bucket")
         assert (
             backend.staging_path("xtb_uploads", "report.xlsx")
             == "s3://my-bucket/xtb_uploads/report.xlsx"
         )
 
-    def test_staging_path_empty_prefix(self):
-        # Staging env: no prefix (buckets isolate envs) -> bucket-root paths.
-        backend = S3Backend(bucket="my-bucket-staging", prefix="")
+    def test_staging_path_staging_bucket(self):
+        # Staging env: bucket-root paths (buckets isolate envs).
+        backend = S3Backend(bucket="my-bucket-staging")
         assert (
             backend.staging_path("xtb_uploads", "report.xlsx")
             == "s3://my-bucket-staging/xtb_uploads/report.xlsx"
@@ -471,16 +392,15 @@ class TestS3Backend:
     def test_staging_path_no_xtb_subfolder(self):
         # D20 literal-key guard: a refactor re-introducing a connector
         # segment (e.g. "xtb_uploads/xtb/report.xlsx") must fail this test.
-        # Prod: s3://<bucket>/pipeline/xtb_uploads/<file>
-        prod_backend = S3Backend(bucket="prod-bucket", prefix="pipeline")
+        # All environments: s3://<bucket>/xtb_uploads/<file> (bucket root)
+        prod_backend = S3Backend(bucket="prod-bucket")
         prod_uri = prod_backend.staging_path("xtb_uploads", "report.xlsx")
-        assert prod_uri == "s3://prod-bucket/pipeline/xtb_uploads/report.xlsx"
+        assert prod_uri == "s3://prod-bucket/xtb_uploads/report.xlsx"
         # The object key MUST NOT contain an "xtb/" subfolder after the segment.
         assert "/xtb_uploads/xtb/" not in prod_uri
         assert prod_uri.count("/xtb_uploads/") == 1
 
-        # Staging: s3://<bucket>/xtb_uploads/<file> (no prefix)
-        staging_backend = S3Backend(bucket="staging-bucket", prefix="")
+        staging_backend = S3Backend(bucket="staging-bucket")
         staging_uri = staging_backend.staging_path("xtb_uploads", "report.xlsx")
         assert staging_uri == "s3://staging-bucket/xtb_uploads/report.xlsx"
         assert "/xtb_uploads/xtb/" not in staging_uri
@@ -755,24 +675,24 @@ class TestStorageConfigHelpers:
         assert result == str(data / "xtb_uploads" / "report.xlsx")
 
     def test_staging_path_s3_backend(self, monkeypatch) -> None:
-        # D20: prod -> s3://<bucket>/pipeline/xtb_uploads/<file>
-        backend = S3Backend(bucket="my-bucket", prefix="pipeline")
+        # D20: prod -> s3://<bucket>/xtb_uploads/<file> (bucket root)
+        backend = S3Backend(bucket="my-bucket")
         config = StorageConfig(
-            data_dir="s3://my-bucket/pipeline",
-            raw_dir="s3://my-bucket/pipeline/raw",
-            normalized_dir="s3://my-bucket/pipeline/normalized",
-            analytics_dir="s3://my-bucket/pipeline/analytics",
+            data_dir="s3://my-bucket",
+            raw_dir="s3://my-bucket/raw",
+            normalized_dir="s3://my-bucket/normalized",
+            analytics_dir="s3://my-bucket/analytics",
             secrets_dir="/app/.secrets",
             encryption_key_file="/app/.secrets/encryption.key",
             backend=backend,
         )
         set_mode("prod")
         result = config.staging_path("xtb", "report.xlsx")
-        assert result == "s3://my-bucket/pipeline/xtb_uploads/report.xlsx"
+        assert result == "s3://my-bucket/xtb_uploads/report.xlsx"
 
     def test_staging_path_s3_backend_staging(self, monkeypatch) -> None:
-        # D20: staging -> s3://<bucket>/xtb_uploads/<file> (no prefix)
-        backend = S3Backend(bucket="my-bucket-staging", prefix="")
+        # D20: staging -> s3://<bucket>/xtb_uploads/<file> (bucket root)
+        backend = S3Backend(bucket="my-bucket-staging")
         config = StorageConfig(
             data_dir="s3://my-bucket-staging",
             raw_dir="s3://my-bucket-staging/raw",

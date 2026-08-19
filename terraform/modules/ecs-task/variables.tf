@@ -53,11 +53,6 @@ variable "bucket_arn" {
   type        = string
 }
 
-variable "s3_prefix" {
-  description = "S3 key prefix for pipeline data within the bucket."
-  type        = string
-}
-
 variable "ecr_policy_arn" {
   description = "ARN of the shared ECR push/pull IAM policy."
   type        = string
@@ -75,7 +70,7 @@ variable "region" {
 }
 
 variable "task_role_arn" {
-  description = "ARN of a shared task role. If null, the module creates its own task role scoped to bucket/prefix."
+  description = "ARN of a shared task role. If null, the module creates its own task role scoped to the bucket."
   type        = string
   default     = null
 }

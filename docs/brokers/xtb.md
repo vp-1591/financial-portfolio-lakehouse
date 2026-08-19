@@ -54,8 +54,8 @@ automatically. Requires S3 storage.
 ## File-arrival trigger (production)
 
 In production, XTB is event-driven. EventBridge fires on S3 Object-Created for
-the upload prefix (`pipeline/xtb_uploads/` in prod, `xtb_uploads/`
-in staging) and starts the Step Functions orchestrator's `RunConnectors` Map with
+the upload prefix (`xtb_uploads/` in both environments) and starts the Step
+Functions orchestrator's `RunConnectors` Map with
 `--xtb-file <s3-uri>` — one file per execution. The daily scheduled run
 (`schedule_connectors = ["ibkr","trading212"]`) does **not** include XTB:
 fetch+transform runs only on file arrival. `run-consolidate-analytics` still

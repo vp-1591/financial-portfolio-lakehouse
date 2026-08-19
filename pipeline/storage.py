@@ -4,10 +4,8 @@ Storage backend selection is driven by the ``--mode`` CLI flag (set via
 :func:`pipeline.secrets.set_mode` before calling :func:`resolve_storage`):
 
 - **docker** — :class:`S3Backend` with MinIO endpoint (``S3_ENDPOINT_URL``).
-- **staging** — :class:`S3Backend` with the staging S3 bucket
-  (``S3_BUCKET``, no prefix).
-- **prod** — :class:`S3Backend` with the production S3 bucket
-  (``S3_BUCKET``, prefix ``pipeline``).
+- **staging** — :class:`S3Backend` with the staging S3 bucket (``S3_BUCKET``).
+- **prod** — :class:`S3Backend` with the production S3 bucket (``S3_BUCKET``).
 
 Local development can use a ``.env`` file (loaded by
 :mod:`pipeline.secrets`) to set S3 credentials and bucket names.
@@ -24,7 +22,7 @@ Usage::
     set_mode("docker")
     config = get_storage()
     raw_path = config.raw_path("ibkr_snapshot")
-    # e.g. "s3://my-bucket/pipeline/raw/ibkr_snapshot"  (S3Backend)
+    # e.g. "s3://my-bucket/raw/ibkr_snapshot"  (S3Backend)
 """
 
 from __future__ import annotations
@@ -42,9 +40,6 @@ from pipeline.secrets import (
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-# Default S3 prefix within the bucket.
-S3_DEFAULT_PREFIX = "pipeline"
 
 # Default production S3 bucket used when S3_BUCKET is not set in prod mode.
 S3_DEFAULT_PROD_BUCKET = "investment-portfolio-pipeline"
@@ -76,7 +71,7 @@ class StorageBackend(Protocol):
 class S3Backend:
     """S3 storage backend using deltalake's native object_store support.
 
-    ``table_path()`` returns ``s3://bucket/prefix/layer/table`` URIs.
+    ``table_path()`` returns ``s3://bucket/layer/table`` URIs.
     ``ensure_parent()`` is a no-op — S3 does not require parent
     directories to exist before writing.
     ``storage_options()`` returns a dict of AWS credentials for
@@ -92,7 +87,7 @@ class S3Backend:
     ``S3_ALLOW_HTTP=true`` to allow non-HTTPS connections.
     """
 
-    def __init__(self, bucket: str, prefix: str = S3_DEFAULT_PREFIX) -> None:
+    def __init__(self, bucket: str) -> None:
         # Strip s3:// prefix if present — the bucket name should be just the
         # bucket, not a full URI.
         if bucket.startswith("s3://"):
@@ -102,27 +97,21 @@ class S3Backend:
         # Strip leading slashes — a bare bucket name should not start with /.
         bucket = bucket.lstrip("/")
         self.bucket = bucket
-        self.prefix = prefix.rstrip("/")
 
     def table_path(self, layer: str, table_name: str) -> str:
-        if self.prefix:
-            return f"s3://{self.bucket}/{self.prefix}/{layer}/{table_name}"
         return f"s3://{self.bucket}/{layer}/{table_name}"
 
     def staging_path(self, segment: str, filename: str) -> str:
         """Return the S3 URI for a staging upload.
 
         D20: the ``segment`` is the full middle segment (e.g.
-        ``xtb_uploads``) — the environment prefix (``pipeline``, or empty
-        for staging) is already carried by ``self.prefix``, so no
-        separate ``staging`` segment is inserted. This
-        yields ``s3://{bucket}/{prefix}/{segment}/{filename}`` (e.g.
-        ``s3://bucket/pipeline/xtb_uploads/report.xlsx``) with no
-        ``xtb/`` subfolder between ``xtb_uploads/`` and the filename,
-        matching the EventBridge rule prefix.
+        ``xtb_uploads``) — no environment prefix and no separate
+        ``staging`` segment is inserted. Yields
+        ``s3://{bucket}/{segment}/{filename}`` (e.g.
+        ``s3://bucket/xtb_uploads/report.xlsx``) with no ``xtb/``
+        subfolder between ``xtb_uploads/`` and the filename, matching
+        the EventBridge rule prefix.
         """
-        if self.prefix:
-            return f"s3://{self.bucket}/{self.prefix}/{segment}/{filename}"
         return f"s3://{self.bucket}/{segment}/{filename}"
 
     def ensure_parent(self, table_path: str) -> None:
@@ -202,12 +191,10 @@ class StorageConfig:
         """Return the full path for a staging upload (D20).
 
         ``segment`` is ``{connector_name}_uploads`` (e.g. ``xtb_uploads``).
-        The environment (``pipeline``, or empty for staging) is already
-        carried by the backend's ``prefix``, so no separate
-        ``staging`` segment is inserted — the old segment
+        No environment prefix is inserted — the old segment
         redundantly re-encoded the environment and collided with
         ``--mode staging``. Yields
-        ``s3://{bucket}/{prefix}/{connector}_uploads/{filename}``.
+        ``s3://{bucket}/{connector}_uploads/{filename}``.
         """
         return self.backend.staging_path(f"{connector_name}_uploads", filename)
 
@@ -237,10 +224,10 @@ def resolve_storage() -> StorageConfig:
     - **docker** — :class:`S3Backend` with MinIO endpoint.  Requires
       ``S3_BUCKET``; warns if ``S3_ENDPOINT_URL`` is not set.
     - **staging** — :class:`S3Backend` with the staging S3 bucket
-      (``S3_BUCKET``, no prefix).
+      (``S3_BUCKET``).
     - **prod** — :class:`S3Backend` with the production S3 bucket
-      (``S3_BUCKET``, prefix ``pipeline``). If ``S3_BUCKET`` is not set it
-      defaults to :data:`S3_DEFAULT_PROD_BUCKET`.
+      (``S3_BUCKET``). If ``S3_BUCKET`` is not set it defaults to
+      :data:`S3_DEFAULT_PROD_BUCKET`.
 
     Tests must call :func:`use_storage` with a ``tmp_path``-based
     config to prevent accidental writes to the project's ``data/``
@@ -265,9 +252,8 @@ def resolve_storage() -> StorageConfig:
                 "S3_ENDPOINT_URL is not set; "
                 "docker mode (MinIO) typically requires an endpoint URL"
             )
-        prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
-        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
-        base = f"s3://{backend.bucket}/{prefix}"
+        backend = S3Backend(bucket=s3_bucket)
+        base = f"s3://{backend.bucket}"
         config = StorageConfig(
             data_dir=base,
             raw_dir=f"{base}/raw",
@@ -284,9 +270,8 @@ def resolve_storage() -> StorageConfig:
             raise ValueError(
                 "Staging mode requires S3_BUCKET to determine the S3 bucket"
             )
-        prefix = get_env("S3_PREFIX", "")
-        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
-        base = f"s3://{backend.bucket}/{backend.prefix}".rstrip("/")
+        backend = S3Backend(bucket=s3_bucket)
+        base = f"s3://{backend.bucket}"
         config = StorageConfig(
             data_dir=base,
             raw_dir=f"{base}/raw",
@@ -301,9 +286,8 @@ def resolve_storage() -> StorageConfig:
         if not s3_bucket:
             s3_bucket = S3_DEFAULT_PROD_BUCKET
             logger.info("S3_BUCKET not set in prod mode; defaulting to '%s'", s3_bucket)
-        prefix = get_env("S3_PREFIX", S3_DEFAULT_PREFIX)
-        backend = S3Backend(bucket=s3_bucket, prefix=prefix)
-        base = f"s3://{backend.bucket}/{prefix}"
+        backend = S3Backend(bucket=s3_bucket)
+        base = f"s3://{backend.bucket}"
         config = StorageConfig(
             data_dir=base,
             raw_dir=f"{base}/raw",

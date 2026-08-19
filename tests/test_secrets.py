@@ -185,8 +185,8 @@ class TestGetEnv:
 
     def test_get_env_empty_string_falls_back_to_default(self, monkeypatch):
         """Empty string env var falls back to default, unlike os.environ.get."""
-        monkeypatch.setenv("S3_PREFIX", "")
-        assert get_env("S3_PREFIX", "pipeline") == "pipeline"
+        monkeypatch.setenv("SAMPLE_CONFIG_VALUE", "")
+        assert get_env("SAMPLE_CONFIG_VALUE", "pipeline") == "pipeline"
 
     def test_get_env_empty_string_no_default_returns_none(self, monkeypatch):
         """Empty string env var with no default returns None."""

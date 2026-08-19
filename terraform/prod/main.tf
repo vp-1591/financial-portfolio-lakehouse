@@ -34,12 +34,6 @@ variable "bucket_name" {
   default     = "investment-portfolio-pipeline"
 }
 
-variable "s3_prefix" {
-  description = "Key prefix within the S3 bucket for pipeline data."
-  type        = string
-  default     = "pipeline"
-}
-
 variable "iam_user_name" {
   description = "Name of the IAM user for pipeline access."
   type        = string
@@ -228,7 +222,7 @@ data "aws_iam_policy_document" "pipeline" {
 
     resources = [
       aws_s3_bucket.pipeline.arn,
-      "${aws_s3_bucket.pipeline.arn}/${var.s3_prefix}/*",
+      "${aws_s3_bucket.pipeline.arn}/*",
     ]
   }
 }
@@ -473,8 +467,8 @@ locals {
 
   # Common environment variables for all connector task definitions
   common_environment = {
-    S3_BUCKET    = var.bucket_name
-    AWS_REGION   = var.aws_region
+    S3_BUCKET  = var.bucket_name
+    AWS_REGION = var.aws_region
   }
 }
 
@@ -492,11 +486,10 @@ module "connector_task" {
   secrets = concat(each.value.secrets, [
     { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ])
-  bucket_arn    = aws_s3_bucket.pipeline.arn
-  s3_prefix     = var.s3_prefix
+  bucket_arn     = aws_s3_bucket.pipeline.arn
   ecr_policy_arn = var.ecr_push_pull_policy_arn
-  kms_key_arn   = aws_kms_key.ssm.arn
-  region        = var.aws_region
+  kms_key_arn    = aws_kms_key.ssm.arn
+  region         = var.aws_region
 }
 
 # Consolidate-allocate task definition
@@ -513,11 +506,10 @@ module "consolidate_allocate" {
   secrets = [
     { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ]
-  bucket_arn    = aws_s3_bucket.pipeline.arn
-  s3_prefix     = var.s3_prefix
+  bucket_arn     = aws_s3_bucket.pipeline.arn
   ecr_policy_arn = var.ecr_push_pull_policy_arn
-  kms_key_arn   = aws_kms_key.ssm.arn
-  region        = var.aws_region
+  kms_key_arn    = aws_kms_key.ssm.arn
+  region         = var.aws_region
 }
 
 # ------------------------------------------------------------------------------
@@ -544,7 +536,7 @@ module "orchestrator" {
   consolidate_allocate_task_def_arn = module.consolidate_allocate.task_definition_arn
   sfn_role_arn                     = data.aws_iam_role.sfn.arn
   xtb_staging_bucket_name         = aws_s3_bucket.pipeline.bucket
-  xtb_staging_prefix              = "pipeline/xtb_uploads/"
+  xtb_staging_prefix              = "xtb_uploads/"
   scheduled                        = var.scheduled
   schedule_cron                    = var.schedule_cron
   schedule_connectors              = var.schedule_connectors
@@ -599,11 +591,6 @@ output "s3_bucket_arn" {
 output "access_key_id" {
   description = "IAM access key ID (store as GitHub Secret AWS_ACCESS_KEY_ID)."
   value       = aws_iam_access_key.pipeline.id
-}
-
-output "s3_prefix" {
-  description = "S3 key prefix for pipeline data."
-  value       = var.s3_prefix
 }
 
 output "subnet_ids" {
