@@ -25,7 +25,7 @@ Rename inventory (verified 2026-08-19):
 | Data value | raw `source` value `flex_cdc` (IBKR payload; AD-2(d)) | `flex_events` + A1 in-place rewrite of historical values |
 | Docs | `docs/ibkr/flex-query-required-fields-cdc.md` + other non-ADR `docs/` "cdc" hits | renamed to `events` per CAP-1 bar (`docs/adr/` exempt) |
 
-Scope size: ~27 pipeline sources, ~20 test files, 37 ADRs (historical — untouched), ~11 docs. The `event_*` columns do **not** change. User-confirmed scope: the rename extends to `pipeline/analytics/cdc_tables.py` **and** all DQ/quality-check config keys; the success bar is `grep -rni "cdc" pipeline/ tests/ docs/` (excluding `docs/adr/`) returning zero matches.
+Scope size: ~27 pipeline sources, 21 test files (incl. `tests/test_migrate_cdc_events_drop_gross_amount.py` added by PR #143), 37 ADRs (historical — untouched), 10 docs. The `event_*` columns do **not** change. User-confirmed scope: the rename extends to `pipeline/analytics/cdc_tables.py` **and** all DQ/quality-check config keys; the success bar is `grep -rni "cdc" pipeline/ tests/ docs/` (excluding `docs/adr/` and migration artifacts — `pipeline/migrations/*` scripts + their tests, and terraform `moved`/`state mv` blocks, which reference pre-rename names as their inputs) returning zero matches.
 
 **Migration A** — new script `pipeline/migrations/migrate_cdc_to_events.py`:
 1. For each `{broker}_cdc` raw and normalized Delta table present in the environment bucket: read location, rename to `{broker}_events` (Delta `ALTER TABLE RENAME` or S3 copy preserving the `_delta_log`), skip absent tables.
@@ -34,6 +34,7 @@ Scope size: ~27 pipeline sources, ~20 test files, 37 ADRs (historical — untouc
 4. Idempotent: exit 0 when all target names already exist / sources absent; raise on auth/region/permission errors or unexpected schema (mirror `migrate_cdc_events_drop_gross_amount.py` conventions — the current live migration; `migrate_xtb_purge_legacy_raw.py` and `migrate_snapshot_schema_unify.py` were removed).
 5. Run manually pre-deploy, per env: `.venv/Scripts/python -m pipeline.migrations.migrate_cdc_to_events --mode staging [--dry-run]`.
 6. Verify: `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals pre-migration `cdc_events` count; for the data rewrite, count `source`-gated `events` rows.
+7. Sequencing: A1 runs only after PR #143's `migrate_cdc_events_drop_gross_amount.py` has been applied per env — its `_CDC_TABLES` are the pre-rename names (`cdc_events`, `{broker}_cdc`; exempt historical artifact), and after A1 they no longer exist, so the drop must run first; A1's schema guard expects the post-drop schema (no `gross_amount`).
 
 ## Track B — demo → staging (staging AWS env)
 
