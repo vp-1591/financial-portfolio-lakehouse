@@ -26,10 +26,10 @@ Both renames change names that live in Delta table paths / AWS resource names / 
   - **success:** `grep -rni "cdc" pipeline/ tests/` (excluding `docs/adr/` historical records) returns zero matches, and the full test suite passes with the renamed symbols.
 - **CAP-2 — staging AWS environment is named "staging", not "demo"**
   - **intent:** Operator can see every staging-environment AWS resource and function named "staging" — terraform identifiers, live resource names (S3 bucket, IAM user/policies/roles, VPC, SG, state machine), SSM parameter paths, data prefix, and env label.
-  - **success:** `grep -rni "demo" terraform/` returns no naming-context matches (comments explaining history excepted); applied staging AWS resources carry `-staging`/`pipeline_staging` names.
+  - **success:** `grep -rni "demo"` over `pipeline/ tests/ terraform/ .github/ docs/ README.md` (excluding `docs/adr/`, `docs/_vendor/`, `docs/roadmaps/`, `docs/xtb/`, `_bmad-output/`) returns zero matches except the allow-listed broker product-tier references (Trading 212 `demo.trading212.com` URL and `DEMO_BASE_URL`/`_DEMO_BASE_URL` constants; IBKR demo-account deposit injection `_inject_demo_deposit`/`_DEMO_INITIAL_DEPOSIT_AMOUNT`); applied staging AWS resources carry `-staging`/`pipeline_staging` names.
 - **CAP-3 — renames preserve existing encrypted Delta data**
   - **intent:** After the migration(s) run pre-deploy, all historical broker data is queryable under the new table/path names with identical rows and intact Fernet encryption.
-  - **success:** `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals the pre-migration `cdc_events` count; migration scripts are idempotent (exit 0 on absent or already-migrated, raise on genuine failures); staging data sits at the bucket root with no `pipeline_demo` prefix.
+  - **success:** `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals the pre-migration `cdc_events` count; migration scripts are idempotent (exit 0 on absent or already-migrated, raise on genuine failures); staging data sits at the bucket root with no `pipeline_demo` prefix; `/portfolio/staging/*` SSM params hold the live secret values and `/portfolio/demo/*` is retired.
 - **CAP-4 — both renames ship as one reviewed PR**
   - **intent:** Reviewer can review a single PR containing both rename tracks plus migrations, updated tests, and a new ADR recording the event-layer rename.
   - **success:** PR opens with both tracks; `ruff`, `pyright`, `pytest` all pass; migrations applied to staging; a new ADR records the rename.
@@ -41,7 +41,7 @@ Both renames change names that live in Delta table paths / AWS resource names / 
 - Migrations follow the existing `pipeline/migrations/` pattern: idempotent, raise on genuine failures, run manually **before** deploying code referencing new names, via `pipeline.run` CLI (never manual `DeltaTable()` construction).
 - S3 bucket name is globally unique, so `investment-portfolio-pipeline-demo` → `investment-portfolio-pipeline-staging` means a **new bucket + full encrypted-data copy**, not an in-place rename.
 - The staging data prefix is **removed entirely** (empty prefix), not renamed to `pipeline_staging` — buckets already isolate environments (ADR 0038/0039), so `pipeline`/`pipeline_demo` inside the bucket is redundant; prod's `pipeline` prefix stays (prod apply is out of scope).
-- SSM `/portfolio/demo/*` → `/portfolio/staging/*` requires creating new parameters with the same secret values and updating deploy-workflow references before retiring the old ones.
+- SSM `/portfolio/demo/*` → `/portfolio/staging/*`: the user sets the `/portfolio/staging/*` secret values **before** terraform apply (the apply references the new paths); `/portfolio/demo/*` is retired **immediately** after the swap is live.
 - Terraform renames use planned state migration (`moved` blocks) or deliberate destroy/recreate — never apply prod terraform.
 - Both tracks land in one PR (explicit user direction).
 
@@ -51,10 +51,11 @@ Both renames change names that live in Delta table paths / AWS resource names / 
 - Changing `event_*` column names.
 - Renaming prod-environment resources (prod keeps its names; only the staging/demo side and shared patterns that name staging resources change).
 - Renaming docker/MinIO local-mode resource names, except where a shared naming code path (e.g. `MODE_TO_ENV_LABEL`) forces consistency.
+- Renaming broker product-tier "demo" (Trading 212's demo API tier — `demo.trading212.com`, `DEMO_BASE_URL`/`_DEMO_BASE_URL`; IBKR demo/paper accounts — `_inject_demo_deposit`, `_DEMO_INITIAL_DEPOSIT_AMOUNT`, the transform's `is_demo` param) or vendored/historical content (`docs/_vendor/`, `docs/roadmaps/`, `docs/xtb/`) — those are third-party or historical concepts, not the staging env; they are the allow-listed survivors of CAP-2's grep bar.
 
 ## Success signal
 
-The demo→staging and CDC→events renames are merged as one PR and applied to staging: `grep` sweeps for "demo" (naming context) and "cdc" (outside ADRs) in code and terraform come back clean, the migration scripts ran idempotently against staging and preserved every encrypted row (counts verified via `pipeline.query --decrypt`), and the full test suite is green. The word "CDC" survives only in historical ADRs; "demo" survives only in comments describing the old naming.
+The demo→staging and CDC→events renames are merged as one PR and applied to staging: `grep` sweeps come back clean — "cdc" (outside `docs/adr/`) with zero matches, "demo" zero matches outside the CAP-2 carve-outs (`docs/adr/`, `docs/_vendor/`, `docs/roadmaps/`, `docs/xtb/`, `_bmad-output/`, and the broker product-tier allow-list) — the migration scripts ran idempotently against staging and preserved every encrypted row (counts verified via `pipeline.query --decrypt`), `/portfolio/staging/*` is live and `/portfolio/demo/*` retired, and the full test suite is green. The word "CDC" survives only in historical ADRs; "demo" survives only as broker product-tier terminology and in historical/vendored records.
 
 ## Assumptions
 
@@ -63,5 +64,4 @@ The demo→staging and CDC→events renames are merged as one PR and applied to 
 
 ## Open Questions
 
-- Should the physical S3 bucket name change (globally unique → full data copy) or only logical references and prefixes, leaving the bucket as-is? The rename intent says the former; the copy cost is real.
-- What happens to the retired `/portfolio/demo/*` SSM parameters after `/portfolio/staging/*` is live — immediate deletion or a grace period?
+None — all three originally raised (physical bucket rename, SSM retirement timing, CDC scope) are resolved in the memlog.

@@ -49,15 +49,18 @@ Rename inventory (verified 2026-08-19):
 | ECS task defs / log groups | `pipeline-task-*-demo-*` | `-staging-*` |
 | Module var / env label | `var.demo` (`demo = true/false`), `env_label = "demo"` | `var.staging` |
 | Code mapping | `MODE_TO_ENV_LABEL = {"staging": "demo", "prod": "prod"}` (sfn.py) | identity `{"staging": "staging", "prod": "prod"}` |
+| Mode predicate | `is_demo()` (pipeline/secrets.py staging-mode gate; used by query.py, crypto.py, connectors) + `TestIsDemo` | `is_staging()` |
 | Terraform tags / comments | `Project = "…-demo"` etc. | `-staging` |
 | Backend state key | `financial-portfolio-lakehouse-demo/terraform.tfstate` (sample) | `-staging` |
+
+Success bar: `grep -rni "demo"` over `pipeline/ tests/ terraform/ .github/ docs/ README.md` returns zero matches outside the carve-outs (`docs/adr/`, `docs/_vendor/`, `docs/roadmaps/`, `docs/xtb/`, `_bmad-output/`) and the broker product-tier allow-list (Trading 212 `demo.trading212.com` URL + `DEMO_BASE_URL`/`_DEMO_BASE_URL`; IBKR `_inject_demo_deposit`/`_DEMO_INITIAL_DEPOSIT_AMOUNT` + the transform's `is_demo` param — broker-tier concepts, stay). The IBKR transform's `is_demo` param is **not** renamed (broker-tier); the connector passes the renamed `is_staging()` into it. Arbitrary test fixture strings (`bucket-demo`, `staging_demo`, `demo-bucket`) rename for the bar.
 
 **Migration B1 — S3 data copy + prefix removal:** bucket rename is a global rename → create `investment-portfolio-pipeline-staging`, copy all objects (`aws s3 sync` preserving encryption) from `pipeline_demo/*` to the **bucket root** (no prefix). Re-point storage config / `S3_BUCKET`. Prefix-removal couplings updated in the same PR:
 - `pipeline/storage.py` staging default prefix `"pipeline_demo"` → `""` (S3Backend + `query._discover_tables_s3` already support empty prefix).
 - `terraform/staging/main.tf`: `s3_prefix` var default → `""`, `xtb_staging_prefix` → `"xtb_uploads/"` (EventBridge/orchestrator filter follows via `terraform/modules/orchestrator/main.tf:179` `key = [{ prefix = var.xtb_staging_prefix }]`).
 - `tests/test_storage_config.py` empty-`S3_PREFIX` fallback assertions flip to empty-prefix-stays-empty.
 
-**Migration B2 — SSM:** create `/portfolio/staging/{IBKR_FLEX_TOKEN, IBKR_FLEX_QUERY_ID, T212_API_KEY, T212_API_SECRET, ENCRYPTION_KEY}` with the same values; update `deploy-staging.yml` + terraform `ssm` references; retire `/portfolio/demo/*` after confirm (open Q2).
+**Migration B2 — SSM:** user sets `/portfolio/staging/{IBKR_FLEX_TOKEN, IBKR_FLEX_QUERY_ID, T212_API_KEY, T212_API_SECRET, ENCRYPTION_KEY}` with the same secret values **before** terraform apply (the apply references the new paths); same PR updates `deploy-staging.yml` + terraform `ssm` references; retire `/portfolio/demo/*` **immediately** after the swap is live (Q2 resolved: immediate).
 
 **Migration B3 — terraform state:** `moved` blocks in staging/shared configs (or `terraform state mv`) for bucket, IAM, VPC, state machine, task defs; orchestrator module `demo` var → `staging` with `prod/main.tf` flipping `demo = false` → `staging = false`. Apply staging only; never prod.
 
@@ -66,6 +69,6 @@ Rename inventory (verified 2026-08-19):
 1. Track A code rename (symbols, files, config, CLI) + test updates — tests green locally.
 2. Track B terraform + sfn.py/run.py renames (no apply yet).
 3. Write migration scripts A1 + B2; dry-run A1 against staging.
-4. Apply terraform to staging (moved blocks); run B2 SSM swap; run B1 data copy; run A1 table rename; verify counts.
+4. User sets `/portfolio/staging/*` SSM values; apply terraform to staging (moved blocks); retire `/portfolio/demo/*` immediately; run B1 data copy; run A1 table rename; verify counts.
 5. Deploy staging; full check suite (`ruff`, `pyright`, `pytest`) green.
 6. Open one PR (both tracks), then record the ADR via `manage-adr` — new ADR for the events rename (old ADRs stay untouched); add ADR for demo→staging if the change merits one.
