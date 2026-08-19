@@ -26,7 +26,7 @@ from pipeline.connectors.xtb.parser import (
 )
 from pipeline.connectors.xtb.transform import (
     _account_id_from_filename,
-    transform_cdc,
+    transform_events,
     transform_snapshot,
 )
 from pipeline.crypto import decrypt_float, encrypt, generate_key
@@ -317,7 +317,7 @@ class TestXtbParser:
         )
 
     def test_free_cash_equals_sum_of_cash_operations(self, report: XtbReport) -> None:
-        # D22 invariant: under full history, sum of CDC cash_amount == free_cash
+        # D22 invariant: under full history, sum of events cash_amount == free_cash
         # (subaccount transfers net to zero, so the Total equals the sum of
         # the retained events).
         assert report.free_cash == pytest.approx(
@@ -770,8 +770,8 @@ class TestTransformSnapshot:
         assert result.num_rows == 0
 
 
-class TestTransformCDC:
-    """Tests for the raw -> normalized CDC transform (Stage 2, D17/D9/D8)."""
+class TestTransformEvents:
+    """Tests for the raw -> normalized events transform (Stage 2, D17/D9/D8)."""
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
@@ -800,10 +800,10 @@ class TestTransformCDC:
             schema=RAW_SCHEMA,
         )
 
-    def test_cdc_produces_operation_rows(self, fernet_key: bytes) -> None:
-        """D17 shared bronze: CDC from xtb_snapshot raw with source='XTB_REPORT'."""
+    def test_events_produces_operation_rows(self, fernet_key: bytes) -> None:
+        """D17 shared bronze: events from xtb_snapshot raw with source='XTB_REPORT'."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         # 6 events: deposit, interest, interest tax, transfer, purchase, sell.
         # Subaccount transfers filtered (D7), Total row excluded (D10).
@@ -820,7 +820,7 @@ class TestTransformCDC:
     def test_event_type_map(self, fernet_key: bytes) -> None:
         """D6: operation_type -> event_type map (INTEREST/TAX/TRADE/TRANSFER/DEPOSIT)."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         raw_to_norm = {r["raw_event_type"]: r["event_type"] for r in result.to_pylist()}
         assert raw_to_norm["Deposit"] == "DEPOSIT"
@@ -835,16 +835,16 @@ class TestTransformCDC:
     ) -> None:
         """D10/D7: Total row excluded from events; subaccount transfers filtered."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         raw_types = result.column("raw_event_type").to_pylist()
         assert "Total" not in raw_types
         assert "Subaccount transfer" not in raw_types
 
     def test_cash_sum_equals_free_cash(self, fernet_key: bytes) -> None:
-        """D22: under full history, sum of CDC cash_amount == free_cash."""
+        """D22: under full history, sum of events cash_amount == free_cash."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
         report = parse_report(build_new_format_xlsx_bytes())
 
         amounts = [
@@ -858,7 +858,7 @@ class TestTransformCDC:
     ) -> None:
         """D7: currency-conversion Transfer kept as TRANSFER with target_fx_rate null."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         transfers = [r for r in result.to_pylist() if r["event_type"] == "TRANSFER"]
         assert len(transfers) == 1
@@ -874,7 +874,7 @@ class TestTransformCDC:
     def test_trade_enrichment_sell_row_only(self, fernet_key: bytes) -> None:
         """D8: fee_amount on the closing (sell) row only; purchase row gets no fee."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         trades = [r for r in result.to_pylist() if r["event_type"] == "TRADE"]
         # One purchase + one sell.
@@ -904,22 +904,22 @@ class TestTransformCDC:
     def test_2dp_rounding(self, fernet_key: bytes) -> None:
         """D11: cash_amount rounded to 2dp."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
         amounts = [
             decrypt_float(v, fernet_key)
             for v in result.column("cash_amount").to_pylist()
         ]
         assert all(round(a, 2) == a for a in amounts)
 
-    def test_shared_bronze_no_xtb_cdc_raw(self, fernet_key: bytes) -> None:
-        """D17: CDC produced from xtb_snapshot raw (source='XTB_REPORT'), no xtb_cdc raw."""
+    def test_shared_bronze_no_xtb_events_raw(self, fernet_key: bytes) -> None:
+        """D17: events produced from xtb_snapshot raw (source='XTB_REPORT'), no xtb_events raw."""
         raw = self._build_raw(build_new_format_xlsx_bytes(), fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
         assert result.num_rows == 6
         # All rows carry source='XTB_REPORT' (from the shared bronze raw).
         assert all(s == "XTB_REPORT" for s in result.column("source").to_pylist())
 
-    def test_cdc_latest_payload_per_account_on_reupload(
+    def test_events_latest_payload_per_account_on_reupload(
         self, fernet_key: bytes
     ) -> None:
         """D9: re-upload supersedes; latest payload per account (no union)."""
@@ -938,7 +938,7 @@ class TestTransformCDC:
             source_file="new.xlsx",
         )
         combined = pa.concat_tables([raw_old, raw_new], schema=RAW_SCHEMA)
-        result = transform_cdc(combined, fernet_key)
+        result = transform_events(combined, fernet_key)
 
         # Latest payload only — 6 events, not 12.
         assert result.num_rows == 6
@@ -960,7 +960,7 @@ class TestTransformCDC:
             source_file="b.xlsx",
         )
         combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
-        result = transform_cdc(combined, fernet_key)
+        result = transform_events(combined, fernet_key)
 
         # Both accounts contribute 6 events each = 12 (same IDs, different accounts).
         assert result.num_rows == 12
@@ -969,7 +969,7 @@ class TestTransformCDC:
 
 
 class TestFetchFromS3:
-    """Tests for fetch_snapshot with S3 URIs (D17: fetch_cdc removed)."""
+    """Tests for fetch_snapshot with S3 URIs (D17: fetch_events removed)."""
 
     @pytest.fixture()
     def xlsx_bytes(self) -> bytes:
@@ -1340,7 +1340,7 @@ class TestXtbOpenClosedLifecycle:
     union of uploads). Two raw payloads for the same account are combined; the
     second (later ``fetched_at``) supersedes the first. The open position from
     payload 1 does NOT reappear in the snapshot, and the purchase event from
-    payload 1 is NOT in CDC — only the sell (with its fee) survives.
+    payload 1 is NOT in events — only the sell (with its fee) survives.
     """
 
     @pytest.fixture()
@@ -1434,21 +1434,21 @@ class TestXtbOpenClosedLifecycle:
         cash_rows = [r for r in snapshot.to_pylist() if r["position_type"] == "CASH"]
         assert len(cash_rows) == 1
 
-        # CDC: latest-per-account = payload 2 -> only the sell event survives.
-        cdc = transform_cdc(combined, fernet_key)
-        trades = [r for r in cdc.to_pylist() if r["event_type"] == "TRADE"]
+        # events: latest-per-account = payload 2 -> only the sell event survives.
+        events = transform_events(combined, fernet_key)
+        trades = [r for r in events.to_pylist() if r["event_type"] == "TRADE"]
         assert len(trades) == 1  # fee captured exactly once, not zero or twice
         sell = trades[0]
         assert sell["raw_event_type"] == "Stock sell"
         # Fee enriched from the Closed Position (D8), exactly once.
         assert sell["fee_amount"] is not None
         assert decrypt_float(sell["fee_amount"], fernet_key) == pytest.approx(15.00)
-        # The purchase event from payload 1 is NOT in CDC (latest supersedes).
-        assert "Stock purchase" not in {r["raw_event_type"] for r in cdc.to_pylist()}
+        # The purchase event from payload 1 is NOT in events (latest supersedes).
+        assert "Stock purchase" not in {r["raw_event_type"] for r in events.to_pylist()}
 
 
 class TestXtbRealSampleTransformIntegration:
-    """Real-sample integration through transform_snapshot + transform_cdc.
+    """Real-sample integration through transform_snapshot + transform_events.
 
     The parser-level round-trip (TestXtbParser.test_real_sample_round_trip)
     only exercises ``parse_report``. This test flows the real anonymized
@@ -1479,18 +1479,20 @@ class TestXtbRealSampleTransformIntegration:
         assert {"SXR8.DE", "SXRV.DE"} <= labels
         assert f"CASH {DEFAULT_ACCOUNT_CCY}" in labels
 
-        # CDC: events including the deposit, interest, and sell.
-        cdc = transform_cdc(raw, fernet_key)
-        raw_types = {r["raw_event_type"] for r in cdc.to_pylist()}
+        # events: events including the deposit, interest, and sell.
+        events = transform_events(raw, fernet_key)
+        raw_types = {r["raw_event_type"] for r in events.to_pylist()}
         assert "Deposit" in raw_types
         assert "Free funds interest" in raw_types
         assert "Stock sell" in raw_types
-        event_types = set(cdc.column("event_type").to_pylist())
+        event_types = set(events.column("event_type").to_pylist())
         assert {"DEPOSIT", "INTEREST", "TRADE"} <= event_types
 
         # The real sample's Closed Position has Commission=0 (the fixture
         # adds a nonzero one). The sell row's fee_amount must decrypt to 0.0.
-        sell_rows = [r for r in cdc.to_pylist() if r["raw_event_type"] == "Stock sell"]
+        sell_rows = [
+            r for r in events.to_pylist() if r["raw_event_type"] == "Stock sell"
+        ]
         assert len(sell_rows) == 1
         assert sell_rows[0]["fee_amount"] is not None
         assert decrypt_float(sell_rows[0]["fee_amount"], fernet_key) == 0.0
@@ -1693,10 +1695,10 @@ class TestLatestPerAccountGuarded:
         )
 
         caplog.set_level("WARNING", logger="pipeline.connectors.xtb.transform")
-        cdc = transform_cdc(raw, fernet_key)
+        events = transform_events(raw, fernet_key)
 
-        # The Withdrawal is absent from CDC, but the drop is signaled.
-        assert [r["raw_event_type"] for r in cdc.to_pylist()] == ["Deposit"]
+        # The Withdrawal is absent from events, but the drop is signaled.
+        assert [r["raw_event_type"] for r in events.to_pylist()] == ["Deposit"]
         assert any(
             "dropped" in r.message and "empty Time" in r.message for r in caplog.records
         )

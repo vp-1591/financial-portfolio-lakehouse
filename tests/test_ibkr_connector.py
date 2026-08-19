@@ -22,19 +22,19 @@ from pipeline.connectors.ibkr.client import (
     parse_conversion_rates,
     parse_positions,
 )
-from pipeline.connectors.ibkr.fetch import fetch_cdc_via_flex
+from pipeline.connectors.ibkr.fetch import fetch_events_via_flex
 from pipeline.connectors.ibkr.transform import (
     _classify_ibkr_cash_type,
     _deterministic_event_id,
-    _inject_demo_deposit,
+    _inject_paper_deposit,
     _normalize_ibkr_datetime,
-    transform_cdc,
+    transform_events,
 )
 from pipeline.connectors.registry import get
 from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.raw.models import RAW_SCHEMA
 from pipeline.secrets import reset_mode, set_mode
-from tests.fixtures.ibkr import ibkr_raw_cdc, ibkr_raw_positions
+from tests.fixtures.ibkr import ibkr_raw_events, ibkr_raw_positions
 
 
 class TestClientParsing:
@@ -919,15 +919,15 @@ class TestIbkrExtractHoldingsValue:
         )
 
 
-class TestCdcFetch:
-    """Tests for IBKR CDC fetch via Flex Web Service."""
+class TestEventsFetch:
+    """Tests for IBKR events fetch via Flex Web Service."""
 
-    def test_fetch_cdc_produces_raw_table_with_flex_cdc_source(self) -> None:
-        """fetch_cdc_via_flex produces a raw table with source='flex_cdc'."""
+    def test_fetch_events_produces_raw_table_with_flex_events_source(self) -> None:
+        """fetch_events_via_flex produces a raw table with source='flex_events'."""
 
         # Build a minimal Flex XML response
         xml_str = (
-            '<FlexQueryResponse queryName="test_cdc" type="AF">'
+            '<FlexQueryResponse queryName="test_events" type="AF">'
             '<FlexStatements count="1">'
             '<FlexStatement accountId="U123456" fromDate="20260101" toDate="20260625">'
             "<Trades>"
@@ -946,11 +946,11 @@ class TestCdcFetch:
         with patch(
             "pipeline.connectors.ibkr.fetch.IbkrFlexClient", return_value=mock_client
         ):
-            result = fetch_cdc_via_flex(token="test_token", query_id="test_query")
+            result = fetch_events_via_flex(token="test_token", query_id="test_query")
 
         assert result.num_rows == 1
         assert result.column("broker")[0].as_py() == "IBKR"
-        assert result.column("source")[0].as_py() == "flex_cdc"
+        assert result.column("source")[0].as_py() == "flex_events"
 
         # Payload must be non-empty, parseable XML — not just "not None".
         # A bare ``is not None`` check lets ``b""`` (empty/corrupted payload)
@@ -964,62 +964,62 @@ class TestCdcFetch:
         assert root.tag == "FlexQueryResponse"
         assert root.find(".//Trade") is not None
 
-    def test_fetch_cdc_kwargs_with_dedicated_query_id(self, monkeypatch) -> None:
-        """When IBKR_FLEX_CDC_QUERY_ID is set, it takes precedence."""
+    def test_fetch_events_kwargs_with_dedicated_query_id(self, monkeypatch) -> None:
+        """When IBKR_FLEX_EVENTS_QUERY_ID is set, it takes precedence."""
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
-        monkeypatch.setenv("IBKR_FLEX_CDC_QUERY_ID", "cdc_query_456")
+        monkeypatch.setenv("IBKR_FLEX_EVENTS_QUERY_ID", "events_query_456")
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
         set_mode("docker")
 
-        kwargs = connector.fetch_cdc_kwargs()
+        kwargs = connector.fetch_events_kwargs()
         assert kwargs["token"] == "token123"
-        assert kwargs["query_id"] == "cdc_query_456"
+        assert kwargs["query_id"] == "events_query_456"
         reset_mode()
 
-    def test_fetch_cdc_kwargs_falls_back_to_snapshot_query_id(
+    def test_fetch_events_kwargs_falls_back_to_snapshot_query_id(
         self, monkeypatch
     ) -> None:
-        """When IBKR_FLEX_CDC_QUERY_ID is not set, fall back to IBKR_FLEX_QUERY_ID."""
+        """When IBKR_FLEX_EVENTS_QUERY_ID is not set, fall back to IBKR_FLEX_QUERY_ID."""
 
         connector = get("ibkr")
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "token123")
-        monkeypatch.delenv("IBKR_FLEX_CDC_QUERY_ID", raising=False)
+        monkeypatch.delenv("IBKR_FLEX_EVENTS_QUERY_ID", raising=False)
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "snapshot_query_789")
         set_mode("docker")
 
-        kwargs = connector.fetch_cdc_kwargs()
+        kwargs = connector.fetch_events_kwargs()
         assert kwargs["token"] == "token123"
         assert kwargs["query_id"] == "snapshot_query_789"
         reset_mode()
 
-    def test_fetch_cdc_kwargs_returns_empty_when_no_token(self, monkeypatch) -> None:
+    def test_fetch_events_kwargs_returns_empty_when_no_token(self, monkeypatch) -> None:
         """When IBKR_FLEX_TOKEN is not set, returns empty dict."""
 
         connector = get("ibkr")
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
         set_mode("docker")
 
-        kwargs = connector.fetch_cdc_kwargs()
+        kwargs = connector.fetch_events_kwargs()
         assert kwargs == {}
         reset_mode()
 
 
-class TestCdcTransform:
-    """Tests for IBKR CDC transform using broker-neutral schema."""
+class TestEventsTransform:
+    """Tests for IBKR events transform using broker-neutral schema."""
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
         return generate_key()
 
-    def test_transform_cdc_produces_trade_and_dividend_rows(
+    def test_transform_events_produces_trade_and_dividend_rows(
         self, fernet_key: bytes
     ) -> None:
-        """IBKR CDC transform produces TRADE and DIVIDEND events from Flex XML."""
+        """IBKR events transform produces TRADE and DIVIDEND events from Flex XML."""
 
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert (
             result.num_rows >= 7
@@ -1037,18 +1037,18 @@ class TestCdcTransform:
         brokers = result.column("broker").to_pylist()
         assert all(b == "IBKR" for b in brokers)
 
-    def test_transform_cdc_event_id_stability(self, fernet_key: bytes) -> None:
+    def test_transform_events_event_id_stability(self, fernet_key: bytes) -> None:
         """Deterministic event IDs are consistent across repeated transforms."""
 
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
-        result1 = transform_cdc(raw, fernet_key)
-        result2 = transform_cdc(raw, fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
+        result1 = transform_events(raw, fernet_key)
+        result2 = transform_events(raw, fernet_key)
 
         ids1 = result1.column("event_id").to_pylist()
         ids2 = result2.column("event_id").to_pylist()
         assert ids1 == ids2
 
-    def test_transform_cdc_uses_canonical_event_ids(self, fernet_key: bytes) -> None:
+    def test_transform_events_uses_canonical_event_ids(self, fernet_key: bytes) -> None:
         """Trade/CashTransaction/Transfer event_ids come from canonical Flex IDs.
 
         Real Flex payloads use ``ibExecID``/``tradeID``/``transactionID``
@@ -1056,12 +1056,12 @@ class TestCdcTransform:
         ``ibExecutionId``/``tradeId``/``transactionId`` — absent on real data
         — so every event_id fell back to a deterministic hash. This test
         asserts the fixture's canonical IDs are used directly (not hashes),
-        proving the fix. (Demo bronze was not queried here; the fixture's
+        proving the fix. (Staging bronze was not queried here; the fixture's
         canonical IDs stand in for real data per the F1 acceptance note.)
         """
 
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
+        result = transform_events(raw, fernet_key)
 
         sources = result.column("source").to_pylist()
         event_ids = result.column("event_id").to_pylist()
@@ -1100,11 +1100,11 @@ class TestCdcTransform:
             f"got {event_ids[transfer_idx]!r}"
         )
 
-    def test_transform_cdc_encrypts_value_columns(self, fernet_key: bytes) -> None:
-        """IBKR CDC transform encrypts value columns correctly."""
+    def test_transform_events_encrypts_value_columns(self, fernet_key: bytes) -> None:
+        """IBKR events transform encrypts value columns correctly."""
 
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
+        result = transform_events(raw, fernet_key)
 
         # Find the TRADE row and check encrypted columns
         event_types = result.column("event_type").to_pylist()
@@ -1116,26 +1116,26 @@ class TestCdcTransform:
         cash = decrypt_float(cash_amount_raw, fernet_key)
         assert cash == pytest.approx(-1501.0)  # netCash from Trade
 
-    def test_transform_cdc_skips_snapshot_source(self, fernet_key: bytes) -> None:
-        """IBKR CDC transform skips rows with source='flex' (snapshot data)."""
+    def test_transform_events_skips_snapshot_source(self, fernet_key: bytes) -> None:
+        """IBKR events transform skips rows with source='flex' (snapshot data)."""
 
         raw = ibkr_raw_positions(fernet_key=fernet_key)  # source="flex"
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 0
 
-    def test_transform_cdc_deduplicates_across_payloads(
+    def test_transform_events_deduplicates_across_payloads(
         self, fernet_key: bytes
     ) -> None:
         """When multiple raw payloads contain the same IBKR events, dedup by event_id."""
 
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
         # Duplicate the payload row with a different fetched_at — simulates
         # two pipeline runs fetching the same Flex history.
 
         duplicated = pa.concat_tables([raw, raw])
 
-        result = transform_cdc(duplicated, fernet_key)
+        result = transform_events(duplicated, fernet_key)
 
         # The same events should appear exactly once, not twice.
         event_ids = result.column("event_id").to_pylist()
@@ -1143,11 +1143,13 @@ class TestCdcTransform:
             f"Duplicate event_ids found: {event_ids}"
         )
 
-    def test_transform_cdc_normalises_compact_datetime(self, fernet_key: bytes) -> None:
+    def test_transform_events_normalises_compact_datetime(
+        self, fernet_key: bytes
+    ) -> None:
         """IBKR compact datetime formats are normalised to ISO 8601."""
 
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
+        result = transform_events(raw, fernet_key)
 
         event_datetimes = result.column("event_datetime").to_pylist()
         # All event_datetime values should be ISO 8601 (no compact YYYYMMDD formats)
@@ -1156,11 +1158,11 @@ class TestCdcTransform:
                 f"Compact datetime not normalised: {dt}"
             )
 
-    def test_transform_cdc_settle_date_normalized(self, fernet_key: bytes) -> None:
+    def test_transform_events_settle_date_normalized(self, fernet_key: bytes) -> None:
         """IBKR settle_date compact formats are normalised to ISO 8601."""
 
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
+        result = transform_events(raw, fernet_key)
 
         settle_dates = result.column("settle_date").to_pylist()
         # All non-empty settle_date values should be ISO 8601 (no compact YYYYMMDD)
@@ -1256,7 +1258,7 @@ class TestIbkrFeeConversion:
             {
                 "fetched_at": [now],
                 "broker": ["IBKR"],
-                "source": ["flex_cdc"],
+                "source": ["flex_events"],
                 "payload": [encrypted_payload],
                 "payload_hash": [payload_hash],
                 "source_file": [""],
@@ -1273,7 +1275,7 @@ class TestIbkrFeeConversion:
             ib_commission="-1.0",
         )
         raw = self._build_raw_table(xml_str, fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         event_types = result.column("event_type").to_pylist()
         trade_idx = event_types.index("TRADE")
@@ -1293,7 +1295,7 @@ class TestIbkrFeeConversion:
             ib_commission_currency="EUR",
         )
         raw = self._build_raw_table(xml_str, fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         event_types = result.column("event_type").to_pylist()
         trade_idx = event_types.index("TRADE")
@@ -1314,7 +1316,7 @@ class TestIbkrFeeConversion:
         raw = self._build_raw_table(xml_str, fernet_key)
 
         with caplog.at_level(logging.WARNING):
-            result = transform_cdc(raw, fernet_key)
+            result = transform_events(raw, fernet_key)
 
         event_types = result.column("event_type").to_pylist()
         trade_idx = event_types.index("TRADE")
@@ -1401,8 +1403,8 @@ class TestClassifyIbkrCashType:
         assert _classify_ibkr_cash_type("SomeNewType", 42.0) == "UNKNOWN"
 
 
-class TestInjectDemoDeposit:
-    """Tests for _inject_demo_deposit synthetic deposit injection."""
+class TestInjectPaperDeposit:
+    """Tests for _inject_paper_deposit synthetic deposit injection."""
 
     def _make_records(
         self,
@@ -1410,7 +1412,7 @@ class TestInjectDemoDeposit:
         security_ccy: str = "EUR",
         event_datetime: str = "2026-03-01T00:00:00Z",
     ) -> list[dict]:
-        """Build minimal CDC record dicts for testing."""
+        """Build minimal events record dicts for testing."""
         now = datetime.now(UTC)
         return [
             {
@@ -1431,22 +1433,22 @@ class TestInjectDemoDeposit:
             }
         ]
 
-    def test_no_injection_when_not_demo(self) -> None:
-        """When is_demo=False, records are returned unchanged."""
+    def test_no_injection_when_not_paper(self) -> None:
+        """When is_paper=False, records are returned unchanged."""
 
         records = self._make_records()
-        result = _inject_demo_deposit(
-            records, is_demo=False, base_currency_by_account={"U123456": "EUR"}
+        result = _inject_paper_deposit(
+            records, is_paper=False, base_currency_by_account={"U123456": "EUR"}
         )
         assert result is records
         assert len(result) == 1
 
-    def test_injection_adds_deposit_when_demo(self) -> None:
-        """When is_demo=True, a DEPOSIT record is added for each account."""
+    def test_injection_adds_deposit_when_paper(self) -> None:
+        """When is_paper=True, a DEPOSIT record is added for each account."""
 
         records = self._make_records()
-        result = _inject_demo_deposit(
-            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        result = _inject_paper_deposit(
+            records, is_paper=True, base_currency_by_account={"U123456": "EUR"}
         )
         assert len(result) == 2  # original + deposit
 
@@ -1457,7 +1459,7 @@ class TestInjectDemoDeposit:
         assert deposit["target_fx_rate"] == 1.0
         assert deposit["source"] == "CashTransaction"
         assert deposit["raw_event_type"] == "Deposits/Withdrawals"
-        assert deposit["description"] == "Initial demo account deposit"
+        assert deposit["description"] == "Initial paper account deposit"
         assert deposit["ticker"] == ""
         assert deposit["isin"] == ""
 
@@ -1465,8 +1467,8 @@ class TestInjectDemoDeposit:
         """The deposit date is one day before the earliest event_datetime."""
 
         records = self._make_records(event_datetime="2026-06-15T10:30:00Z")
-        result = _inject_demo_deposit(
-            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        result = _inject_paper_deposit(
+            records, is_paper=True, base_currency_by_account={"U123456": "EUR"}
         )
 
         deposit = next(r for r in result if r["event_type"] == "DEPOSIT")
@@ -1479,9 +1481,9 @@ class TestInjectDemoDeposit:
         records = self._make_records(event_datetime="20260301")
         # After normalization this becomes 2026-03-01T00:00:00Z
         # But the records here use the already-normalized format.
-        # Test with ISO format since _inject_demo_deposit normalizes.
-        result = _inject_demo_deposit(
-            records, is_demo=True, base_currency_by_account={"U123456": "EUR"}
+        # Test with ISO format since _inject_paper_deposit normalizes.
+        result = _inject_paper_deposit(
+            records, is_paper=True, base_currency_by_account={"U123456": "EUR"}
         )
 
         deposit = next(r for r in result if r["event_type"] == "DEPOSIT")
@@ -1490,8 +1492,8 @@ class TestInjectDemoDeposit:
     def test_fallback_date_when_no_records(self) -> None:
         """When no records exist but accounts are known, deposit still gets injected."""
 
-        result = _inject_demo_deposit(
-            [], is_demo=True, base_currency_by_account={"U999": "EUR"}
+        result = _inject_paper_deposit(
+            [], is_paper=True, base_currency_by_account={"U999": "EUR"}
         )
         # No records but accounts known → injects deposit for the known account
         assert len(result) == 1
@@ -1545,9 +1547,9 @@ class TestInjectDemoDeposit:
 
         # U111 has base currency EUR (even though it trades USD stocks)
         # U222 has base currency EUR
-        result = _inject_demo_deposit(
+        result = _inject_paper_deposit(
             records,
-            is_demo=True,
+            is_paper=True,
             base_currency_by_account={"U111": "EUR", "U222": "EUR"},
         )
         deposits = [r for r in result if r["event_type"] == "DEPOSIT"]
@@ -1578,9 +1580,9 @@ class TestInjectDemoDeposit:
 
         # Account U999 is EUR-based but its only trade is in USD.
         records = self._make_records(account_id="U999", security_ccy="USD")
-        result = _inject_demo_deposit(
+        result = _inject_paper_deposit(
             records,
-            is_demo=True,
+            is_paper=True,
             # The account's actual base currency is EUR, not USD.
             base_currency_by_account={"U999": "EUR"},
         )
@@ -1592,15 +1594,15 @@ class TestInjectDemoDeposit:
         assert deposit["target_fx_rate"] == 1.0  # EUR == EUR target
 
     def test_deterministic_event_id_is_stable(self) -> None:
-        """Calling _inject_demo_deposit twice produces the same event_ids."""
+        """Calling _inject_paper_deposit twice produces the same event_ids."""
 
         records = self._make_records()
         bca = {"U123456": "EUR"}
-        result1 = _inject_demo_deposit(
-            list(records), is_demo=True, base_currency_by_account=bca
+        result1 = _inject_paper_deposit(
+            list(records), is_paper=True, base_currency_by_account=bca
         )
-        result2 = _inject_demo_deposit(
-            list(records), is_demo=True, base_currency_by_account=bca
+        result2 = _inject_paper_deposit(
+            list(records), is_paper=True, base_currency_by_account=bca
         )
 
         deposits1 = [r for r in result1 if r["event_type"] == "DEPOSIT"]
@@ -1608,25 +1610,25 @@ class TestInjectDemoDeposit:
         assert len(deposits1) == len(deposits2) == 1
         assert deposits1[0]["event_id"] == deposits2[0]["event_id"]
 
-    def test_transform_cdc_with_demo_flag(self) -> None:
-        """transform_cdc with is_demo=True injects a synthetic deposit."""
+    def test_transform_events_with_paper_flag(self) -> None:
+        """transform_events with is_paper=True injects a synthetic deposit."""
 
         fernet_key = generate_key()
-        raw = ibkr_raw_cdc(fernet_key=fernet_key)
+        raw = ibkr_raw_events(fernet_key=fernet_key)
 
-        result_no_demo = transform_cdc(raw, fernet_key, is_demo=False)
-        result_demo = transform_cdc(raw, fernet_key, is_demo=True)
+        result_no_paper = transform_events(raw, fernet_key, is_paper=False)
+        result_paper = transform_events(raw, fernet_key, is_paper=True)
 
-        # Demo result should have one more row (the deposit)
-        assert result_demo.num_rows == result_no_demo.num_rows + 1
+        # Paper result should have one more row (the deposit)
+        assert result_paper.num_rows == result_no_paper.num_rows + 1
 
-        demo_types = result_demo.column("event_type").to_pylist()
-        assert demo_types.count("DEPOSIT") == 1 + result_no_demo.column(
+        paper_types = result_paper.column("event_type").to_pylist()
+        assert paper_types.count("DEPOSIT") == 1 + result_no_paper.column(
             "event_type"
         ).to_pylist().count("DEPOSIT")
 
         # The synthetic deposit should be for the fixture account
-        demo_event_ids = result_demo.column("event_id").to_pylist()
-        assert len(demo_event_ids) == len(set(demo_event_ids)), (
+        paper_event_ids = result_paper.column("event_id").to_pylist()
+        assert len(paper_event_ids) == len(set(paper_event_ids)), (
             "Synthetic deposit should not duplicate existing event_ids"
         )

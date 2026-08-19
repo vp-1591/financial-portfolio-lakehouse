@@ -20,7 +20,7 @@ def load_key(path: Path | None = None) -> bytes:
 
     The ``ENCRYPTION_KEY`` environment variable is always read under its
     base name — ECS tasks inject it from environment-scoped SSM parameters
-    (``/portfolio/demo/`` or ``/portfolio/prod/``).  There is no cross-mode
+    (``/portfolio/staging/`` or ``/portfolio/prod/``).  There is no cross-mode
     fallback — if the key for the active mode is missing, a hard error
     is raised.  In staging mode, the file-based fallback is **disabled**
     because ``.secrets/encryption.key`` is shared between modes and
@@ -40,7 +40,7 @@ def load_key(path: Path | None = None) -> bytes:
     FileNotFoundError
         If the key file does not exist at the resolved path.
     """
-    from pipeline.secrets import is_demo, resolve_secret
+    from pipeline.secrets import is_staging, resolve_secret
 
     env_key = resolve_secret("ENCRYPTION_KEY")
     if env_key:
@@ -48,7 +48,7 @@ def load_key(path: Path | None = None) -> bytes:
 
     # resolve_secret returned None — in staging mode, falling through
     # to the file-based key would use the production key, violating isolation.
-    if is_demo():
+    if is_staging():
         raise OSError(
             "ENCRYPTION_KEY is not set in staging mode.  The encryption "
             "key must be provided via the ENCRYPTION_KEY environment "

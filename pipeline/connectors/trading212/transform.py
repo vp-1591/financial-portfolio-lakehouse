@@ -1,6 +1,6 @@
-"""Trading 212 connector: transform raw snapshot and CDC data into normalized schema.
+"""Trading 212 connector: transform raw snapshot and events data into normalized schema.
 
-Uses Polars expressions for CDC field extraction — ``struct.field()`` for
+Uses Polars expressions for events field extraction — ``struct.field()`` for
 nested access and ``coalesce()`` for fallback chains — instead of error-prone
 ``dict.get()`` patterns that silently return None for nested structures.
 """
@@ -19,14 +19,14 @@ from pipeline.connectors.trading212.client import (
 )
 from pipeline.connectors.transform_utils import (
     build_normalized_table,
-    decrypt_cdc_payloads,
-    dedup_cdc_events,
+    decrypt_events_payloads,
+    dedup_events,
     filter_latest_snapshot,
     finalize_table,
     iter_raw_payloads,
 )
 from pipeline.normalized.models import (
-    cdc_events_normalized_schema,
+    events_normalized_schema,
     snapshot_normalized_schema,
 )
 
@@ -128,10 +128,10 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
 
 # ---------------------------------------------------------------------------
-# CDC transform — Polars-native field extraction
+# events transform — Polars-native field extraction
 # ---------------------------------------------------------------------------
 
-_CDC_ENCRYPT_COLUMNS = [
+_EVENTS_ENCRYPT_COLUMNS = [
     "cash_amount",
     "quantity",
     "price",
@@ -161,7 +161,7 @@ _T212_FEE_NAMES = frozenset(
 
 _T212_TAX_NAMES = frozenset({"FRENCH_TRANSACTION_TAX"})
 
-# Expected struct fields for nested objects in T212 CDC events.
+# Expected struct fields for nested objects in T212 events.
 # Polars infers struct schemas from data — if a field is absent from all
 # events, struct.field() raises StructFieldNotFoundError.  These sets are
 # used by _ensure_struct_fields() to backfill missing keys with None so
@@ -255,8 +255,8 @@ def _extract_tax_amount(taxes: list | None) -> float:
     )
 
 
-def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
-    """Transform raw Trading 212 CDC data using Polars-native field extraction.
+def transform_events(raw: pa.Table, fernet_key: bytes) -> pa.Table:
+    """Transform raw Trading 212 events data using Polars-native field extraction.
 
     Splits events by source type (orders, dividends, transactions) and
     applies per-endpoint Polars expressions that use ``struct.field()`` for
@@ -265,7 +265,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """
     dfs: list[pl.DataFrame] = []
 
-    for fetched_at, source, events in decrypt_cdc_payloads(raw, fernet_key):
+    for fetched_at, source, events in decrypt_events_payloads(raw, fernet_key):
         if "/orders" in source:
             dfs.append(_transform_orders(events, fetched_at, source))
         elif "/dividends" in source:
@@ -275,7 +275,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
 
     if not dfs:
         return build_normalized_table(
-            [], cdc_events_normalized_schema, fernet_key, _CDC_ENCRYPT_COLUMNS
+            [], events_normalized_schema, fernet_key, _EVENTS_ENCRYPT_COLUMNS
         )
 
     # vertical_relaxed promotes mismatched column types across endpoints at
@@ -284,22 +284,22 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
     result = pl.concat(dfs, how="vertical_relaxed")
 
-    # T212 CDC fetches the full order/dividend/transaction history on every
+    # T212 events fetches the full order/dividend/transaction history on every
     # run.  Re-fetched pages produce raw payloads with different byte content
     # (and therefore different SHA-256 hashes), so the raw layer re-appends
     # them.  Dedup by (event_type, event_id) -- order.id is an integer cast to
     # string while dividend/transaction reference is a separate string ID
     # space, so event_type scopes the uniqueness -- keeping the version from
     # the latest fetched_at.  Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
-    result = dedup_cdc_events(
+    result = dedup_events(
         result,
         subset=["event_type", "event_id"],
         sort_after=["event_type", "event_id"],
-        label="T212 CDC",
+        label="T212 events",
     )
 
     return finalize_table(
-        result, cdc_events_normalized_schema, fernet_key, _CDC_ENCRYPT_COLUMNS
+        result, events_normalized_schema, fernet_key, _EVENTS_ENCRYPT_COLUMNS
     )
 
 

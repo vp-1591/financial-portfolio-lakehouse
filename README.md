@@ -46,7 +46,7 @@ diagram, layer table, and naming convention. See
 
 ## Screenshots
 
-Sample report output generated from demo data for presentation purposes.
+Sample report output generated from staging data for presentation purposes.
 
 ![Positions](docs/screenshots/positions.png)
 ![Currency Exposure](docs/screenshots/currency-exposure.png)
@@ -58,7 +58,7 @@ Sample report output generated from demo data for presentation purposes.
 - **Encryption** — Fernet (cryptography) for financial values at rest
 - **Local** — Docker + MinIO (S3-compatible object store)
 - **Cloud** — AWS ECS Fargate, Step Functions, S3, SSM, ECR, KMS
-- **Infrastructure** — Terraform (shared, demo, prod environments)
+- **Infrastructure** — Terraform (shared, staging, prod environments)
 - **CI/CD** — GitHub Actions (lint, test, build, deploy)
 
 ## Quick Start
@@ -153,7 +153,7 @@ docs/
   adr/              # Architecture Decision Records
   roadmaps/         # Project roadmaps
   screenshots/      # Generated chart images
-terraform/          # AWS infrastructure (shared, demo, prod)
+terraform/          # AWS infrastructure (shared, staging, prod)
 tests/              # pytest test suite
 ```
 

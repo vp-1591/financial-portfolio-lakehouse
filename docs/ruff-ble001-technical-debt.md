@@ -14,8 +14,8 @@ ruff 0.16.0 introduced new rules that flagged 35 `except Exception` sites. Of th
 | File | Line | Current | Should narrow to |
 |---|---|---|---|
 | `pipeline/analytics/holdings.py` | 71 | `except Exception` | `except (DeltaTableError, OSError)` |
-| `pipeline/analytics/cdc_tables.py` | 197 | `except Exception` | `except (DeltaTableError, OSError)` |
-| `pipeline/normalized/consolidate_cdc.py` | 55 | `except Exception` | `except (DeltaTableError, OSError)` |
+| `pipeline/analytics/events_tables.py` | 197 | `except Exception` | `except (DeltaTableError, OSError)` |
+| `pipeline/normalized/consolidate_events.py` | 55 | `except Exception` | `except (DeltaTableError, OSError)` |
 | `pipeline/normalized/normalize.py` | 86 | `except Exception` | `except (DeltaTableError, OSError)` |
 
 ## Recommended Approach

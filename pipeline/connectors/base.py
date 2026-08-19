@@ -17,10 +17,10 @@ class BrokerConnector(Protocol):
 
     name: str  # e.g. "ibkr", "trading212", "xtb"
     display_name: str  # e.g. "IBKR", "Trading 212", "XTB"
-    # D17: which raw layer the CDC transform reads from. Default "cdc"
-    # (a separate CDC raw fetch); XTB overrides to "snapshot" (shared bronze
+    # D17: which raw layer the events transform reads from. Default "events"
+    # (a separate events raw fetch); XTB overrides to "snapshot" (shared bronze
     # — one raw row carries all sheets and feeds both silvers).
-    cdc_raw_layer: str
+    events_raw_layer: str
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         """Build connector-specific keyword arguments for ``fetch_snapshot``.
@@ -31,18 +31,18 @@ class BrokerConnector(Protocol):
         """
         ...
 
-    def fetch_cdc_kwargs(self) -> dict:
-        """Build keyword arguments for ``fetch_cdc``.
+    def fetch_events_kwargs(self) -> dict:
+        """Build keyword arguments for ``fetch_events``.
 
         Returns the snapshot kwargs for brokers that share the same credentials
-        for CDC (e.g. Trading 212), or an empty dict otherwise.
+        for events (e.g. Trading 212), or an empty dict otherwise.
         """
         ...
 
     def required_secrets(self) -> list[str]:
         """Return the base secret env-var names this connector requires.
 
-        Used for validation and documentation.  Demo-mode resolution is
+        Used for validation and documentation.  Staging-mode resolution is
         handled by :func:`pipeline.secrets.resolve_secret` at fetch time.
         """
         ...
@@ -61,10 +61,10 @@ class BrokerConnector(Protocol):
         """Fetch a raw snapshot from the broker and return a raw-layer PyArrow table."""
         ...
 
-    def fetch_cdc(self, **kwargs: object) -> pa.Table:
-        """Fetch CDC (change data capture) events from the broker.
+    def fetch_events(self, **kwargs: object) -> pa.Table:
+        """Fetch events (change data capture) from the broker.
 
-        Brokers that do not yet support CDC should raise ``NotImplementedError``.
+        Brokers that do not yet support events should raise ``NotImplementedError``.
         """
         ...
 
@@ -72,9 +72,9 @@ class BrokerConnector(Protocol):
         """Transform a raw snapshot table into the normalized schema."""
         ...
 
-    def transform_cdc(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
-        """Transform a raw CDC table into the normalized schema.
+    def transform_events(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
+        """Transform a raw events table into the normalized schema.
 
-        Brokers that do not yet support CDC should raise ``NotImplementedError``.
+        Brokers that do not yet support events should raise ``NotImplementedError``.
         """
         ...

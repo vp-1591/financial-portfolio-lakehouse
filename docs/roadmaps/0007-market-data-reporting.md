@@ -6,7 +6,7 @@ Reconstruct historical portfolio value over time by integrating external market
 data, and add the charts that depend on it: the performance chart (portfolio
 value vs. invested capital), asset allocation over time, and finer-grained
 position-type classification. This roadmap builds on the reporting baseline
-roadmap, which delivered current-state reporting from snapshots and CDC events.
+roadmap, which delivered current-state reporting from snapshots and events.
 
 Who it's for: the portfolio owner who wants to see how their portfolio has
 performed over time — not just what it holds now, but whether it has grown
@@ -15,8 +15,8 @@ relative to the capital invested.
 ## Current state
 
 - **Reporting baseline roadmap** delivers a current-state HTML report with
-  allocation, passive income, and cash flow charts from snapshots and CDC.
-- **CDC events** (`cdc_events`) record trades, deposits, withdrawals,
+  allocation, passive income, and cash flow charts from snapshots and events.
+- **events** (`events`) record trades, deposits, withdrawals,
   dividends, interest, fees, taxes — the full cash-flow and trade history.
 - **Current snapshot** (`consolidated_holdings` + per-broker snapshot tables)
   gives ground-truth quantities held right now.
@@ -28,11 +28,11 @@ relative to the capital invested.
   (portfolio value vs. net invested capital) is not possible without either
   accumulated snapshots or market data.
 
-The core problem from `IBKR_DATA_MODELLING.md`: CDC records cash flows, not
-market value changes. Unrealized gains/losses are invisible in CDC. To plot
+The core problem from `IBKR_DATA_MODELLING.md`: events records cash flows, not
+market value changes. Unrealized gains/losses are invisible in events. To plot
 portfolio value over time, we need `date → sum(quantity_held × price_on_date)`
 for equities plus the cash balance on that date. Market data provides the
-prices; CDC trades + the current snapshot provide the quantities; CDC cash
+prices; events trades + the current snapshot provide the quantities; events cash
 flows + the current cash balance provide historical cash.
 
 This roadmap uses Approach C from `IBKR_DATA_MODELLING.md` (external market
@@ -44,7 +44,7 @@ collection.
 ## Success criteria
 
 - [ ] A `position_history` table exists, reconstructing quantity held per
-  security per date from CDC trades anchored to the current snapshot —
+  security per date from events trades anchored to the current snapshot —
   verifiable by checking that reconstructed quantities on the latest date
   match the current snapshot
 - [ ] A `price_history` table exists with historical close prices for each
@@ -67,7 +67,7 @@ collection.
 | Approach | Why rejected |
 |----------|-------------|
 | **Approach A: Regular snapshot accumulation** | Requires the pipeline to run on every date we want data for; gaps when it doesn't run cannot be backfilled. The user explicitly prefers market data over hoarding snapshots. Kept as an optional validation anchor, not the primary source. |
-| **Approach B: Snapshot anchors + CDC interpolation** | Only approximates between anchors — unrealized gains are invisible. Market data gives accurate valuations for every date, so interpolation is unnecessary. |
+| **Approach B: Snapshot anchors + events interpolation** | Only approximates between anchors — unrealized gains are invisible. Market data gives accurate valuations for every date, so interpolation is unnecessary. |
 | **LLM-based position-type classification** | Adds a dependency on an LLM API and non-deterministic categorization. Instrument metadata from market data APIs (asset type, sector, category) is deterministic and comes for free with price fetches. LLM classification can be a fallback for instruments lacking metadata. |
 | **Paid market data API (Alpha Vantage, Financial Modeling Prep)** | Adds API key management and rate limits/costs for a personal-use tool. Yahoo Finance via `yfinance` is free and sufficient for daily close prices. Can swap the provider behind an interface if `yfinance` becomes unreliable. |
 | **Reconstructing positions forward from the first trade** | Errors accumulate forward and the demo account has no deposit events, so the initial balance is unknown. Reconstructing backward from the current snapshot (ground truth) avoids both problems. |
@@ -77,7 +77,7 @@ collection.
 ### Phase 1 — Position history reconstruction *[status: planned]*
 
 Reconstruct the quantity of each security held on each historical date, by
-working backward from the current snapshot and applying CDC trades in reverse.
+working backward from the current snapshot and applying events trades in reverse.
 This is the foundation: market data provides prices, but we must know
 *quantities held* on each date to value the portfolio.
 
@@ -86,7 +86,7 @@ This is the foundation: market data provides prices, but we must know
   held, derived from current snapshot quantities minus reverse-applied trades
 - [ ] Handle buys (subtract quantity when going backward) and sells (add
   quantity when going backward), including TRANSFER events that move securities
-- [ ] Date granularity: daily series from the earliest CDC trade date to the
+- [ ] Date granularity: daily series from the earliest events trade date to the
   latest snapshot date (forward-fill quantities between trade dates)
 - [ ] Validation: reconstructed quantities on the latest date match the current
   snapshot exactly (assertion-based test)
@@ -101,7 +101,7 @@ This is the foundation: market data provides prices, but we must know
 - Multi-currency conversion of quantities — quantities are currency-agnostic;
   FX conversion happens in Phase 3 at valuation time
 
-**Links:** ADR 0058 (broker-neutral CDC schema), `IBKR_DATA_MODELLING.md`
+**Links:** ADR 0058 (broker-neutral events schema), `IBKR_DATA_MODELLING.md`
 
 ---
 
@@ -130,7 +130,7 @@ metadata for position-type classification. Cache results to avoid re-fetching.
 - Intraday prices — daily close is sufficient for portfolio valuation
 - Real-time quotes — this is historical reporting, not live monitoring
 - Fundamental data (earnings, ratios) — not needed for the planned charts
-- FX rate history — the existing `fx_rate_to_base` from broker data and CDC
+- FX rate history — the existing `fx_rate_to_base` from broker data and events
   is used; fetching historical FX rates is deferred unless valuation accuracy
   requires it
 
@@ -140,7 +140,7 @@ metadata for position-type classification. Cache results to avoid re-fetching.
 
 ### Phase 3 — Historical portfolio valuation *[status: planned]*
 
-Combine position history, market prices, and CDC cash flows into a daily
+Combine position history, market prices, and events cash flows into a daily
 portfolio value series converted to the account base currency.
 
 **Scope:**
@@ -148,11 +148,11 @@ portfolio value series converted to the account base currency.
   (`sum(quantity_held × price_on_date)`), cash balance, and total value, all in
   base currency
 - [ ] Cash balance reconstruction: current cash from snapshot, minus
-  reverse-applied CDC cash flows (deposits, withdrawals, dividends, interest,
-  fees, taxes, trade cash legs) — cash has no unrealized gains, so CDC is
+  reverse-applied events cash flows (deposits, withdrawals, dividends, interest,
+  fees, taxes, trade cash legs) — cash has no unrealized gains, so events is
   sufficient
 - [ ] FX conversion: equity and cash values converted to base currency using
-  `fx_rate_to_base` from CDC/broker data (or a static rate where historical FX
+  `fx_rate_to_base` from events/broker data (or a static rate where historical FX
   is unavailable, with a logged assumption)
 - [ ] Synthetic opening balance for demo accounts: inject a "Day 0" deposit
   equal to the reconstructed opening cash balance so charts do not start at

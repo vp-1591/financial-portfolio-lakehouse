@@ -1,10 +1,10 @@
-"""Tests for mode resolution: set_mode, get_mode, is_demo, resolve_storage."""
+"""Tests for mode resolution: set_mode, get_mode, is_staging, resolve_storage."""
 
 from __future__ import annotations
 
 import pytest
 
-from pipeline.secrets import get_mode, is_demo, reset_mode, set_mode
+from pipeline.secrets import get_mode, is_staging, reset_mode, set_mode
 from pipeline.storage import S3_DEFAULT_PROD_BUCKET, resolve_storage, use_storage
 
 
@@ -42,22 +42,22 @@ class TestGetMode:
         reset_mode()
 
 
-class TestIsDemo:
-    """is_demo returns True only in staging mode."""
+class TestIsStaging:
+    """is_staging returns True only in staging mode."""
 
-    def test_staging_is_demo(self) -> None:
+    def test_staging_is_staging(self) -> None:
         set_mode("staging")
-        assert is_demo() is True
+        assert is_staging() is True
         reset_mode()
 
-    def test_docker_is_not_demo(self) -> None:
+    def test_docker_is_not_staging(self) -> None:
         set_mode("docker")
-        assert is_demo() is False
+        assert is_staging() is False
         reset_mode()
 
-    def test_prod_is_not_demo(self) -> None:
+    def test_prod_is_not_staging(self) -> None:
         set_mode("prod")
-        assert is_demo() is False
+        assert is_staging() is False
         reset_mode()
 
 
@@ -93,7 +93,7 @@ class TestResolveStorage:
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
         config = resolve_storage()
         assert config.backend.bucket == "staging-bucket"
-        assert config.backend.prefix == "pipeline_demo"
+        assert config.backend.prefix == ""
         reset_mode()
 
     def test_prod_mode_uses_prod_bucket(self, monkeypatch) -> None:

@@ -1,4 +1,4 @@
-"""Trading 212 connector: fetch raw snapshot and CDC data from the API."""
+"""Trading 212 connector: fetch raw snapshot and events data from the API."""
 
 from __future__ import annotations
 
@@ -72,13 +72,13 @@ def fetch_snapshot(
     )
 
 
-def fetch_cdc(
+def fetch_events(
     api_key: str,
     api_secret: str,
     base_url: str = "https://live.trading212.com/api/v0",
     timeout: float = 20.0,
 ) -> pa.Table:
-    """Fetch Trading 212 CDC events (orders, dividends, transactions)."""
+    """Fetch Trading 212 events (orders, dividends, transactions)."""
     client = Trading212Client(
         base_url,
         api_key=api_key,
@@ -104,7 +104,9 @@ def fetch_cdc(
         try:
             fetch_method()
         except Exception as exc:
-            logger.warning("Trading 212 CDC endpoint %s failed: %s", endpoint_name, exc)
+            logger.warning(
+                "Trading 212 events endpoint %s failed: %s", endpoint_name, exc
+            )
             continue
 
         for path, raw_bytes in client.captured_responses:
@@ -117,7 +119,7 @@ def fetch_cdc(
 
     if not payloads:
         raise RuntimeError(
-            "Trading 212 CDC: all endpoints (orders, dividends, transactions) "
+            "Trading 212 events: all endpoints (orders, dividends, transactions) "
             "failed or returned no data"
         )
 

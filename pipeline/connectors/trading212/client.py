@@ -1,7 +1,7 @@
 """Trading 212 API client.
 
 This module provides the Trading 212 API client with raw response
-interception for pipeline ingestion, plus CDC endpoint methods.
+interception for pipeline ingestion, plus events endpoint methods.
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ class Trading212Client:
             raise Trading212Error("Unexpected positions response.")
         return positions
 
-    # --- CDC (historical) endpoints ---
+    # --- events (historical) endpoints ---
 
     def _fetch_paginated(self, path: str) -> list[dict[str, Any]]:
         """Fetch all pages from a paginated T212 API endpoint.

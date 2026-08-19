@@ -1,4 +1,4 @@
-"""XTB connector: transform raw snapshot and CDC data into normalized schema.
+"""XTB connector: transform raw snapshot and events data into normalized schema.
 
 Stage 2 rewrite (overhaul plan D2, D4-D22). Both transforms read the shared
 bronze ``xtb_snapshot`` raw table (D17 — one raw row per uploaded file with
@@ -22,7 +22,7 @@ import pyarrow as pa
 from pipeline.connectors.transform_utils import (
     DecodedRow,
     build_normalized_table,
-    dedup_cdc_events,
+    dedup_events,
     iter_raw_payloads,
 )
 from pipeline.connectors.xtb.parser import (
@@ -32,7 +32,7 @@ from pipeline.connectors.xtb.parser import (
     parse_report,
 )
 from pipeline.normalized.models import (
-    cdc_events_normalized_schema,
+    events_normalized_schema,
     snapshot_normalized_schema,
 )
 
@@ -240,7 +240,7 @@ def _build_closed_lookup(
     for cp in closed_positions:
         if cp.position_id in lookup:
             logger.warning(
-                "XTB CDC account %s: duplicate position_id %s in Closed Positions "
+                "XTB events account %s: duplicate position_id %s in Closed Positions "
                 "(last row wins; fee_amount may be non-deterministic)",
                 account_id,
                 cp.position_id,
@@ -258,7 +258,7 @@ def _parse_trade_comment(comment: str) -> tuple[float | None, float | None, str 
     match = _TRADE_COMMENT_RE.match(comment.strip())
     if match is None:
         logger.warning(
-            "XTB CDC: unparseable trade comment %r (expected "
+            "XTB events: unparseable trade comment %r (expected "
             "'OPEN/CLOSE {side} {qty} @ {price}'); leaving quantity/price/side null",
             comment,
         )
@@ -269,13 +269,13 @@ def _parse_trade_comment(comment: str) -> tuple[float | None, float | None, str 
     return qty, price, side
 
 
-def _build_cdc_record(
+def _build_events_record(
     op: XtbCashOperation,
     row: DecodedRow,
     report: XtbReport,
     closed_lookup: dict[str, XtbClosedPosition],
 ) -> dict:
-    """Build a single CDC event record from a cash operation (D8, guards 6/7)."""
+    """Build a single event record from a cash operation (D8, guards 6/7)."""
     event_type = _classify_xtb_event_type(op.operation_type)
     is_trade = op.operation_type in _TRADE_OPERATION_TYPES
 
@@ -295,14 +295,14 @@ def _build_cdc_record(
         if closed is None:
             if op.position_id:
                 logger.warning(
-                    "XTB CDC account %s: sell row position_id %s has no Closed "
+                    "XTB events account %s: sell row position_id %s has no Closed "
                     "Positions match; leaving fee_amount/settle_date null",
                     op.account_id,
                     op.position_id,
                 )
             else:
                 logger.warning(
-                    "XTB CDC account %s: sell row has no position_id; leaving "
+                    "XTB events account %s: sell row has no position_id; leaving "
                     "fee_amount/settle_date null",
                     op.account_id,
                 )
@@ -337,8 +337,8 @@ def _build_cdc_record(
     }
 
 
-def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
-    """Transform raw XTB CDC data into the broker-neutral CDC events schema.
+def transform_events(raw: pa.Table, fernet_key: bytes) -> pa.Table:
+    """Transform raw XTB events data into the broker-neutral events schema.
 
     Reads the shared bronze ``xtb_snapshot`` raw (D17 — same raw as snapshot),
     iterates all ``source == "XTB_REPORT"`` rows, parses each via
@@ -348,7 +348,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     transfers filtered by the parser — D7/D10). Trade rows carry
     qty/price/side parsed from the comment; closing rows are enriched with
     ``fee_amount``/``settle_date`` from Closed Positions (D8).
-    ``dedup_cdc_events`` on ``(event_type, event_id, account_id)`` is a safety
+    ``dedup_events`` on ``(event_type, event_id, account_id)`` is a safety
     net (D9, ADR 0105 parity).
     """
     payloads = _latest_per_account(raw, fernet_key)
@@ -357,27 +357,27 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     for row, report in payloads:
         closed_lookup = _build_closed_lookup(report.closed_positions, report.account_id)
         for op in report.cash_operations:
-            records.append(_build_cdc_record(op, row, report, closed_lookup))
+            records.append(_build_events_record(op, row, report, closed_lookup))
 
     # D9: dedup on (event_type, event_id, account_id) — account_id keeps
     # same-ID events from different accounts distinct. Safety net; latest-
     # per-account selection already yields one payload per account.
     if records:
         df = pl.DataFrame(records)
-        df = dedup_cdc_events(
+        df = dedup_events(
             df,
             subset=["event_type", "event_id", "account_id"],
-            label="XTB CDC",
+            label="XTB events",
         )
         records = df.to_dicts()
 
     return build_normalized_table(
         records,
-        cdc_events_normalized_schema,
+        events_normalized_schema,
         fernet_key,
         # Mirror IBKR: all pa.binary() trade + target columns are encrypted.
         # The old list left trade columns unencrypted, which failed the
-        # cast(schema) since they are pa.binary() in cdc_events_normalized_schema.
+        # cast(schema) since they are pa.binary() in events_normalized_schema.
         encrypt_columns=[
             "cash_amount",
             "quantity",

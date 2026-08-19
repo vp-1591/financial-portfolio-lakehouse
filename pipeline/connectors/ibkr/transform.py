@@ -1,4 +1,4 @@
-"""IBKR connector: transform raw Flex snapshot and CDC data into normalized schema."""
+"""IBKR connector: transform raw Flex snapshot and events data into normalized schema."""
 
 from __future__ import annotations
 
@@ -29,13 +29,13 @@ from pipeline.connectors.transform_utils import (
     filter_latest_snapshot,
 )
 from pipeline.normalized.models import (
-    cdc_events_normalized_schema,
+    events_normalized_schema,
     snapshot_normalized_schema,
 )
 
 logger = logging.getLogger(__name__)
 
-_IBKR_CDC_ENCRYPT_COLUMNS = [
+_IBKR_EVENTS_ENCRYPT_COLUMNS = [
     "cash_amount",
     "quantity",
     "price",
@@ -170,7 +170,7 @@ def transform_snapshot(
             )
 
         # Process cash entries — use BASE_SUMMARY fallback when no per-currency
-        # entries exist (e.g. single-currency demo accounts).
+        # entries exist (e.g. single-currency paper accounts).
         cash_entries = cash_result.per_currency
         if not cash_entries and cash_result.base_summary:
             for summary in cash_result.base_summary:
@@ -225,31 +225,31 @@ def transform_snapshot(
     )
 
 
-def transform_cdc(
+def transform_events(
     raw: pa.Table,
     fernet_key: bytes,
     *,
-    is_demo: bool = False,
+    is_paper: bool = False,
     target_currency: str = "EUR",
 ) -> pa.Table:
-    """Transform raw IBKR CDC Flex XML data into the broker-neutral CDC events schema.
+    """Transform raw IBKR events Flex XML data into the broker-neutral events schema.
 
-    Flex CDC payloads use ``source="flex_cdc"`` and contain XML with
+    Flex events payloads use ``source="flex_events"`` and contain XML with
     Trade, CashTransaction, Transfer, and TransactionFee elements.
     Each section is parsed and mapped to the broker-neutral schema.
 
-    When ``is_demo`` is True, a synthetic initial deposit of
-    ``_DEMO_INITIAL_DEPOSIT_AMOUNT`` is injected for each account,
+    When ``is_paper`` is True, a synthetic initial deposit of
+    ``_PAPER_INITIAL_DEPOSIT_AMOUNT`` is injected for each account,
     dated one day before the earliest existing event.
 
     Parameters
     ----------
     raw:
-        Raw-layer table from :func:`fetch_cdc_via_flex`.
+        Raw-layer table from :func:`fetch_events_via_flex`.
     fernet_key:
         Fernet key for encrypting value columns.
-    is_demo:
-        Whether demo mode is active.
+    is_paper:
+        Whether paper trading mode is active.
     target_currency:
         The pipeline target currency (default EUR). Used to decide whether
         IBKR's ``fxRateToBase`` can be used directly as ``target_fx_rate``
@@ -264,7 +264,7 @@ def transform_cdc(
     payloads = raw.column("payload").to_pylist()
 
     for i in range(len(sources)):
-        if sources[i] != "flex_cdc":
+        if sources[i] != "flex_events":
             continue
 
         payload_bytes = payloads[i]
@@ -323,23 +323,23 @@ def transform_cdc(
                 )
             )
 
-    # Inject a synthetic initial deposit for each demo account so that
+    # Inject a synthetic initial deposit for each paper account so that
     # the cash flow breakdown chart makes sense.
-    _inject_demo_deposit(
+    _inject_paper_deposit(
         records,
-        is_demo=is_demo,
+        is_paper=is_paper,
         base_currency_by_account=base_currency_by_account,
         target_currency=target_currency,
     )
 
     result = build_normalized_table(
         records,
-        cdc_events_normalized_schema,
+        events_normalized_schema,
         fernet_key,
-        encrypt_columns=_IBKR_CDC_ENCRYPT_COLUMNS,
+        encrypt_columns=_IBKR_EVENTS_ENCRYPT_COLUMNS,
     )
 
-    # IBKR Flex CDC queries return the full account history on every fetch.
+    # IBKR Flex events queries return the full account history on every fetch.
     # When multiple raw payloads exist (from repeated pipeline runs), the same
     # events appear in each payload, producing duplicates.  Dedup by event_id
     # using Polars, keeping the version from the latest fetched_at.
@@ -350,7 +350,7 @@ def transform_cdc(
         after = df.height
         if before > after:
             logger.info(
-                "IBKR CDC dedup: removed %d duplicate events (%d → %d)",
+                "IBKR events dedup: removed %d duplicate events (%d → %d)",
                 before - after,
                 before,
                 after,
@@ -362,7 +362,7 @@ def transform_cdc(
     return result
 
 
-# --- IBKR CDC event type classification ---
+# --- IBKR event type classification ---
 
 _IBKR_CASH_TYPE_MAP: dict[str, str] = {
     "Dividends": "DIVIDEND",
@@ -392,36 +392,36 @@ def _classify_ibkr_cash_type(cash_type: str, amount: float) -> str:
     return _IBKR_CASH_TYPE_MAP.get(cash_type, "UNKNOWN")
 
 
-# IBKR demo accounts start with ~$1M but the Flex CDC API does not
+# IBKR paper accounts start with ~$1M but the Flex events API does not
 # return a CashTransaction for the initial funding.  Without it the cash
 # flow breakdown chart looks wrong — trades and fees appear with no
 # deposit to explain the starting balance.  The constant below is the
-# amount injected per demo account.
-_DEMO_INITIAL_DEPOSIT_AMOUNT = 1_000_000.0
+# amount injected per paper account.
+_PAPER_INITIAL_DEPOSIT_AMOUNT = 1_000_000.0
 
 
-def _inject_demo_deposit(
+def _inject_paper_deposit(
     records: list[dict[str, Any]],
-    is_demo: bool,
+    is_paper: bool,
     base_currency_by_account: dict[str, str],
     target_currency: str = "EUR",
 ) -> list[dict[str, Any]]:
-    """Inject a synthetic initial deposit for each IBKR demo account.
+    """Inject a synthetic initial deposit for each IBKR paper account.
 
-    When ``is_demo`` is True, adds a DEPOSIT event dated one day before
+    When ``is_paper`` is True, adds a DEPOSIT event dated one day before
     the earliest existing event so that the deposit precedes all other
     activity.  Each unique ``account_id`` from ``base_currency_by_account``
-    gets its own deposit of ``_DEMO_INITIAL_DEPOSIT_AMOUNT`` in the
+    gets its own deposit of ``_PAPER_INITIAL_DEPOSIT_AMOUNT`` in the
     account's base currency.
 
-    The function is a no-op when ``is_demo`` is False.
+    The function is a no-op when ``is_paper`` is False.
 
     Parameters
     ----------
     records:
-        CDC event records already parsed from the Flex XML payload.
-    is_demo:
-        Whether demo mode is active.
+        event records already parsed from the Flex XML payload.
+    is_paper:
+        Whether paper trading mode is active.
     base_currency_by_account:
         Mapping of account_id → base currency (e.g. ``{"U1234567": "EUR"}``).
 
@@ -430,7 +430,7 @@ def _inject_demo_deposit(
     list[dict[str, Any]]
         The original records plus any synthetic deposit records.
     """
-    if not is_demo:
+    if not is_paper:
         return records
 
     if not records and not base_currency_by_account:
@@ -491,19 +491,19 @@ def _inject_demo_deposit(
                 "broker": "IBKR",
                 "account_id": acct_id,
                 "event_id": _deterministic_event_id(
-                    "CashTransaction", acct_id, "DEMO_INITIAL_DEPOSIT"
+                    "CashTransaction", acct_id, "PAPER_INITIAL_DEPOSIT"
                 ),
                 "source": "CashTransaction",
                 "event_type": "DEPOSIT",
                 "raw_event_type": "Deposits/Withdrawals",
                 "event_datetime": deposit_date_str,
                 "security_ccy": base_ccy,
-                "cash_amount": _DEMO_INITIAL_DEPOSIT_AMOUNT,
+                "cash_amount": _PAPER_INITIAL_DEPOSIT_AMOUNT,
                 "settle_date": settle_date_str,
                 "ticker": "",
                 "isin": "",
-                "description": "Initial demo account deposit",
-                # Demo deposits are in account base currency. If that matches
+                "description": "Initial paper account deposit",
+                # Paper deposits are in account base currency. If that matches
                 # target_currency, target_fx_rate is 1.0; otherwise null.
                 "target_fx_rate": 1.0
                 if base_ccy.upper() == target_currency.upper()
@@ -515,8 +515,8 @@ def _inject_demo_deposit(
         )
 
     logger.info(
-        "IBKR demo: injected initial deposit of %.0f %s for %d account(s)",
-        _DEMO_INITIAL_DEPOSIT_AMOUNT,
+        "IBKR paper: injected initial deposit of %.0f %s for %d account(s)",
+        _PAPER_INITIAL_DEPOSIT_AMOUNT,
         next(iter(accounts.values())) if len(accounts) == 1 else "various",
         len(accounts),
     )
@@ -579,7 +579,7 @@ def _process_ibkr_trade(
     base_currency_by_account: dict[str, str],
     target_currency: str = "EUR",
 ) -> dict[str, Any]:
-    """Map a Trade element to the broker-neutral CDC schema."""
+    """Map a Trade element to the broker-neutral events schema."""
     acct_id = str(trade.get("accountId", ""))
     # Decision: docs/adr/0101-fix-ibkr-flex-attribute-names-for-cdc-event-id-dedup.md
     # Real Flex Trade elements use ``ibExecID``/``tradeID`` (capital ID),
@@ -675,7 +675,7 @@ def _process_ibkr_cash_transaction(
     base_currency_by_account: dict[str, str],
     target_currency: str = "EUR",
 ) -> dict[str, Any]:
-    """Map a CashTransaction element to the broker-neutral CDC schema."""
+    """Map a CashTransaction element to the broker-neutral events schema."""
     acct_id = str(ct.get("accountId", ""))
     amount = as_float(ct.get("amount"))
     # Real Flex CashTransaction elements use ``transactionID`` (capital ID).
@@ -723,7 +723,7 @@ def _process_ibkr_transfer(
     base_currency_by_account: dict[str, str],
     target_currency: str = "EUR",
 ) -> dict[str, Any]:
-    """Map a Transfer element to the broker-neutral CDC schema."""
+    """Map a Transfer element to the broker-neutral events schema."""
     acct_id = str(transfer.get("accountId", ""))
     # Real Flex Transfer elements use ``transactionID`` (capital ID).
     event_id = str(transfer.get("transactionID", "") or "") or _deterministic_event_id(
@@ -773,7 +773,7 @@ def _process_ibkr_transaction_fee(
     base_currency_by_account: dict[str, str],
     target_currency: str = "EUR",
 ) -> dict[str, Any]:
-    """Map a TransactionFee element to the broker-neutral CDC schema."""
+    """Map a TransactionFee element to the broker-neutral events schema."""
     acct_id = str(fee.get("accountId", ""))
     event_id = _deterministic_event_id(
         "TransactionFee",

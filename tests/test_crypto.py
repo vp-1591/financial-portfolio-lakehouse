@@ -127,7 +127,7 @@ class TestLoadKey:
 
         load_key() must NOT fall through to the file-based key because
         .secrets/encryption.key contains the production key, which would
-        violate demo/production isolation.
+        violate staging/production isolation.
         """
         monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
         set_mode("staging")

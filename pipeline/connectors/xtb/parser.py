@@ -58,7 +58,7 @@ class XtbOpenPosition:
 
 @dataclass(frozen=True)
 class XtbClosedPosition:
-    """Fee-enrichment lookup row (D2); never emitted as its own CDC event."""
+    """Fee-enrichment lookup row (D2); never emitted as its own event."""
 
     position_id: str  # join key to Cash Operations trade rows
     commission: float  # -> fee_amount on the closing (Stock sell) row only (D8)
@@ -75,7 +75,7 @@ class XtbCashOperation:
     ticker: str  # populated on trade rows; empty on non-trade rows
     time: datetime  # UTC -> event_datetime
     amount: float  # account currency, 2dp -> cash_amount
-    operation_id: str  # -> event_id (CDC dedup key)
+    operation_id: str  # -> event_id (events dedup key)
     comment: str  # -> description; carries trade qty/price + transfer FX details
     position_id: str  # join key to Closed Positions (trade rows only)
 

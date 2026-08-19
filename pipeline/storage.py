@@ -4,8 +4,8 @@ Storage backend selection is driven by the ``--mode`` CLI flag (set via
 :func:`pipeline.secrets.set_mode` before calling :func:`resolve_storage`):
 
 - **docker** — :class:`S3Backend` with MinIO endpoint (``S3_ENDPOINT_URL``).
-- **staging** — :class:`S3Backend` with the demo S3 bucket
-  (``S3_BUCKET``, prefix ``pipeline_demo``).
+- **staging** — :class:`S3Backend` with the staging S3 bucket
+  (``S3_BUCKET``, no prefix).
 - **prod** — :class:`S3Backend` with the production S3 bucket
   (``S3_BUCKET``, prefix ``pipeline``).
 
@@ -113,9 +113,9 @@ class S3Backend:
         """Return the S3 URI for a staging upload.
 
         D20: the ``segment`` is the full middle segment (e.g.
-        ``xtb_uploads``) — the environment prefix (``pipeline`` /
-        ``pipeline_demo``) is already carried by ``self.prefix``, so no
-        separate ``staging``/``staging_demo`` segment is inserted. This
+        ``xtb_uploads``) — the environment prefix (``pipeline``, or empty
+        for staging) is already carried by ``self.prefix``, so no
+        separate ``staging`` segment is inserted. This
         yields ``s3://{bucket}/{prefix}/{segment}/{filename}`` (e.g.
         ``s3://bucket/pipeline/xtb_uploads/report.xlsx``) with no
         ``xtb/`` subfolder between ``xtb_uploads/`` and the filename,
@@ -202,9 +202,9 @@ class StorageConfig:
         """Return the full path for a staging upload (D20).
 
         ``segment`` is ``{connector_name}_uploads`` (e.g. ``xtb_uploads``).
-        The environment (``pipeline`` / ``pipeline_demo``) is already
+        The environment (``pipeline``, or empty for staging) is already
         carried by the backend's ``prefix``, so no separate
-        ``staging``/``staging_demo`` segment is inserted — the old segment
+        ``staging`` segment is inserted — the old segment
         redundantly re-encoded the environment and collided with
         ``--mode staging``. Yields
         ``s3://{bucket}/{prefix}/{connector}_uploads/{filename}``.
@@ -236,8 +236,8 @@ def resolve_storage() -> StorageConfig:
 
     - **docker** — :class:`S3Backend` with MinIO endpoint.  Requires
       ``S3_BUCKET``; warns if ``S3_ENDPOINT_URL`` is not set.
-    - **staging** — :class:`S3Backend` with the demo S3 bucket
-      (``S3_BUCKET``, prefix ``pipeline_demo``).
+    - **staging** — :class:`S3Backend` with the staging S3 bucket
+      (``S3_BUCKET``, no prefix).
     - **prod** — :class:`S3Backend` with the production S3 bucket
       (``S3_BUCKET``, prefix ``pipeline``). If ``S3_BUCKET`` is not set it
       defaults to :data:`S3_DEFAULT_PROD_BUCKET`.
@@ -278,14 +278,15 @@ def resolve_storage() -> StorageConfig:
             backend=backend,
         )
     elif mode == "staging":
-        # Demo S3 bucket.
+        # Staging S3 bucket.  No prefix — buckets already isolate envs
+        # (ADR 0038/0039).
         if not s3_bucket:
             raise ValueError(
                 "Staging mode requires S3_BUCKET to determine the S3 bucket"
             )
-        prefix = get_env("S3_PREFIX", "pipeline_demo")
+        prefix = get_env("S3_PREFIX", "")
         backend = S3Backend(bucket=s3_bucket, prefix=prefix)
-        base = f"s3://{backend.bucket}/{prefix}"
+        base = f"s3://{backend.bucket}/{backend.prefix}".rstrip("/")
         config = StorageConfig(
             data_dir=base,
             raw_dir=f"{base}/raw",

@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 import polars as pl
 from deltalake import DeltaTable
 
-from pipeline.analytics.cdc_tables import _finalize_analytics
+from pipeline.analytics.events_tables import _finalize_analytics
 from pipeline.analytics.models import portfolio_holdings_schema
 from pipeline.crypto import decrypt_float, encrypt_float
 

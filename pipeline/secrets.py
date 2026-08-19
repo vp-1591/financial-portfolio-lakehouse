@@ -18,14 +18,14 @@ any broker API keys.
 
 - **docker** — local development against MinIO.  Broker credentials come
   from ``.env`` or the environment under their base names.
-- **staging** — staging (demo) environment.  ECS tasks inject secrets
-  under base names from ``/portfolio/demo/`` SSM parameters; local runs
-  read them from ``.env`` or the environment.  Storage is the demo S3 bucket.
+- **staging** — staging environment.  ECS tasks inject secrets
+  under base names from ``/portfolio/staging/`` SSM parameters; local runs
+  read them from ``.env`` or the environment.  Storage is the staging S3 bucket.
 - **prod** — production environment.  Same base-name resolution; ECS tasks
   use ``/portfolio/prod/`` SSM parameters.
 
-:func:`is_demo` returns ``True`` in staging mode, which drives the
-demo S3 bucket selection and the encryption-key file fallback guard.
+:func:`is_staging` returns ``True`` in staging mode, which drives the
+staging S3 bucket selection and the encryption-key file fallback guard.
 There is **no cross-mode fallback** — missing credentials are logged
 as warnings and :func:`resolve_secret` returns ``None``, allowing callers
 to gracefully skip connectors or operations that require the missing secret.
@@ -34,7 +34,7 @@ Usage::
 
     from pipeline.secrets import (
         inject_secrets, get_secret, get_env,
-        load_env, parse_bool, is_demo, resolve_secret,
+        load_env, parse_bool, is_staging, resolve_secret,
         set_mode, get_mode,
     )
 
@@ -43,7 +43,7 @@ Usage::
     # ... or ...
     inject_secrets()           # load .env AND validate (logs warnings for missing secrets)
     token = resolve_secret("IBKR_FLEX_TOKEN")  # secret lookup (env var)
-    if is_demo():                                # True when --mode staging
+    if is_staging():                             # True when --mode staging
         ...
 """
 
@@ -90,7 +90,7 @@ def set_mode(mode: str) -> None:
     """Set the execution mode from the ``--mode`` CLI flag.
 
     Must be called once at startup (in ``main()``) before any code that
-    calls :func:`get_mode`, :func:`is_demo`, or :func:`resolve_storage`.
+    calls :func:`get_mode`, :func:`is_staging`, or :func:`resolve_storage`.
     Raises :exc:`ValueError` for invalid modes.
     """
     if mode not in _VALID_MODES:
@@ -140,8 +140,8 @@ def inject_secrets() -> dict[str, str]:
 
     Secrets are always read under their base names (e.g.
     ``IBKR_FLEX_TOKEN``).  In ECS deployments, the SSM path prefix
-    (``/portfolio/demo/`` or ``/portfolio/prod/``) provides environment
-    isolation — there is no ``_DEMO`` suffix swap.
+    (``/portfolio/staging/`` or ``/portfolio/prod/``) provides environment
+    isolation — there is no ``_STAGING`` suffix swap.
 
     S3-specific secrets (``AWS_ACCESS_KEY_ID``,
     ``AWS_SECRET_ACCESS_KEY``) are validated only for staging and prod
@@ -223,11 +223,11 @@ def parse_bool(name: str, default: bool = False) -> bool:
     return value.lower() in ("true", "1", "yes")
 
 
-def is_demo() -> bool:
-    """Check if the pipeline is running in demo (staging) mode.
+def is_staging() -> bool:
+    """Check if the pipeline is running in staging mode.
 
     Returns ``True`` when the execution mode is ``staging``.
-    In staging mode, storage uses a separate demo bucket/prefix
+    In staging mode, storage uses a separate staging bucket/prefix
     and the encryption-key file fallback is disabled.
     """
     return get_mode() == "staging"
@@ -438,7 +438,7 @@ def resolve_aws_credentials() -> AwsCredentials:
     ``pipeline report``/``query``/``validate`` run in prod with AWS
     config/SSO set up but no explicit env vars, matching the behaviour
     of the ``full`` subcommand.  The fallback is gated to ``prod`` so
-    staging/demo isolation (empty-SECRET branch, ADR 0088) and
+    staging isolation (empty-SECRET branch, ADR 0088) and
     docker/MinIO (which uses ``S3_ENDPOINT_URL`` + MinIO keys, never AWS
     creds) are unaffected.  The ``session_token`` from temporary/SSO
     credentials is threaded through to all data-plane adapters.
@@ -458,7 +458,7 @@ def resolve_aws_credentials() -> AwsCredentials:
     # Prod-only fallback: DuckDB's delta_scan() cannot read ~/.aws/credentials
     # or AWS SSO, so when explicit env vars are absent, discover credentials
     # via boto3's default chain and inject them explicitly.  Gated to prod
-    # to preserve staging/demo isolation (ADR 0088 demo branch) and docker/MinIO.
+    # to preserve staging isolation (ADR 0088 staging branch) and docker/MinIO.
     if key_id is None and secret_key is None and get_mode() == "prod":
         boto = _boto3_default_chain_credentials(region)
         if boto is not None:

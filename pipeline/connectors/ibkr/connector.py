@@ -12,7 +12,7 @@ import pyarrow as pa
 from pipeline.connectors.ibkr import fetch, transform
 from pipeline.connectors.registry import register
 from pipeline.normalized.consolidate import Holding
-from pipeline.secrets import get_env, is_demo, resolve_secret
+from pipeline.secrets import get_env, is_staging, resolve_secret
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class IbkrConnector:
     name = "ibkr"
     display_name = "IBKR"
-    cdc_raw_layer = "cdc"
+    events_raw_layer = "events"
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         flex_token = resolve_secret("IBKR_FLEX_TOKEN")
@@ -41,17 +41,17 @@ class IbkrConnector:
             ),
         }
 
-    def fetch_cdc_kwargs(self) -> dict:
+    def fetch_events_kwargs(self) -> dict:
         flex_token = resolve_secret("IBKR_FLEX_TOKEN")
         if not flex_token:
-            logger.debug("Skipping IBKR CDC: IBKR_FLEX_TOKEN not set")
+            logger.debug("Skipping IBKR events: IBKR_FLEX_TOKEN not set")
             return {}
-        # Prefer a dedicated CDC query ID, fall back to the snapshot query ID
-        flex_query_id = resolve_secret("IBKR_FLEX_CDC_QUERY_ID") or resolve_secret(
+        # Prefer a dedicated events query ID, fall back to the snapshot query ID
+        flex_query_id = resolve_secret("IBKR_FLEX_EVENTS_QUERY_ID") or resolve_secret(
             "IBKR_FLEX_QUERY_ID"
         )
         if not flex_query_id:
-            logger.debug("Skipping IBKR CDC: no Flex query ID available")
+            logger.debug("Skipping IBKR events: no Flex query ID available")
             return {}
         return {
             "token": flex_token,
@@ -97,8 +97,8 @@ class IbkrConnector:
             delay=kwargs.get("flex_delay", 3.0),
         )
 
-    def fetch_cdc(self, **kwargs: Any) -> pa.Table:
-        return fetch.fetch_cdc_via_flex(
+    def fetch_events(self, **kwargs: Any) -> pa.Table:
+        return fetch.fetch_events_via_flex(
             token=kwargs["token"],
             query_id=kwargs["query_id"],
             base_url=kwargs.get(
@@ -118,5 +118,5 @@ class IbkrConnector:
             raw, fernet_key, base_currency_override=base_currency_override
         )
 
-    def transform_cdc(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
-        return transform.transform_cdc(raw, fernet_key, is_demo=is_demo())
+    def transform_events(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
+        return transform.transform_events(raw, fernet_key, is_paper=is_staging())

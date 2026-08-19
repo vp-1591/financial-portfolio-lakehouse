@@ -14,7 +14,7 @@ The ``--mode`` flag (``docker|staging|prod``) is required for all commands
 except ``keygen``.  It determines storage backend and credential resolution:
 
 - **docker** — MinIO (local S3-compatible storage)
-- **staging** — demo S3 bucket, secrets under base names from SSM
+- **staging** — staging S3 bucket, secrets under base names from SSM
 - **prod** — production S3 bucket, production secrets
 
 Secrets come from environment variables (set by GitHub Actions via GitHub
@@ -156,7 +156,7 @@ def fetch_connector(
         )
         return FetchResult.SKIPPED
 
-    cdc_kwargs = connector.fetch_cdc_kwargs()
+    events_kwargs = connector.fetch_events_kwargs()
 
     try:
         raw = connector.fetch_snapshot(**snapshot_kwargs)
@@ -173,24 +173,25 @@ def fetch_connector(
             file=sys.stderr,
         )
 
-    # Try CDC
-    if not cdc_kwargs:
+    # Try events
+    if not events_kwargs:
         logger.debug(
-            "Skipping %s CDC: required secrets not configured", connector.display_name
+            "Skipping %s events: required secrets not configured",
+            connector.display_name,
         )
     else:
         try:
-            raw_cdc = connector.fetch_cdc(**cdc_kwargs)
-            cdc_path = get_raw_path(connector.name, "cdc")
-            get_storage().backend.ensure_parent(cdc_path)
-            count = ingest_raw(raw_cdc, cdc_path, fernet_key)
-            logger.debug("%s CDC: %d rows written", connector.display_name, count)
+            raw_events = connector.fetch_events(**events_kwargs)
+            events_path = get_raw_path(connector.name, "events")
+            get_storage().backend.ensure_parent(events_path)
+            count = ingest_raw(raw_events, events_path, fernet_key)
+            logger.debug("%s events: %d rows written", connector.display_name, count)
         except NotImplementedError:
-            logger.debug("%s CDC: not implemented", connector.display_name)
+            logger.debug("%s events: not implemented", connector.display_name)
         except Exception as exc:
             error_occurred = True
             print(
-                f"  Error fetching {connector.display_name} CDC: {exc}",
+                f"  Error fetching {connector.display_name} events: {exc}",
                 file=sys.stderr,
             )
 
@@ -207,12 +208,12 @@ def transform_connector(connector, fernet_key: bytes) -> int:
 
     storage_opts = get_storage().storage_options
 
-    for layer in ("snapshot", "cdc"):
-        # D17: the CDC transform reads from the connector's cdc_raw_layer
-        # (default "cdc"; XTB overrides to "snapshot" for shared bronze). The
+    for layer in ("snapshot", "events"):
+        # D17: the events transform reads from the connector's events_raw_layer
+        # (default "events"; XTB overrides to "snapshot" for shared bronze). The
         # snapshot layer always reads the snapshot raw. The normalized output
         # is still written to ``normalized/{name}_{layer}`` below.
-        raw_layer = layer if layer == "snapshot" else connector.cdc_raw_layer
+        raw_layer = layer if layer == "snapshot" else connector.events_raw_layer
         raw_path = get_raw_path(connector.name, raw_layer)
         try:
             dt = DeltaTable(raw_path, storage_options=storage_opts)
@@ -238,7 +239,7 @@ def transform_connector(connector, fernet_key: bytes) -> int:
             if layer == "snapshot":
                 normalized = connector.transform_snapshot(raw_table, fernet_key)
             else:
-                normalized = connector.transform_cdc(raw_table, fernet_key)
+                normalized = connector.transform_events(raw_table, fernet_key)
 
             config = get_storage()
             norm_path = config.normalized_path(f"{connector.name}_{layer}")
@@ -322,10 +323,10 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
 
 def cmd_analytics(args: argparse.Namespace) -> int:
-    """Build all analytics tables: portfolio holdings (with percentages) and CDC analytics.
+    """Build all analytics tables: portfolio holdings (with percentages) and events analytics.
 
-    Builds portfolio holdings first, then CDC analytics tables (dividend
-    income, interest income, cash flow summary).  If CDC events are not
+    Builds portfolio holdings first, then events analytics tables (dividend
+    income, interest income, cash flow summary).  If events are not
     available, logs a warning and continues — holdings still succeeds.
     """
     from pipeline.crypto import load_key
@@ -346,17 +347,18 @@ def cmd_analytics(args: argparse.Namespace) -> int:
         logger.warning("portfolio_holdings failed: %s", exc)
         holdings_ok = False
 
-    # Build CDC analytics tables.  CDC is mandatory — consolidation
-    # guarantees cdc_events exists (or fails).  The guard below is
+    # Build events analytics tables.  Events are mandatory — consolidation
+    # guarantees events exists (or fails).  The guard below is
     # defense-in-depth and should rarely trigger.
-    # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
-    from pipeline.analytics.cdc_tables import (
+    # Decision: ADR 0087 - make the events layer mandatory and fail on empty
+    # silver events.
+    from pipeline.analytics.events_tables import (
         build_cash_flow_summary,
         build_dividend_income,
         build_interest_income,
     )
 
-    cdc_ok = True
+    events_ok = True
     for builder in (
         build_dividend_income,
         build_interest_income,
@@ -366,12 +368,12 @@ def cmd_analytics(args: argparse.Namespace) -> int:
             builder(fernet_key=fernet_key)
         except FileNotFoundError as exc:
             logger.warning("%s skipped: %s", builder.__name__, exc)
-            cdc_ok = False
+            events_ok = False
         except Exception as exc:
             logger.warning("%s failed: %s", builder.__name__, exc)
-            cdc_ok = False
+            events_ok = False
 
-    if not holdings_ok or not cdc_ok:
+    if not holdings_ok or not events_ok:
         return 1
     return 0
 
@@ -420,7 +422,7 @@ def cmd_full(args: argparse.Namespace) -> int:
     In **docker** mode, mirrors the Step Functions workflow locally: each
     connector runs fetch+transform+validate via :func:`cmd_run_connector`,
     then :func:`cmd_run_consolidate_analytics` runs
-    consolidate+CDC+analytics+validate.
+    consolidate+events+analytics+validate.
 
     In **staging** and **prod** modes, triggers a Step Functions execution
     instead of running locally.  The caller needs only AWS credentials with
@@ -596,30 +598,30 @@ def _ns_for(base: argparse.Namespace, connector: str) -> argparse.Namespace:
     return ns
 
 
-def _consolidate_cdc() -> int:
-    """Consolidate broker CDC events into a unified table.
+def _consolidate_events() -> int:
+    """Consolidate broker events into a unified table.
 
     Returns 0 on success, 1 if consolidation raised (e.g. a required
-    broker CDC table is missing or empty).
+    broker events table is missing or empty).
     """
-    from pipeline.normalized.consolidate_cdc import consolidate_cdc_events
+    from pipeline.normalized.consolidate_events import consolidate_events
 
     try:
-        consolidate_cdc_events()
+        consolidate_events()
     except RuntimeError as exc:
-        print(f"Error consolidating CDC events: {exc}", file=sys.stderr)
+        print(f"Error consolidating events: {exc}", file=sys.stderr)
         return 1
     return 0
 
 
-def _normalize_cdc(args: argparse.Namespace) -> int:
-    """Normalize target currency columns in CDC events.
+def _normalize_events(args: argparse.Namespace) -> int:
+    """Normalize target currency columns in events.
 
     Fills in ``target_fx_rate``, ``target_value``, and ``target_ccy``
-    using the CurrencyConverter.  Runs after CDC events are consolidated
-    and before CDC analytics tables are built.
+    using the CurrencyConverter.  Runs after events are consolidated
+    and before events analytics tables are built.
 
-    Returns 0 on success, 1 if the CDC events table is missing (which
+    Returns 0 on success, 1 if the events table is missing (which
     indicates a prior consolidation failure).
     """
     from pipeline.normalized.normalize import normalize_currency
@@ -635,7 +637,7 @@ def _normalize_cdc(args: argparse.Namespace) -> int:
             manual_rates=manual_rates,
         )
     except FileNotFoundError as exc:
-        logger.error("CDC events table not found for currency normalization: %s", exc)
+        logger.error("events table not found for currency normalization: %s", exc)
         return 1
     except RuntimeError as exc:
         logger.error("Currency normalization failed: %s", exc)
@@ -665,11 +667,11 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     if rc:
         return rc
     # Validate connector's normalized tables after transform.
-    # D14: validation is unconditional — CDC is mandatory for every connector
-    # now that XTB produces CDC via the shared bronze (D17). The
-    # ``cdc_supported`` flag is removed.
+    # D14: validation is unconditional — events are mandatory for every
+    # connector now that XTB produces events via the shared bronze (D17). The
+    # ``events_supported`` flag is removed.
     # Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
-    tables = [f"{connector.name}_snapshot", f"{connector.name}_cdc"]
+    tables = [f"{connector.name}_snapshot", f"{connector.name}_events"]
     return run_validation(
         fernet_key=fernet_key,
         tables=tables,
@@ -680,24 +682,24 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     """Run consolidate then analytics — idempotent full-overwrite steps.
 
     Used by the Step Functions orchestrator after all connector tasks
-    have completed.  Validates silver tables after consolidate/CDC and gold
-    tables after analytics — a FAIL-level check causes a non-zero exit.
+    have completed.  Validates silver tables after consolidate/events and
+    gold tables after analytics — a FAIL-level check causes a non-zero exit.
     """
     fernet_key = load_key()
     rc = cmd_consolidate(args)
     if rc:
         return rc
-    cdc_rc = _consolidate_cdc()
-    if cdc_rc:
-        return cdc_rc
-    # Normalize target currency columns in CDC events
-    norm_rc = _normalize_cdc(args)
+    events_rc = _consolidate_events()
+    if events_rc:
+        return events_rc
+    # Normalize target currency columns in events
+    norm_rc = _normalize_events(args)
     if norm_rc:
         return norm_rc
-    # Validate silver tables after consolidate + CDC
+    # Validate silver tables after consolidate + events
     silver_rc = run_validation(
         fernet_key=fernet_key,
-        tables=["consolidated_holdings", "cdc_events"],
+        tables=["consolidated_holdings", "events"],
     )
     if silver_rc:
         return silver_rc
@@ -769,7 +771,7 @@ def main() -> int:
         "--mode",
         choices=["docker", "staging", "prod"],
         required=True,
-        help="Execution mode: docker=MinIO local, staging=demo S3, prod=prod S3",
+        help="Execution mode: docker=MinIO local, staging=staging S3, prod=prod S3",
     )
 
     parser = argparse.ArgumentParser(

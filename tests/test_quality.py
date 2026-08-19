@@ -28,8 +28,8 @@ from pipeline.analytics.quality import (
 )
 from pipeline.crypto import encrypt_float, generate_key
 from pipeline.normalized.models import (
-    cdc_events_normalized_schema,
     consolidated_holdings_schema,
+    events_normalized_schema,
     snapshot_normalized_schema,
 )
 from pipeline.storage import StorageConfig, get_storage, use_storage
@@ -95,11 +95,11 @@ def _make_holdings_table(
     return _rows_to_table(rows, consolidated_holdings_schema)
 
 
-def _make_cdc_table(
+def _make_events_table(
     fernet_key: bytes,
     rows: list[dict] | None = None,
 ) -> pa.Table:
-    """Build a minimal cdc_events table."""
+    """Build a minimal events table."""
     now = datetime.now(UTC)
     if rows is None:
         rows = [
@@ -128,7 +128,7 @@ def _make_cdc_table(
                 "target_ccy": "EUR",
             }
         ]
-    return _rows_to_table(rows, cdc_events_normalized_schema)
+    return _rows_to_table(rows, events_normalized_schema)
 
 
 def _make_portfolio_holdings_table(fernet_key: bytes) -> pa.Table:
@@ -158,13 +158,13 @@ def _setup_storage(tmp_path: Path) -> None:
     data = tmp_path / "data"
     for subdir in [
         "normalized/consolidated_holdings",
-        "normalized/cdc_events",
+        "normalized/events",
         "normalized/ibkr_snapshot",
-        "normalized/ibkr_cdc",
+        "normalized/ibkr_events",
         "normalized/trading212_snapshot",
-        "normalized/trading212_cdc",
+        "normalized/trading212_events",
         "normalized/xtb_snapshot",
-        "normalized/xtb_cdc",
+        "normalized/xtb_events",
         "analytics/portfolio_holdings",
         "analytics/data_quality",
         "analytics/dividend_income",
@@ -431,12 +431,12 @@ class TestCheckFreshness:
 
 
 class TestCheckNonEmpty:
-    """Tests for check_non_empty — CDC tables must not be empty."""
+    """Tests for check_non_empty — events tables must not be empty."""
 
     def test_pass_on_rows(self) -> None:
         """A table with rows passes the non-empty check."""
         table = pa.table({"x": [1, 2, 3]})
-        result = check_non_empty("ibkr_cdc", table)
+        result = check_non_empty("ibkr_events", table)
         assert result.status == PASS
         assert "3" in result.details
 
@@ -444,16 +444,16 @@ class TestCheckNonEmpty:
         """An empty table fails the non-empty check."""
         # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
         table = pa.table({"x": pa.array([], type=pa.int64())})
-        result = check_non_empty("ibkr_cdc", table)
+        result = check_non_empty("ibkr_events", table)
         assert result.status == FAIL
         assert "0 rows" in result.details
 
     def test_non_empty_required_registry(self) -> None:
-        """NON_EMPTY_REQUIRED includes cdc_events, ibkr_cdc, trading212_cdc; xtb_cdc is optional."""
-        assert "cdc_events" in NON_EMPTY_REQUIRED
-        assert "ibkr_cdc" in NON_EMPTY_REQUIRED
-        assert "trading212_cdc" in NON_EMPTY_REQUIRED
-        assert "xtb_cdc" not in NON_EMPTY_REQUIRED
+        """NON_EMPTY_REQUIRED includes events, ibkr_events, trading212_events; xtb_events is optional."""
+        assert "events" in NON_EMPTY_REQUIRED
+        assert "ibkr_events" in NON_EMPTY_REQUIRED
+        assert "trading212_events" in NON_EMPTY_REQUIRED
+        assert "xtb_events" not in NON_EMPTY_REQUIRED
 
 
 # ---------------------------------------------------------------------------
@@ -465,15 +465,15 @@ class TestCheckReconciliation:
     """Tests for check_reconciliation."""
 
     def test_pass_when_brokers_match(self) -> None:
-        """Reconciliation passes when all holdings brokers exist in CDC."""
+        """Reconciliation passes when all holdings brokers exist in events."""
         fernet_key = generate_key()
         holdings = _make_holdings_table(fernet_key)
-        cdc = _make_cdc_table(fernet_key)
-        result = check_reconciliation("consolidated_holdings", holdings, cdc)
+        events = _make_events_table(fernet_key)
+        result = check_reconciliation("consolidated_holdings", holdings, events)
         assert result.status == PASS
 
-    def test_warn_on_missing_broker_in_cdc(self) -> None:
-        """Reconciliation warns when a holdings broker is missing from CDC."""
+    def test_warn_on_missing_broker_in_events(self) -> None:
+        """Reconciliation warns when a holdings broker is missing from events."""
         fernet_key = generate_key()
         now = datetime.now(UTC)
         # Holdings with broker "XTB"
@@ -490,9 +490,9 @@ class TestCheckReconciliation:
             }
         ]
         holdings = _rows_to_table(holdings_rows, consolidated_holdings_schema)
-        # CDC only has IBKR
-        cdc = _make_cdc_table(fernet_key)
-        result = check_reconciliation("consolidated_holdings", holdings, cdc)
+        # events only has IBKR
+        events = _make_events_table(fernet_key)
+        result = check_reconciliation("consolidated_holdings", holdings, events)
         assert result.status == WARN
         assert "XTB" in result.details
 
@@ -504,8 +504,8 @@ class TestCheckReconciliation:
         assert result.status == PASS
         assert "not applicable" in result.details
 
-    def test_warn_when_cdc_unavailable(self) -> None:
-        """Reconciliation warns when CDC events table is not available."""
+    def test_warn_when_events_unavailable(self) -> None:
+        """Reconciliation warns when events table is not available."""
         fernet_key = generate_key()
         holdings = _make_holdings_table(fernet_key)
         result = check_reconciliation("consolidated_holdings", holdings, None)
@@ -526,9 +526,9 @@ class TestRunValidation:
         fernet_key = generate_key()
         storage = get_storage()
 
-        # Write test tables — including NON_EMPTY_REQUIRED CDC tables
+        # Write test tables — including NON_EMPTY_REQUIRED events tables
         holdings = _make_holdings_table(fernet_key)
-        cdc = _make_cdc_table(fernet_key)
+        events = _make_events_table(fernet_key)
         portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
 
         write_deltalake(
@@ -536,13 +536,15 @@ class TestRunValidation:
             holdings,
             mode="overwrite",
         )
-        write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
-        # Write required broker CDC tables (NON_EMPTY_REQUIRED)
-        write_deltalake(storage.normalized_path("ibkr_cdc"), cdc, mode="overwrite")
+        write_deltalake(storage.normalized_path("events"), events, mode="overwrite")
+        # Write required broker events tables (NON_EMPTY_REQUIRED)
         write_deltalake(
-            storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
+            storage.normalized_path("ibkr_events"), events, mode="overwrite"
         )
-        write_deltalake(storage.normalized_path("xtb_cdc"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.normalized_path("trading212_events"), events, mode="overwrite"
+        )
+        write_deltalake(storage.normalized_path("xtb_events"), events, mode="overwrite")
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -565,10 +567,10 @@ class TestRunValidation:
             mode="overwrite",
         )
 
-        # Write a CDC table with wrong schema (missing columns)
+        # Write an events table with wrong schema (missing columns)
         # to trigger a schema FAIL
         now = datetime.now(UTC)
-        bad_cdc = pa.table(
+        bad_events = pa.table(
             {
                 "fetched_at": [now],
                 "broker": ["IBKR"],
@@ -580,9 +582,7 @@ class TestRunValidation:
                 ]
             ),
         )
-        write_deltalake(
-            storage.normalized_path("cdc_events"), bad_cdc, mode="overwrite"
-        )
+        write_deltalake(storage.normalized_path("events"), bad_events, mode="overwrite")
 
         # Also need portfolio_holdings table to not trigger "table not found" WARNs
         portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
@@ -598,9 +598,9 @@ class TestRunValidation:
     def test_fail_on_warn_flag(self, tmp_path: Path) -> None:
         """run_validation returns 1 with --fail-on-warn when WARN exists.
 
-        D5: the required CDC tables (ibkr_cdc, trading212_cdc) are written so
+        D5: the required events tables (ibkr_events, trading212_events) are written so
         that ``fail_count == 0`` — the exit-1 MUST come from the
-        ``fail_on_warn`` branch, not a missing-CDC FAIL.  We also assert that
+        ``fail_on_warn`` branch, not a missing-events FAIL.  We also assert that
         without ``fail_on_warn`` the same fixtures return 0, proving no FAIL
         is masking the WARN path.  Removing the ``fail_on_warn`` branch in
         ``quality.py`` makes this test fail (the fail_on_warn=True assertion
@@ -626,7 +626,7 @@ class TestRunValidation:
             }
         ]
         holdings = _rows_to_table(holdings_rows, consolidated_holdings_schema)
-        cdc = _make_cdc_table(fernet_key)
+        events = _make_events_table(fernet_key)
         portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
 
         write_deltalake(
@@ -634,13 +634,15 @@ class TestRunValidation:
             holdings,
             mode="overwrite",
         )
-        write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
-        # Write required broker CDC tables so NON_EMPTY_REQUIRED doesn't FAIL
-        write_deltalake(storage.normalized_path("ibkr_cdc"), cdc, mode="overwrite")
+        write_deltalake(storage.normalized_path("events"), events, mode="overwrite")
+        # Write required broker events tables so NON_EMPTY_REQUIRED doesn't FAIL
         write_deltalake(
-            storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
+            storage.normalized_path("ibkr_events"), events, mode="overwrite"
         )
-        write_deltalake(storage.normalized_path("xtb_cdc"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.normalized_path("trading212_events"), events, mode="overwrite"
+        )
+        write_deltalake(storage.normalized_path("xtb_events"), events, mode="overwrite")
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,
@@ -678,7 +680,7 @@ class TestDataQualityRoundTrip:
 
         # Write tables so validation has something to check
         holdings = _make_holdings_table(fernet_key)
-        cdc = _make_cdc_table(fernet_key)
+        events = _make_events_table(fernet_key)
         portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
 
         write_deltalake(
@@ -686,13 +688,15 @@ class TestDataQualityRoundTrip:
             holdings,
             mode="overwrite",
         )
-        write_deltalake(storage.normalized_path("cdc_events"), cdc, mode="overwrite")
-        # Write required broker CDC tables (NON_EMPTY_REQUIRED)
-        write_deltalake(storage.normalized_path("ibkr_cdc"), cdc, mode="overwrite")
+        write_deltalake(storage.normalized_path("events"), events, mode="overwrite")
+        # Write required broker events tables (NON_EMPTY_REQUIRED)
         write_deltalake(
-            storage.normalized_path("trading212_cdc"), cdc, mode="overwrite"
+            storage.normalized_path("ibkr_events"), events, mode="overwrite"
         )
-        write_deltalake(storage.normalized_path("xtb_cdc"), cdc, mode="overwrite")
+        write_deltalake(
+            storage.normalized_path("trading212_events"), events, mode="overwrite"
+        )
+        write_deltalake(storage.normalized_path("xtb_events"), events, mode="overwrite")
         write_deltalake(
             storage.analytics_path("portfolio_holdings"),
             portfolio_holdings,

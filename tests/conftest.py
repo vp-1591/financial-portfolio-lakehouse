@@ -13,7 +13,7 @@ from tests.local_backend import LocalBackend
 
 # All pipeline-related environment variables that tests must isolate from.
 # Cleared before each test so local .env files and shell env vars don't leak.
-# Note: DEMO and STORAGE_TYPE are removed (replaced by --mode flag).
+# Note: STAGING and STORAGE_TYPE are removed (replaced by --mode flag).
 _PIPELINE_ENV_VARS = [
     "S3_BUCKET",
     "S3_PREFIX",
@@ -25,7 +25,7 @@ _PIPELINE_ENV_VARS = [
     "AWS_REGION",
     "IBKR_FLEX_TOKEN",
     "IBKR_FLEX_QUERY_ID",
-    "IBKR_FLEX_CDC_QUERY_ID",
+    "IBKR_FLEX_EVENTS_QUERY_ID",
     "T212_API_KEY",
     "T212_API_SECRET",
     "ENCRYPTION_KEY",
@@ -56,7 +56,7 @@ def _isolate_pipeline_env(monkeypatch, tmp_path):
     # Reset storage singleton so resolve_storage() re-reads env vars.
     # This autouse teardown is what guarantees no ``_setup_storage`` fixture
     # (in test_consolidate_pipeline.py, test_transform_pipeline.py,
-    # test_report.py, test_quality.py, test_cdc_analytics.py,
+    # test_report.py, test_quality.py, test_events_analytics.py,
     # test_portfolio_holdings.py) leaves ``set_mode("docker")`` / ``_config``
     # set after its test: ``_config = None`` and ``reset_mode()`` run before
     # AND after every test, so a test running after a docker-mode test always
@@ -81,7 +81,7 @@ def docker_mode():
     Most tests run in docker mode (MinIO/local S3).  The autouse
     _isolate_pipeline_env fixture resets the mode to None before and
     after each test, so this fixture is only needed for tests that
-    exercise code that calls get_mode() / is_demo() / resolve_storage().
+    exercise code that calls get_mode() / is_staging() / resolve_storage().
     """
     pipeline.secrets.set_mode("docker")
     yield
@@ -99,17 +99,17 @@ def tmp_data_dir(tmp_path: Path) -> Path:
     data = tmp_path / "data"
     for subdir in [
         "raw/ibkr_snapshot",
-        "raw/ibkr_cdc",
+        "raw/ibkr_events",
         "raw/trading212_snapshot",
-        "raw/trading212_cdc",
+        "raw/trading212_events",
         "raw/xtb_snapshot",
-        "raw/xtb_cdc",
+        "raw/xtb_events",
         "normalized/ibkr_snapshot",
-        "normalized/ibkr_cdc",
+        "normalized/ibkr_events",
         "normalized/trading212_snapshot",
-        "normalized/trading212_cdc",
+        "normalized/trading212_events",
         "normalized/xtb_snapshot",
-        "normalized/xtb_cdc",
+        "normalized/xtb_events",
         "normalized/consolidated_holdings",
         "analytics/portfolio_holdings",
     ]:

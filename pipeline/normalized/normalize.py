@@ -1,6 +1,6 @@
-"""Normalize target currency columns in CDC events.
+"""Normalize target currency columns in events.
 
-After connector transforms write CDC events with ``cash_amount`` in
+After connector transforms write events with ``cash_amount`` in
 ``security_ccy`` (the currency the monetary columns are denominated in)
 and (optionally) ``target_fx_rate`` from the broker, this module fills
 in ``target_value`` and ``target_ccy`` using a ``CurrencyConverter``.
@@ -19,7 +19,7 @@ from deltalake import DeltaTable, write_deltalake
 
 from pipeline.crypto import decrypt_float, encrypt_float
 from pipeline.normalized.consolidate import CurrencyConverter
-from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.normalized.models import events_normalized_schema
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +31,16 @@ def normalize_currency(
     target_currency: str = "EUR",
     manual_rates: dict[str, float] | None = None,
 ) -> pa.Table:
-    """Fill in ``target_fx_rate``, ``target_value``, and ``target_ccy`` for CDC events.
+    """Fill in ``target_fx_rate``, ``target_value``, and ``target_ccy`` for events.
 
-    Reads the ``cdc_events`` Delta table, decrypts ``cash_amount`` and
+    Reads the ``events`` Delta table, decrypts ``cash_amount`` and
     ``target_fx_rate``, computes the missing target-currency columns, and
     overwrites the table.
 
     Parameters
     ----------
     table_path:
-        Path to the ``cdc_events`` Delta table.  Defaults to the
+        Path to the ``events`` Delta table.  Defaults to the
         normalized-layer path from storage config.
     fernet_key:
         Fernet key for encrypting/decrypting value columns.
@@ -56,7 +56,7 @@ def normalize_currency(
     Returns
     -------
     pa.Table
-        The updated CDC events table with ``target_fx_rate``,
+        The updated events table with ``target_fx_rate``,
         ``target_value``, and ``target_ccy`` populated.
     """
     from pipeline.storage import get_storage
@@ -65,7 +65,7 @@ def normalize_currency(
     storage_opts = storage.storage_options
 
     if table_path is None:
-        table_path = storage.normalized_path("cdc_events")
+        table_path = storage.normalized_path("events")
 
     if fernet_key is None:
         from pipeline.crypto import load_key
@@ -85,13 +85,13 @@ def normalize_currency(
         dt = DeltaTable(str(table_path), storage_options=storage_opts)
     except Exception as exc:
         raise FileNotFoundError(
-            f"CDC events table not found at {table_path}. "
-            "Run the consolidate-cdc step first to populate the table."
+            f"events table not found at {table_path}. "
+            "Run the consolidate-events step first to populate the table."
         ) from exc
 
     arrow_table = dt.to_pyarrow_table()
     if arrow_table.num_rows == 0:
-        logger.info("CDC events table is empty; nothing to normalize")
+        logger.info("events table is empty; nothing to normalize")
         return arrow_table
 
     df = pl.from_arrow(arrow_table)
@@ -136,9 +136,9 @@ def normalize_currency(
         # relabeling a native-currency amount as the target currency.
         if not security_ccy:
             raise RuntimeError(
-                "cdc_events row has missing security_ccy; cannot determine the "
+                "events row has missing security_ccy; cannot determine the "
                 "source currency for conversion. Fix the source data and re-run "
-                "normalize-cdc."
+                "normalize-events."
             )
 
         # Same currency: no conversion needed
@@ -210,7 +210,7 @@ def normalize_currency(
 
     # Convert back to PyArrow, matching the schema
     result = df.to_arrow()
-    result = result.cast(cdc_events_normalized_schema)
+    result = result.cast(events_normalized_schema)
 
     # Overwrite the Delta table
     storage.backend.ensure_parent(str(table_path))
@@ -219,7 +219,7 @@ def normalize_currency(
     )
 
     logger.info(
-        "Normalized %d CDC events to target currency %s",
+        "Normalized %d events to target currency %s",
         result.num_rows,
         target_ccy,
     )

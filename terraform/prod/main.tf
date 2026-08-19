@@ -484,7 +484,7 @@ module "connector_task" {
 
   name       = each.key
   image      = "${var.ecr_repository_url}:${local.image_tag}"
-  demo       = false
+  staging    = false
   cpu        = 256
   memory     = 512
   command    = each.value.command
@@ -505,7 +505,7 @@ module "consolidate_allocate" {
 
   name   = "consolidate-allocate"
   image  = "${var.ecr_repository_url}:${local.image_tag}"
-  demo   = false
+  staging = false
   cpu    = 256
   memory = 512
   command = ["run-consolidate-analytics", "--mode", "prod", "--target-currency", "EUR"]
@@ -536,7 +536,7 @@ module "orchestrator" {
   source = "../modules/orchestrator"
 
   env                              = local.env_label
-  demo                             = false
+  staging                          = false
   ecs_cluster_arn                  = var.ecs_cluster_arn
   subnet_ids                       = aws_subnet.public[*].id
   security_group_ids               = [aws_security_group.pipeline.id]

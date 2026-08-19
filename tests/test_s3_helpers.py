@@ -33,10 +33,10 @@ class TestParseS3Uri:
 
     def test_valid_uri_nested_key(self) -> None:
         bucket, key = parse_s3_uri(
-            "s3://bucket-demo/pipeline_demo/staging_demo/xtb/2026-07.xlsx"
+            "s3://bucket-staging/pipeline/staging/xtb/2026-07.xlsx"
         )
-        assert bucket == "bucket-demo"
-        assert key == "pipeline_demo/staging_demo/xtb/2026-07.xlsx"
+        assert bucket == "bucket-staging"
+        assert key == "pipeline/staging/xtb/2026-07.xlsx"
 
     def test_rejects_non_s3_uri(self) -> None:
         with pytest.raises(ValueError, match="Not an S3 URI"):

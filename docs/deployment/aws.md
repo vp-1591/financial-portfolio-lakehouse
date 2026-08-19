@@ -3,7 +3,7 @@
 ## Architecture
 
 The pipeline runs on AWS Fargate, orchestrated by Step Functions, with
-per-environment isolation (demo / prod). Terraform in `terraform/` manages
+per-environment isolation (staging / prod). Terraform in `terraform/` manages
 all resources.
 
 ```mermaid
@@ -74,7 +74,7 @@ terraform apply
    [SSM secrets reference](#ssm-secrets-reference) below).
 2. **Push Docker image** to ECR so task definitions have something to run.
 3. **Store outputs** in GitHub Secrets: `access_key_id`, `s3_bucket`, `s3_prefix`
-   (use `_STAGING` variants for the demo environment).
+   (use `_STAGING` variants for the staging environment).
 
 ### SSM secrets reference
 
@@ -83,29 +83,29 @@ Terraform creates all SSM parameters with `PLACEHOLDER` values. After the first
 `aws ssm put-parameter`. Subsequent applies will **not** overwrite seeded values
 because every parameter has `lifecycle { ignore_changes = [value] }`.
 
-#### Demo environment
+#### Staging environment
 
 Replace `<kms-key-id>` with the output of `terraform output kms_key_arn` from
 `terraform/staging/`.
 
 | SSM parameter name | Env var in container | Description |
 |---|---|---|
-| `/portfolio/demo/IBKR_FLEX_TOKEN` | `IBKR_FLEX_TOKEN` | IBKR Flex Token |
-| `/portfolio/demo/IBKR_FLEX_QUERY_ID` | `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID |
-| `/portfolio/demo/T212_API_KEY` | `T212_API_KEY` | Trading 212 API Key |
-| `/portfolio/demo/T212_API_SECRET` | `T212_API_SECRET` | Trading 212 API Secret |
-| `/portfolio/demo/ENCRYPTION_KEY` | `ENCRYPTION_KEY` | Fernet encryption key for Delta table values |
+| `/portfolio/staging/IBKR_FLEX_TOKEN` | `IBKR_FLEX_TOKEN` | IBKR Flex Token |
+| `/portfolio/staging/IBKR_FLEX_QUERY_ID` | `IBKR_FLEX_QUERY_ID` | IBKR Flex Query ID |
+| `/portfolio/staging/T212_API_KEY` | `T212_API_KEY` | Trading 212 API Key |
+| `/portfolio/staging/T212_API_SECRET` | `T212_API_SECRET` | Trading 212 API Secret |
+| `/portfolio/staging/ENCRYPTION_KEY` | `ENCRYPTION_KEY` | Fernet encryption key for Delta table values |
 
 **Bash / Git Bash:**
 
 ```bash
 KMS_KEY_ID=$(terraform -chdir=terraform/staging output -raw kms_key_arn)
 
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
-aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/staging/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/staging/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/staging/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/staging/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
+aws ssm put-parameter --name /portfolio/staging/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id "$KMS_KEY_ID" --overwrite
 ```
 
 **PowerShell:**
@@ -113,11 +113,11 @@ aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"
 ```powershell
 $KMS_KEY_ID = (terraform -chdir=terraform/staging output -raw kms_key_arn)
 
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
-aws ssm put-parameter --name /portfolio/demo/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/staging/IBKR_FLEX_TOKEN    --value "TOKEN"    --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/staging/IBKR_FLEX_QUERY_ID --value "QUERY_ID" --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/staging/T212_API_KEY       --value "API_KEY"  --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/staging/T212_API_SECRET    --value "SECRET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
+aws ssm put-parameter --name /portfolio/staging/ENCRYPTION_KEY     --value "FERNET"   --type SecureString --key-id $KMS_KEY_ID --overwrite
 ```
 
 #### Production environment
@@ -170,7 +170,7 @@ aws ssm put-parameter --name /portfolio/prod/ENCRYPTION_KEY     --value "FERNET"
 
 | Trigger | Action |
 |---------|--------|
-| Push to `main` | Build & push Docker image → `pipeline run full --mode staging --wait` (triggers the demo Step Functions execution and waits for it) |
+| Push to `main` | Build & push Docker image → `pipeline run full --mode staging --wait` (triggers the staging Step Functions execution and waits for it) |
 | Tag push `v*` | Build & push Docker image with version tag + `production-latest` |
 | Daily schedule | EventBridge triggers the prod Step Functions execution automatically |
 | S3 file arrival | EventBridge triggers the orchestrator when an XTB file lands in staging |
@@ -186,7 +186,7 @@ injected into ECS containers by SSM at runtime, so no `IBKR_FLEX_TOKEN` /
 automatically from the well-known name via the SFN API — no env var needed.
 
 ```bash
-# Trigger the demo (staging) execution and return immediately
+# Trigger the staging execution and return immediately
 .venv/Scripts/python -m pipeline.run full --mode staging
 
 # Trigger and wait for completion (prints failure details on a non-successful run)

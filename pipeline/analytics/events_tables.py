@@ -1,11 +1,11 @@
-"""CDC events → gold analytics tables.
+"""Events → gold analytics tables.
 
-Reads the ``cdc_events`` Delta table, decrypts encrypted columns,
+Reads the ``events`` Delta table, decrypts encrypted columns,
 and builds three analytics tables:
 
 - ``dividend_income`` — dividends by period, broker, and security
 - ``interest_income`` — interest by period and broker
-- ``cash_flow_summary`` — all CDC events aggregated by period and type
+- ``cash_flow_summary`` — all events aggregated by period and type
 
 Each table is written to the analytics layer in overwrite mode.
 """
@@ -43,7 +43,7 @@ def _resolve_fernet_key(fernet_key: bytes | None) -> bytes:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-# Binary (Fernet-encrypted) columns in cdc_events that need decryption.
+# Binary (Fernet-encrypted) columns in events that need decryption.
 _ENCRYPTED_COLUMNS: list[tuple[str, str]] = [
     ("cash_amount", "cash_amount_decrypted"),
     ("target_value", "target_value_resolved"),
@@ -171,11 +171,11 @@ def _add_period_columns(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def _read_cdc_events(
+def _read_events(
     table_path: str | None = None,
     fernet_key: bytes | None = None,
 ) -> pl.DataFrame:
-    """Read ``cdc_events`` Delta table, decrypt binary columns, add period columns.
+    """Read ``events`` Delta table, decrypt binary columns, add period columns.
 
     Returns a Polars DataFrame with decrypted float columns and
     ``period_month``/``period_quarter`` columns added.
@@ -183,7 +183,7 @@ def _read_cdc_events(
     if table_path is None:
         from pipeline.storage import get_storage
 
-        table_path = get_storage().normalized_path("cdc_events")
+        table_path = get_storage().normalized_path("events")
 
     fernet_key = _resolve_fernet_key(fernet_key)
 
@@ -195,8 +195,8 @@ def _read_cdc_events(
         dt = DeltaTable(table_path, storage_options=storage_opts)
     except Exception as exc:
         raise FileNotFoundError(
-            f"CDC events table not found at {table_path}. "
-            "Run the consolidate-cdc step first to populate the table."
+            f"Events table not found at {table_path}. "
+            "Run the consolidate-events step first to populate the table."
         ) from exc
 
     arrow_table = dt.to_pyarrow_table()
@@ -216,15 +216,15 @@ def _read_cdc_events(
     ]
     if missing:
         raise RuntimeError(
-            "cdc_events table is missing target_value/target_ccy columns; "
-            "run normalize-cdc before analytics."
+            "events table is missing target_value/target_ccy columns; "
+            "run normalize-events before analytics."
         )
     null_target = df.filter(
         pl.col("target_value_resolved").is_null() | pl.col("target_ccy").is_null()
     )
     if null_target.height > 0:
         # security_ccy is schema-nullable (Delta Lake marks all fields nullable
-        # and it is not in REQUIRED_FIELDS for cdc_events), and the null
+        # and it is not in REQUIRED_FIELDS for events), and the null
         # target_value rows being reported are exactly the rows that can carry
         # a null security_ccy — filter them before sorting so the error message
         # itself does not crash with a TypeError.
@@ -232,8 +232,8 @@ def _read_cdc_events(
             {c for c in null_target["security_ccy"].unique().to_list() if c is not None}
         )
         raise RuntimeError(
-            f"{null_target.height} cdc_events row(s) have null target_value or "
-            f"target_ccy (security_ccy: {affected_ccys}). Run normalize-cdc and "
+            f"{null_target.height} events row(s) have null target_value or "
+            f"target_ccy (security_ccy: {affected_ccys}). Run normalize-events and "
             "pass --fx-rate CURRENCY=RATE to provide manual rates for "
             "unconvertible currencies."
         )
@@ -263,14 +263,14 @@ def _finalize_analytics(
 ) -> pl.DataFrame:
     """Add ``calculated_at``, select columns in schema order, and write to Delta.
 
-    Shared tail for every CDC/holdings builder: stamp the run timestamp, project
+    Shared tail for every events/holdings builder: stamp the run timestamp, project
     to the declared column order, and persist.  The column order is derived
     from *schema* so the on-disk table always matches the declared contract.
 
     The Arrow schema is re-cast at the write boundary because polars ``count()``
     yields ``Int32`` (the declared schema is ``Int64``) and ``to_arrow()`` does
     not reproduce the declared nullability flags.  The round-trip guard tests
-    in ``tests/test_cdc_analytics.py`` and ``tests/test_portfolio_holdings.py``
+    in ``tests/test_events_analytics.py`` and ``tests/test_portfolio_holdings.py``
     assert the on-disk schema matches the declared ``*_schema`` exactly.
     """
     agg = agg.with_columns(pl.lit(calculated_at).alias("calculated_at"))
@@ -279,7 +279,7 @@ def _finalize_analytics(
     # cast(schema) is load-bearing, not dead defense: polars count() yields Int32
     # but the declared schema requires Int64 (event_count); to_arrow() alone
     # also drops the declared nullability flags. Do not remove without the
-    # round-trip guard test in tests/test_cdc_analytics.py passing.
+    # round-trip guard test in tests/test_events_analytics.py passing.
     final = pl.from_arrow(agg.to_arrow().cast(schema))
     # pl.from_arrow returns DataFrame | Series; a Table always yields a DataFrame.
     assert isinstance(final, pl.DataFrame)
@@ -303,7 +303,7 @@ def build_dividend_income(
     fernet_key: bytes | None = None,
     analytics_path: str | None = None,
 ) -> pl.DataFrame:
-    """Build the ``dividend_income`` analytics table from CDC events.
+    """Build the ``dividend_income`` analytics table from events.
 
     Groups DIVIDEND events by period, broker, security, and currency.
     """
@@ -313,12 +313,12 @@ def build_dividend_income(
 
         analytics_path = get_storage().analytics_path("dividend_income")
 
-    df = _read_cdc_events(table_path=table_path, fernet_key=fernet_key)
+    df = _read_events(table_path=table_path, fernet_key=fernet_key)
     df = df.filter(pl.col("event_type") == "DIVIDEND")
 
     if df.is_empty():
         logger.warning(
-            "No DIVIDEND events found in CDC data; dividend_income table will be empty"
+            "No DIVIDEND events found in events data; dividend_income table will be empty"
         )
 
     now = datetime.now(UTC)
@@ -384,7 +384,7 @@ def build_interest_income(
     fernet_key: bytes | None = None,
     analytics_path: str | None = None,
 ) -> pl.DataFrame:
-    """Build the ``interest_income`` analytics table from CDC events.
+    """Build the ``interest_income`` analytics table from events.
 
     Groups INTEREST events by period, broker, and currency.
     """
@@ -394,12 +394,12 @@ def build_interest_income(
 
         analytics_path = get_storage().analytics_path("interest_income")
 
-    df = _read_cdc_events(table_path=table_path, fernet_key=fernet_key)
+    df = _read_events(table_path=table_path, fernet_key=fernet_key)
     df = df.filter(pl.col("event_type") == "INTEREST")
 
     if df.is_empty():
         logger.warning(
-            "No INTEREST events found in CDC data; interest_income table will be empty"
+            "No INTEREST events found in events data; interest_income table will be empty"
         )
 
     now = datetime.now(UTC)
@@ -450,7 +450,7 @@ def build_cash_flow_summary(
     fernet_key: bytes | None = None,
     analytics_path: str | None = None,
 ) -> pl.DataFrame:
-    """Build the ``cash_flow_summary`` analytics table from CDC events.
+    """Build the ``cash_flow_summary`` analytics table from events.
 
     Groups all events by period, broker, event type, and currency.
     """
@@ -460,10 +460,10 @@ def build_cash_flow_summary(
 
         analytics_path = get_storage().analytics_path("cash_flow_summary")
 
-    df = _read_cdc_events(table_path=table_path, fernet_key=fernet_key)
+    df = _read_events(table_path=table_path, fernet_key=fernet_key)
 
     if df.is_empty():
-        logger.warning("No CDC events found; cash_flow_summary table will be empty")
+        logger.warning("No events found; cash_flow_summary table will be empty")
 
     now = datetime.now(UTC)
 

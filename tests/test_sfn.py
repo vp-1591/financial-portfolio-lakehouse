@@ -20,8 +20,10 @@ from pipeline import sfn
 
 
 class TestFamilyNames:
-    def test_task_def_family_staging_maps_to_demo(self) -> None:
-        assert sfn.task_def_family("staging", "ibkr") == "portfolio-pipeline-demo-ibkr"
+    def test_task_def_family_staging(self) -> None:
+        assert (
+            sfn.task_def_family("staging", "ibkr") == "portfolio-pipeline-staging-ibkr"
+        )
 
     def test_task_def_family_prod(self) -> None:
         assert (
@@ -32,7 +34,7 @@ class TestFamilyNames:
     def test_consolidate_task_def_family(self) -> None:
         assert (
             sfn.consolidate_task_def_family("staging")
-            == "portfolio-pipeline-demo-consolidate-allocate"
+            == "portfolio-pipeline-staging-consolidate-allocate"
         )
         assert (
             sfn.consolidate_task_def_family("prod")
@@ -66,7 +68,7 @@ class TestCommandBuilders:
 
 
 class TestBuildExecutionInput:
-    def test_input_shape_no_demo_has_consolidate_command(self) -> None:
+    def test_input_shape_has_consolidate_command(self) -> None:
         connector_arns = {
             "ibkr": "arn:ibkr",
             "trading212": "arn:t212",
@@ -74,7 +76,7 @@ class TestBuildExecutionInput:
         inp = sfn.build_execution_input(
             ["ibkr", "trading212"], connector_arns, "arn:consolidate", "staging", "EUR"
         )
-        assert "demo" not in inp
+        assert "staging" not in inp
         assert inp["consolidate_allocate_task_def_arn"] == "arn:consolidate"
         assert inp["consolidate_command"] == [
             "run-consolidate-analytics",
@@ -112,8 +114,8 @@ class TestResolveStateMachineArn:
             {
                 "stateMachines": [
                     {
-                        "name": "portfolio-pipeline-orchestrator-demo",
-                        "stateMachineArn": "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator-demo",
+                        "name": "portfolio-pipeline-orchestrator-staging",
+                        "stateMachineArn": "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator-staging",
                     },
                 ]
             }
@@ -121,7 +123,7 @@ class TestResolveStateMachineArn:
         arn = sfn.resolve_state_machine_arn(sfn_client, "staging")
         assert (
             arn
-            == "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator-demo"
+            == "arn:aws:states:eu-west-1:123:stateMachine:portfolio-pipeline-orchestrator-staging"
         )
 
     def test_prod_resolves_by_name(self) -> None:
@@ -152,7 +154,7 @@ class TestResolveStateMachineArn:
         arn = sfn.resolve_state_machine_arn(sfn_client, "staging")
         assert arn is None
         err = capsys.readouterr().err
-        assert "portfolio-pipeline-orchestrator-demo" in err
+        assert "portfolio-pipeline-orchestrator-staging" in err
         assert "not found" in err
 
     def test_unsupported_mode_returns_none_and_prints_error(
@@ -175,7 +177,7 @@ class TestParseTaskFailed:
         cause = json.dumps(
             {
                 "Containers": [{"exitCode": 1}, {"exitCode": None}],
-                "taskDefinitionArn": "arn:aws:ecs:::task-definition/portfolio-pipeline-demo-ibkr:3",
+                "taskDefinitionArn": "arn:aws:ecs:::task-definition/portfolio-pipeline-staging-ibkr:3",
                 "stoppedReason": "Essential container exited",
             }
         )
@@ -183,7 +185,7 @@ class TestParseTaskFailed:
         assert len(lines) == 1
         line = lines[0]
         assert "error=States.TaskFailed" in line
-        assert "task=portfolio-pipeline-demo-ibkr:3" in line
+        assert "task=portfolio-pipeline-staging-ibkr:3" in line
         assert "exitCode=1" in line
         assert "reason=Essential container exited" in line
 
@@ -221,9 +223,9 @@ class TestResolveTaskDefArn:
         ecs.describe_task_definition.return_value = {
             "taskDefinition": {"taskDefinitionArn": "arn:family:5"}
         }
-        arn = sfn.resolve_task_def_arn(ecs, "portfolio-pipeline-demo-ibkr")
+        arn = sfn.resolve_task_def_arn(ecs, "portfolio-pipeline-staging-ibkr")
         ecs.describe_task_definition.assert_called_once_with(
-            taskDefinition="portfolio-pipeline-demo-ibkr"
+            taskDefinition="portfolio-pipeline-staging-ibkr"
         )
         assert arn == "arn:family:5"
 
@@ -240,15 +242,15 @@ class TestResolveAllArns:
             ecs, "staging", ["ibkr", "trading212"]
         )
         assert connector_arns == {
-            "ibkr": "arn:portfolio-pipeline-demo-ibkr",
-            "trading212": "arn:portfolio-pipeline-demo-trading212",
+            "ibkr": "arn:portfolio-pipeline-staging-ibkr",
+            "trading212": "arn:portfolio-pipeline-staging-trading212",
         }
-        assert consolidate_arn == "arn:portfolio-pipeline-demo-consolidate-allocate"
+        assert consolidate_arn == "arn:portfolio-pipeline-staging-consolidate-allocate"
         described = {
             c.kwargs["taskDefinition"]
             for c in ecs.describe_task_definition.call_args_list
         }
-        assert "portfolio-pipeline-demo-consolidate-allocate" in described
+        assert "portfolio-pipeline-staging-consolidate-allocate" in described
 
 
 class TestStartExecution:
@@ -307,7 +309,7 @@ class TestFetchFailureDetails:
                         "cause": json.dumps(
                             {
                                 "Containers": [{"exitCode": 1}],
-                                "taskDefinitionArn": "arn::portfolio-pipeline-demo-ibkr:1",
+                                "taskDefinitionArn": "arn::portfolio-pipeline-staging-ibkr:1",
                                 "stoppedReason": "boom",
                             }
                         ),
@@ -346,10 +348,10 @@ class TestFetchFailureDetails:
             for c in logs_client.filter_log_events.call_args_list
         ]
         assert queried_groups == [
-            "/ecs/portfolio-pipeline-demo-ibkr",
-            "/ecs/portfolio-pipeline-demo-trading212",
-            "/ecs/portfolio-pipeline-demo-xtb",
-            "/ecs/portfolio-pipeline-demo-consolidate-allocate",
+            "/ecs/portfolio-pipeline-staging-ibkr",
+            "/ecs/portfolio-pipeline-staging-trading212",
+            "/ecs/portfolio-pipeline-staging-xtb",
+            "/ecs/portfolio-pipeline-staging-consolidate-allocate",
         ]
         for c in logs_client.filter_log_events.call_args_list:
             assert c.kwargs["startTime"] == expected_start_ms
@@ -381,9 +383,9 @@ class TestFetchFailureDetails:
             for c in logs_client.filter_log_events.call_args_list
         ]
         assert queried_groups == [
-            "/ecs/portfolio-pipeline-demo-ibkr",
-            "/ecs/portfolio-pipeline-demo-trading212",
-            "/ecs/portfolio-pipeline-demo-consolidate-allocate",
+            "/ecs/portfolio-pipeline-staging-ibkr",
+            "/ecs/portfolio-pipeline-staging-trading212",
+            "/ecs/portfolio-pipeline-staging-consolidate-allocate",
         ]
 
     def test_input_without_connectors_queries_only_consolidate(self) -> None:
@@ -404,7 +406,7 @@ class TestFetchFailureDetails:
             for c in logs_client.filter_log_events.call_args_list
         ]
         assert queried_groups == [
-            "/ecs/portfolio-pipeline-demo-consolidate-allocate",
+            "/ecs/portfolio-pipeline-staging-consolidate-allocate",
         ]
 
     def test_log_fetch_failure_is_best_effort(self) -> None:

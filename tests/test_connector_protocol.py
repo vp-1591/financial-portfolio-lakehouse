@@ -2,7 +2,7 @@
 
 Verifies that each connector correctly implements:
 - ``fetch_kwargs()`` — builds connector-specific snapshot kwargs
-- ``fetch_cdc_kwargs()`` — returns CDC kwargs (same as snapshot for T212, empty otherwise)
+- ``fetch_events_kwargs()`` — returns events kwargs (same as snapshot for T212, empty otherwise)
 - ``required_secrets()`` — lists expected secret env-var names
 - ``extract_holdings()`` — extracts Holding objects from a normalized DataFrame
 """
@@ -166,19 +166,19 @@ class TestXtbFetchKwargs:
 
 
 # ---------------------------------------------------------------------------
-# fetch_cdc_kwargs
+# fetch_events_kwargs
 # ---------------------------------------------------------------------------
 
 
-class TestFetchCdcKwargs:
-    """CDC kwargs: T212 returns snapshot kwargs, IBKR returns {}.
+class TestFetchEventsKwargs:
+    """events kwargs: T212 returns snapshot kwargs, IBKR returns {}.
 
-    XTB no longer has ``fetch_cdc_kwargs`` (D17 shared bronze — CDC is derived
-    from the snapshot raw, no separate CDC fetch)."""
+    XTB no longer has ``fetch_events_kwargs`` (D17 shared bronze — Events are derived
+    from the snapshot raw, no separate events fetch)."""
 
     def test_ibkr_returns_empty(self) -> None:
         set_mode("docker")
-        assert get("ibkr").fetch_cdc_kwargs() == {}
+        assert get("ibkr").fetch_events_kwargs() == {}
         reset_mode()
 
     def test_t212_returns_snapshot_kwargs(self, monkeypatch) -> None:
@@ -187,9 +187,9 @@ class TestFetchCdcKwargs:
         monkeypatch.delenv("T212_BASE_URL", raising=False)
         set_mode("docker")
         connector = get("trading212")
-        cdc_kwargs = connector.fetch_cdc_kwargs()
+        events_kwargs = connector.fetch_events_kwargs()
         snapshot_kwargs = connector.fetch_kwargs(argparse.Namespace())
-        assert cdc_kwargs == snapshot_kwargs
+        assert events_kwargs == snapshot_kwargs
         reset_mode()
 
 

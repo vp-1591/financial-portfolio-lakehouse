@@ -1,11 +1,11 @@
-# IBKR Flex Query — CDC fields (supplement)
+# IBKR Flex Query — events fields (supplement)
 
-This document lists the Flex Query sections and fields needed for **CDC (Change Data
-Capture)** that are **not already in** the snapshot query documented in
+This document lists the Flex Query sections and fields needed for **events (change data
+capture)** that are **not already in** the snapshot query documented in
 `docs/ibkr/flex-query-required-fields.md`.
 
 The snapshot query already includes: Account Information, Open Positions, Cash
-Report, and Currency Conversion Rate. The CDC sections below must be **added to the
+Report, and Currency Conversion Rate. The events sections below must be **added to the
 same Activity Flex Query** so that a single `SendRequest`/`GetStatement` call
 returns both snapshot and activity data.
 
@@ -25,27 +25,27 @@ The complete list of available fields per section is in
 >
 > The Flex Query **Period** must be wide enough to capture past transactions, not just
 > the last business day. If the period is too narrow (e.g. `LastBusinessDay`), the
-> CDC sections (Trades, CashTransactions, Transfers, TransactionFees) will be **empty**
-> and the `normalized/ibkr_cdc` table will have zero rows.
+> events sections (Trades, CashTransactions, Transfers, TransactionFees) will be **empty**
+> and the `normalized/ibkr_events` table will have zero rows.
 >
 > **Recommended:** `Last365Days` or a specific date range covering your account history.
 >
 > This does **not** affect the snapshot. The snapshot transform only reads
 > OpenPositions, AccountInformation, CashReport, and ConversionRates — these always
-> reflect current holdings regardless of the query period. The CDC transform reads
+> reflect current holdings regardless of the query period. The events transform reads
 > only the activity sections (Trades, CashTransactions, etc.) which are populated
 > based on the period.
 >
-> If you use a **single Flex Query** for both snapshot and CDC (the default when
-> `IBKR_FLEX_CDC_QUERY_ID` is not set), widening the period is safe: snapshot data
-> remains unchanged, and CDC data is now populated.
+> If you use a **single Flex Query** for both snapshot and events (the default when
+> `IBKR_FLEX_EVENTS_QUERY_ID` is not set), widening the period is safe: snapshot data
+> remains unchanged, and events data is now populated.
 
 ---
 
-## 5. Trades — Required for CDC
+## 5. Trades — Required for events
 
 Source: Activity Flex Query Reference → Trades. This section produces `<Trade>`
-elements. Each trade becomes a `TRADE` event in the broker-neutral CDC schema.
+elements. Each trade becomes a `TRADE` event in the broker-neutral events schema.
 
 | Field (PDF name)        | XML attribute         | Required | Notes |
 |-------------------------|-----------------------|----------|-------|
@@ -68,13 +68,13 @@ elements. Each trade becomes a `TRADE` event in the broker-neutral CDC schema.
 | Trade ID                | `tradeId`             | Required | Secondary event ID when `ibExecutionId` is missing. |
 | Transaction ID          | `transactionId`       | Required | Fallback event ID. |
 | Taxes                   | `taxes`               | Required | Taxes on the trade. |
-| Asset Class             | `assetClass`          | Optional | e.g. `STK`, `OPT`, `FUT`. Not yet in CDC schema; useful for future asset-type filtering. |
+| Asset Class             | `assetClass`          | Optional | e.g. `STK`, `OPT`, `FUT`. Not yet in events schema; useful for future asset-type filtering. |
 | IB Commission Currency  | `ibCommissionCurrency`| Optional | Currency of the commission. Useful if commission currency differs from trade currency. |
 | Multiplier              | `multiplier`          | Optional | Contract multiplier. Needed if options/futures trades are ever supported. |
 | Open/Close Indicator    | `openCloseIndicator`  | Optional | `O` for open, `C` for close. Useful for tax-lot tracking and P&L calculations. |
 | Related Trade ID        | `relatedTradeId`      | Optional | Links closing trades to opening trades. Useful for tax-lot matching. |
 
-## 6. Cash Transactions — Required for CDC
+## 6. Cash Transactions — Required for events
 
 Source: Activity Flex Query Reference → Cash Transactions. This section produces
 `<CashTransaction>` elements. These cover dividends, withholding tax, deposits,
@@ -95,7 +95,7 @@ withdrawals, interest, fees, price adjustments, and commission adjustments.
 | Transaction ID          | `transactionId`   | Required | Stable event ID. |
 | Dividend Type           | `dividendType`    | Optional | Qualifies dividend transactions (e.g. `Qualified`). Useful for tax reporting. |
 | Trade ID                | `tradeId`         | Optional | Links to a trade if applicable. Useful for correlating dividends/withholding tax to trades. |
-| Asset Class             | `assetClass`      | Optional | Asset class of related security. Not yet in CDC schema; useful for future filtering. |
+| Asset Class             | `assetClass`      | Optional | Asset class of related security. Not yet in events schema; useful for future filtering. |
 
 ### Cash Transaction sub-sections to include
 
@@ -147,7 +147,7 @@ not the Flex Query editor checkbox label `"Deposits & Withdrawals"` (ampersand).
 | `Commission Adjustments` | `FEE`                    | |
 | *any other value*        | `UNKNOWN`                | |
 
-## 7. Transfers — Required for CDC
+## 7. Transfers — Required for events
 
 Source: Activity Flex Query Reference → Transfers. This section produces `<Transfer>`
 elements covering security and cash transfers between accounts/brokers.
@@ -168,11 +168,11 @@ elements covering security and cash transfers between accounts/brokers.
 | Transfer Price          | `transferPrice`       | Required | Price per unit at transfer. |
 | Cash Transfer           | `cashTransfer`        | Required | Cash amount transferred. |
 | Transaction ID          | `transactionId`       | Required | Stable event ID. |
-| Asset Class             | `assetClass`          | Optional | Asset class. Not yet in CDC schema; useful for future filtering. |
+| Asset Class             | `assetClass`          | Optional | Asset class. Not yet in events schema; useful for future filtering. |
 | Position Amount         | `positionAmount`      | Optional | Position value in local currency. Useful for reconciliation. |
 | Position Amount in Base | `positionAmountInBase`| Optional | Position value in base currency. Useful for base-currency valuation. |
 
-## 8. Transaction Fees — Required for CDC
+## 8. Transaction Fees — Required for events
 
 Source: Activity Flex Query Reference → Transaction Fees. This section produces
 `<TransactionFee>` elements with tax and fee detail tied to specific trades. Use
@@ -192,7 +192,7 @@ reconstruct per-trade fee/tax breakdowns.
 | Tax Amount              | `taxAmount`      | Required | Amount of tax or fee. |
 | Trade Price             | `tradePrice`     | Required | Price at which the fee was assessed. |
 | Quantity                | `quantity`       | Required | Related quantity. |
-| Asset Class             | `assetClass`     | Optional | Asset class. Not yet in CDC schema; useful for future filtering. |
+| Asset Class             | `assetClass`     | Optional | Asset class. Not yet in events schema; useful for future filtering. |
 | Order ID                | `orderId`        | Optional | Links to the originating order. Useful for fee-to-order correlation. |
 | Trade ID                | `tradeId`        | Optional | Links to the originating trade. Useful for fee-to-trade correlation. |
 | Report Date             | `reportDate`     | Optional | Reporting date. Useful for reconciliation with official IBKR reports. |
@@ -200,7 +200,7 @@ reconstruct per-trade fee/tax breakdowns.
 ## Updated section configuration checklist
 
 In the IBKR Flex Query editor, the following sections must be ticked. The first
-four are from the snapshot query; the last four are the CDC additions.
+four are from the snapshot query; the last four are the events additions.
 
 - [x] Account Information
 - [x] Open Positions

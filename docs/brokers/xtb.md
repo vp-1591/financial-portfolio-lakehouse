@@ -54,13 +54,13 @@ automatically. Requires S3 storage.
 ## File-arrival trigger (production)
 
 In production, XTB is event-driven. EventBridge fires on S3 Object-Created for
-the upload prefix (`pipeline/xtb_uploads/` in prod, `pipeline_demo/xtb_uploads/`
-in demo) and starts the Step Functions orchestrator's `RunConnectors` Map with
+the upload prefix (`pipeline/xtb_uploads/` in prod, `xtb_uploads/`
+in staging) and starts the Step Functions orchestrator's `RunConnectors` Map with
 `--xtb-file <s3-uri>` — one file per execution. The daily scheduled run
 (`schedule_connectors = ["ibkr","trading212"]`) does **not** include XTB:
 fetch+transform runs only on file arrival. `run-consolidate-analytics` still
-reads `xtb_snapshot`/`xtb_cdc` silver on every run whenever present, and
-`xtb_cdc` is not a required non-empty table. Multiple accounts accumulate
+reads `xtb_snapshot`/`xtb_events` silver on every run whenever present, and
+`xtb_events` is not a required non-empty table. Multiple accounts accumulate
 across triggers into the shared `xtb_snapshot` raw table and are unioned
 per-account at transform time.
 
@@ -69,15 +69,15 @@ per-account at transform time.
 The XTB connector is implemented in `pipeline/connectors/xtb/`. The fetch step
 stores the raw `.xlsx` file bytes (encrypted) with `source="XTB_REPORT"` — a
 single raw row carries the full 3-sheet workbook (**shared bronze**: one raw
-row feeds both the snapshot and CDC silver tables; there is no separate
-`xtb_cdc` raw fetch). The transform step parses the workbook with
+row feeds both the snapshot and events silver tables; there is no separate
+`xtb_events` raw fetch). The transform step parses the workbook with
 [openpyxl](https://openpyxl.sourceforge.org/) and builds normalized tables
 with Polars.
 
 Key behaviors of the new-format parser/transform:
 
-- **3 sheets.** Open Positions → snapshot holdings; Cash Operations → all CDC
-  events; Closed Positions → fee-enrichment lookup only (keyed by Position ID,
+- **3 sheets.** Open Positions → snapshot holdings; Cash Operations → all events;
+  Closed Positions → fee-enrichment lookup only (keyed by Position ID,
   never emitted as its own event).
 - **Dates** are decoded to timezone-aware UTC datetimes in the parser
   (openpyxl auto-converts date-formatted cells; raw numeric serials go through
@@ -106,7 +106,7 @@ Key behaviors of the new-format parser/transform:
   enriched from Closed Positions via Position ID: `fee_amount = Commission`,
   `settle_date = Close time`. The
   opening (`Stock purchase`) row gets no fee.
-- **Multi-account.** Snapshot and CDC both keep the latest payload per
+- **Multi-account.** Snapshot and events both keep the latest payload per
   `account_id`. Rows are grouped by `account_id` derived from `source_file`
   (filename pattern `{CCY}_{account_id}_{from}_{to}.xlsx`) without parsing, and
   only the latest row per account (`fetched_at`, with a `source_file`
@@ -117,5 +117,5 @@ Key behaviors of the new-format parser/transform:
   (one bad historical row can no longer kill the connector). The report's R1
   `account_id` is authoritative on a filename mismatch (logged). Rows whose
   filename doesn't match the pattern fall back to a guarded parse for
-  account-id discovery. CDC dedups on `(event_type, event_id, account_id)` so
+  account-id discovery. events dedups on `(event_type, event_id, account_id)` so
   same-ID events from different accounts coexist.

@@ -12,7 +12,7 @@ import pyarrow as pa
 from pipeline.connectors.registry import register
 from pipeline.connectors.trading212 import fetch, transform
 from pipeline.normalized.consolidate import Holding
-from pipeline.secrets import get_env, is_demo, resolve_secret
+from pipeline.secrets import get_env, is_staging, resolve_secret
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ _DEMO_BASE_URL = "https://demo.trading212.com/api/v0"
 class Trading212Connector:
     name = "trading212"
     display_name = "Trading 212"
-    cdc_raw_layer = "cdc"
+    events_raw_layer = "events"
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         api_key = resolve_secret("T212_API_KEY")
@@ -32,7 +32,7 @@ class Trading212Connector:
             logger.debug("Skipping Trading 212: T212_API_KEY not set")
             return {}
         api_secret = resolve_secret("T212_API_SECRET") or ""
-        default_base = _DEMO_BASE_URL if is_demo() else _LIVE_BASE_URL
+        default_base = _DEMO_BASE_URL if is_staging() else _LIVE_BASE_URL
         base_url = get_env("T212_BASE_URL") or default_base
         return {
             "api_key": api_key,
@@ -40,8 +40,8 @@ class Trading212Connector:
             "base_url": base_url,
         }
 
-    def fetch_cdc_kwargs(self) -> dict:
-        """Trading 212 uses the same credentials for CDC as for snapshots."""
+    def fetch_events_kwargs(self) -> dict:
+        """Trading 212 uses the same credentials for events as for snapshots."""
         return self.fetch_kwargs(argparse.Namespace())
 
     def required_secrets(self) -> list[str]:
@@ -69,11 +69,11 @@ class Trading212Connector:
     def fetch_snapshot(self, **kwargs: Any) -> pa.Table:
         return fetch.fetch_snapshot(**kwargs)
 
-    def fetch_cdc(self, **kwargs: Any) -> pa.Table:
-        return fetch.fetch_cdc(**kwargs)
+    def fetch_events(self, **kwargs: Any) -> pa.Table:
+        return fetch.fetch_events(**kwargs)
 
     def transform_snapshot(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
         return transform.transform_snapshot(raw, fernet_key)
 
-    def transform_cdc(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
-        return transform.transform_cdc(raw, fernet_key)
+    def transform_events(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
+        return transform.transform_events(raw, fernet_key)

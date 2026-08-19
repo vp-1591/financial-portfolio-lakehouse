@@ -10,8 +10,8 @@ variable "image" {
   type        = string
 }
 
-variable "demo" {
-  description = "Whether this is the demo environment."
+variable "staging" {
+  description = "Whether this is the staging environment."
   type        = bool
   default     = false
 }

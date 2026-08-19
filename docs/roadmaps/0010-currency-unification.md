@@ -10,7 +10,7 @@ adds a target-currency conversion. This eliminates `value_currency`,
 currency, e.g. EUR). It also eliminates all seven currency bugs:
 
 1. **T212 `fx_rate_to_base` misused** — `walletImpact.fxRate` was treated as a wallet→base rate, producing wrong `amount_base` values. It's actually the wallet→security rate (PLN→USD, PLN→GBP, PLN→GBX).
-2. **`base_currency` overloaded** — In CDC events it means "account base currency" (USD for IBKR, PLN for T212), but in consolidated holdings it means "reporting target currency" (EUR). Same column, two meanings.
+2. **`base_currency` overloaded** — In events it means "account base currency" (USD for IBKR, PLN for T212), but in consolidated holdings it means "reporting target currency" (EUR). Same column, two meanings.
 3. **`value_currency` ≠ `security_currency`** — For T212, `value_currency` is the wallet currency (PLN) while `security_currency` is the instrument currency (USD/GBP). For IBKR, they're the same. This inconsistency makes consolidation error-prone.
 4. **IBKR `settle_date` format** — IBKR returns `settle_date` as `YYYYMMDD` (compact integer), but the pipeline expects `YYYY-MM-DD`.
 5. **Fee/tax currency unspecified** — Fees and taxes are stored without a currency column. For T212 they're in wallet currency (PLN), for IBKR they may be in a different currency than the trade. When `security_ccy` differs from the fee currency, the amounts are in the wrong unit.
@@ -23,12 +23,12 @@ Currency conversion is scattered across three layers with different semantics:
 
 | Layer | Who converts | Rate source | Result |
 |-------|-------------|------------|--------|
-| T212 CDC transform | Connector | `walletImpact.fxRate` (misused as "to base") | Wrong `amount_base` — the rate is actually wallet→security, not wallet→base (Bug 1) |
-| IBKR CDC transform | Connector | `fxRateToBase` (historical, correct) | Correct for trades; null for transfers/fees |
+| T212 events transform | Connector | `walletImpact.fxRate` (misused as "to base") | Wrong `amount_base` — the rate is actually wallet→security, not wallet→base (Bug 1) |
+| IBKR events transform | Connector | `fxRateToBase` (historical, correct) | Correct for trades; null for transfers/fees |
 | IBKR snapshot | Connector | `fxRateToBase` (pre-converts value) | `value` is in account base currency but `value_currency` says native currency (Bug 7) |
-| Consolidation | `CurrencyConverter` | Live FX rates | Correct for snapshots; not used for CDC |
+| Consolidation | `CurrencyConverter` | Live FX rates | Correct for snapshots; not used for events |
 
-The column names are overloaded: `base_currency` means account base in CDC but
+The column names are overloaded: `base_currency` means account base in events but
 consolidation target in holdings (Bug 2). `value_currency` means wallet currency
 for T212 but trade currency for IBKR (Bug 3). T212 dividends/transactions
 hardcode `fx_rate_to_base = 1.0` (Bug 6).
@@ -72,7 +72,7 @@ recorded in ADRs 0073, 0074, and 0077.
       security's trading currency
 - [ ] IBKR snapshots store `value` in native (security) currency, not
       pre-converted to account base currency (Bug 7 fix)
-- [ ] IBKR CDC events use `fxRateToBase` as `target_fx_rate` to compute
+- [ ] IBKR events use `fxRateToBase` as `target_fx_rate` to compute
       `target_value` during normalization
 - [ ] All existing tests pass after the refactor
 - [ ] `pipeline report --output data/report.html` on demo data produces correct
@@ -90,7 +90,7 @@ recorded in ADRs 0073, 0074, and 0077.
 
 ## Schema contract
 
-### Silver: CDC events (`cdc_events_normalized`)
+### Silver: events (`events_normalized`)
 
 | Column | Type | Nullable | Meaning |
 |--------|------|----------|---------|
@@ -142,7 +142,7 @@ recorded in ADRs 0073, 0074, and 0077.
 
 **Removed:** `value` (renamed to `security_value`), `value_base` (renamed to `target_value`), `value_currency` (replaced by `security_ccy`), `base_currency` (replaced by `target_ccy`).
 
-### Gold: CDC analytics (`dividend_income`, `interest_income`, `cash_flow_summary`)
+### Gold: events analytics (`dividend_income`, `interest_income`, `cash_flow_summary`)
 
 | Column | Type | Meaning |
 |--------|------|---------|
@@ -205,7 +205,7 @@ Wire `target_value` computation into the normalization step.
 
 #### 2a. Update silver schemas in `pipeline/normalized/models.py`
 
-- [x] **CDC events**: Remove `value_currency`, `base_currency`,
+- [x] **events**: Remove `value_currency`, `base_currency`,
       `fx_rate_to_base`, `amount_base`, `net_amount` (`net_amount` is always
       identical to `cash_amount` — redundant). Add `security_ccy` (string,
       non-null), `target_fx_rate` (binary, nullable), `target_value` (binary,
@@ -261,7 +261,7 @@ Wire `target_value` computation into the normalization step.
 
 #### 2d. Create `normalize_currency()` in `pipeline/normalized/`
 
-- [x] New function that takes a list of CDC event dicts (with `cash_amount` in
+- [x] New function that takes a list of event dicts (with `cash_amount` in
       `security_ccy` and optionally a pre-set `target_fx_rate` from IBKR) and
       a `CurrencyConverter`, and computes `target_value`, `target_fx_rate`,
       and `target_ccy` for each event:
@@ -296,7 +296,7 @@ Wire `target_value` computation into the normalization step.
 - [x] **`pipeline/analytics/holdings.py`**: Update column references from
       `value`/`value_base`/`value_currency`/`base_currency`/`security_currency`
       to `security_value`/`target_value`/`security_ccy`/`target_ccy`.
-- [x] **`pipeline/analytics/cdc_tables.py`**: Update column references from
+- [x] **`pipeline/analytics/events_tables.py`**: Update column references from
       `value_currency`/`base_currency`/`amount_base`/`amount_base_resolved`
       to `security_ccy`/`target_ccy`/`target_value`. Remove the
       `amount_base_resolved` fallback logic. Remove `net_amount` from the
@@ -321,17 +321,17 @@ Wire `target_value` computation into the normalization step.
   but T212 dividends/transactions use `CurrencyConverter` live rates).
 - Fee/tax cross-currency conversion (Phase 3).
 - IBKR `settle_date` format fix (Phase 3).
-- XTB connector changes (XTB CDC stays on its own schema until the CDC
+- XTB connector changes (XTB events stays on its own schema until the events
   Tables roadmap is implemented).
 
 **Files:** `pipeline/normalized/models.py`,
-`pipeline/normalized/cdc_normalize.py` (new),
+`pipeline/normalized/events_normalize.py` (new),
 `pipeline/normalized/consolidate.py`,
 `pipeline/connectors/trading212/transform.py`,
 `pipeline/connectors/trading212/client.py`,
 `pipeline/connectors/ibkr/transform.py`,
 `pipeline/analytics/models.py`, `pipeline/analytics/holdings.py`,
-`pipeline/analytics/cdc_tables.py`, `pipeline/report/charts.py`,
+`pipeline/analytics/events_tables.py`, `pipeline/report/charts.py`,
 `pipeline/report/renderer.py`, `pipeline/analytics/quality.py`, `tests/`
 
 **Bugs addressed:** Bug 2 (`base_currency` overloaded → replaced by `target_ccy`), Bug 3 (`value_currency` ≠ `security_currency` → merged into `security_ccy`), Bug 6 remainder (T212 dividends/transactions conversion → `CurrencyConverter`), Bug 7 (IBKR snapshot pre-converts `value` → stop pre-conversion).

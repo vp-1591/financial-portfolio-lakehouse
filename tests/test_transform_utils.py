@@ -18,7 +18,7 @@ from pipeline.connectors.transform_utils import (
 )
 from pipeline.crypto import decrypt_float, encrypt, generate_key
 from pipeline.normalized.models import (
-    cdc_events_normalized_schema,
+    events_normalized_schema,
     snapshot_normalized_schema,
 )
 from pipeline.raw.models import RAW_SCHEMA
@@ -323,7 +323,7 @@ class TestBuildNormalizedTable:
         ]
         result = build_normalized_table(
             records,
-            cdc_events_normalized_schema,
+            events_normalized_schema,
             fernet_key,
             encrypt_columns=["cash_amount", "quantity"],
         )

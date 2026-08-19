@@ -571,7 +571,7 @@ def xtb_raw_snapshot(
 
     The payload is a new-format 3-sheet .xlsx (binary). The ``source`` is
     ``"XTB_REPORT"`` per D17 (shared bronze: one raw row carries all 3
-    sheets and feeds both snapshot and CDC silvers).
+    sheets and feeds both snapshot and events silvers).
     """
     if fernet_key is None:
         fernet_key = generate_key()

@@ -44,7 +44,9 @@ from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import TableNotFoundError
 
 from pipeline.migrations._storage_options import get_storage_options_with_credentials
-from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.normalized.models import (
+    events_normalized_schema as cdc_events_normalized_schema,
+)
 from pipeline.storage import get_storage
 
 # Broker-neutral CDC normalized tables that quality.check_schema validates

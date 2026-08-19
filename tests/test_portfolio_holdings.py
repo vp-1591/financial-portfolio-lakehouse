@@ -39,17 +39,17 @@ def _setup_storage(tmp_path: Path) -> None:
     data = tmp_path / "data"
     for subdir in [
         "raw/ibkr_snapshot",
-        "raw/ibkr_cdc",
+        "raw/ibkr_events",
         "raw/trading212_snapshot",
-        "raw/trading212_cdc",
+        "raw/trading212_events",
         "raw/xtb_snapshot",
-        "raw/xtb_cdc",
+        "raw/xtb_events",
         "normalized/ibkr_snapshot",
-        "normalized/ibkr_cdc",
+        "normalized/ibkr_events",
         "normalized/trading212_snapshot",
-        "normalized/trading212_cdc",
+        "normalized/trading212_events",
         "normalized/xtb_snapshot",
-        "normalized/xtb_cdc",
+        "normalized/xtb_events",
         "normalized/consolidated_holdings",
         "analytics/portfolio_holdings",
     ]:

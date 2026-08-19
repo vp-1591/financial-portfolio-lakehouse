@@ -27,11 +27,14 @@ from pipeline.connectors.trading212.client import (
     concise_details,
     is_access_denied_html,
 )
-from pipeline.connectors.trading212.fetch import fetch_cdc
-from pipeline.connectors.trading212.transform import transform_cdc, transform_snapshot
+from pipeline.connectors.trading212.fetch import fetch_events
+from pipeline.connectors.trading212.transform import (
+    transform_events,
+    transform_snapshot,
+)
 from pipeline.connectors.transform_utils import _unwrap_events
 from pipeline.crypto import decrypt_float, encrypt, generate_key
-from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.normalized.models import events_normalized_schema
 from pipeline.raw.models import RAW_SCHEMA
 from tests.fixtures.trading212 import t212_normalized_snapshot, t212_raw_snapshot
 
@@ -782,15 +785,15 @@ class TestSnapshotFetch:
             instance.instruments.assert_not_called()
 
 
-class TestCdcFetch:
-    """Tests for Trading 212 CDC fetch error handling."""
+class TestEventsFetch:
+    """Tests for Trading 212 events fetch error handling."""
 
-    def test_fetch_cdc_logs_endpoint_failure(self, caplog) -> None:
-        """Failing CDC endpoints produce visible warnings, not silent skips.
+    def test_fetch_events_logs_endpoint_failure(self, caplog) -> None:
+        """Failing events endpoints produce visible warnings, not silent skips.
 
-        Actually invokes ``fetch_cdc`` with a mocked client whose CDC endpoint
+        Actually invokes ``fetch_events`` with a mocked client whose events endpoint
         methods raise, then asserts a WARNING is logged naming the failing
-        endpoint. Removing the ``logger.warning(...)`` call in ``fetch_cdc``
+        endpoint. Removing the ``logger.warning(...)`` call in ``fetch_events``
         makes this test fail (no warning record captured).
         """
 
@@ -808,26 +811,26 @@ class TestCdcFetch:
             instance.transactions.side_effect = Trading212Error("transactions failed")
             instance.captured_responses = []
 
-            # All three endpoints fail → fetch_cdc raises RuntimeError,
+            # All three endpoints fail → fetch_events raises RuntimeError,
             # but only after logging a warning per failing endpoint.
             with pytest.raises(RuntimeError, match="all endpoints"):
-                fetch_cdc(
+                fetch_events(
                     api_key="test",
                     api_secret="test",
                     base_url="https://demo.trading212.com/api/v0",
                 )
 
-        # A warning must be logged for each failing CDC endpoint, naming it.
+        # A warning must be logged for each failing events endpoint, naming it.
         warning_messages = [
             record.message
             for record in caplog.records
             if record.levelno == logging.WARNING
         ]
         endpoint_warnings = [
-            m for m in warning_messages if "CDC endpoint" in m and "failed" in m
+            m for m in warning_messages if "events endpoint" in m and "failed" in m
         ]
         assert endpoint_warnings, (
-            "Expected at least one CDC endpoint failure warning, "
+            "Expected at least one events endpoint failure warning, "
             f"got: {warning_messages}"
         )
         # The warning must name a failing endpoint (orders/dividends/transactions).
@@ -836,8 +839,8 @@ class TestCdcFetch:
             for m in endpoint_warnings
         ), f"Warning did not name a failing endpoint: {endpoint_warnings}"
 
-    def test_fetch_cdc_raises_when_all_endpoints_empty(self) -> None:
-        """When all CDC endpoints return empty lists, fetch_cdc raises RuntimeError."""
+    def test_fetch_events_raises_when_all_endpoints_empty(self) -> None:
+        """When all events endpoints return empty lists, fetch_events raises RuntimeError."""
 
         with mock.patch(
             "pipeline.connectors.trading212.fetch.Trading212Client"
@@ -851,7 +854,7 @@ class TestCdcFetch:
             with pytest.raises(
                 RuntimeError, match="all endpoints.*failed or returned no data"
             ):
-                fetch_cdc(
+                fetch_events(
                     api_key="test",
                     api_secret="test",
                     base_url="https://demo.trading212.com/api/v0",
@@ -887,21 +890,21 @@ class TestUnwrapEvents:
         assert _unwrap_events(None) == []
 
 
-class TestCdcTransform:
-    """Tests for the T212 CDC transform using Polars-native field extraction."""
+class TestEventsTransform:
+    """Tests for the T212 events transform using Polars-native field extraction."""
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
         return generate_key()
 
-    def _build_raw_cdc_table(
+    def _build_raw_events_table(
         self,
         events: list[dict] | dict,
         source: str,
         fernet_key: bytes,
         fetched_at: datetime | None = None,
     ) -> pa.Table:
-        """Build a raw-layer table with encrypted CDC event payloads."""
+        """Build a raw-layer table with encrypted events payloads."""
 
         now = fetched_at if fetched_at is not None else datetime.now(UTC)
         raw_payloads = [json.dumps(events).encode("utf-8")]
@@ -958,17 +961,17 @@ class TestCdcTransform:
         event.update(overrides)
         return event
 
-    def test_transform_cdc_orders_produces_trade_events(
+    def test_transform_events_orders_produces_trade_events(
         self, fernet_key: bytes
     ) -> None:
         """T212 orders are transformed into TRADE events with all fields populated."""
 
         events = [self._make_order_event()]
-        raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(events, "/equity/history/orders", fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
-        assert result.schema == cdc_events_normalized_schema
+        assert result.schema == events_normalized_schema
 
         # Core non-nullable fields
         assert result.column("event_type")[0].as_py() == "TRADE"
@@ -1000,20 +1003,20 @@ class TestCdcTransform:
         assert result.column("target_value")[0].as_py() is None
         assert result.column("target_ccy")[0].as_py() is None
 
-    def test_transform_cdc_deduplicates_across_payloads(
+    def test_transform_events_deduplicates_across_payloads(
         self, fernet_key: bytes
     ) -> None:
-        """Re-fetched T212 CDC payloads are deduped by (event_type, event_id).
+        """Re-fetched T212 events payloads are deduped by (event_type, event_id).
 
         T212 fetches full history on every run, so repeated pipeline runs
         re-append the same orders to the raw layer.  Mirrors the IBKR dedup
-        test at test_ibkr_connector.py::test_transform_cdc_deduplicates_across_payloads.
+        test at test_ibkr_connector.py::test_transform_events_deduplicates_across_payloads.
         """
         events = [self._make_order_event()]
-        raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
+        raw = self._build_raw_events_table(events, "/equity/history/orders", fernet_key)
         duplicated = pa.concat_tables([raw, raw])
 
-        result = transform_cdc(duplicated, fernet_key)
+        result = transform_events(duplicated, fernet_key)
 
         # The same order should appear exactly once, not twice.
         assert result.num_rows == 1
@@ -1025,7 +1028,9 @@ class TestCdcTransform:
         )
         assert len(keys) == len(set(keys)), f"Duplicate keys found: {keys}"
 
-    def test_transform_cdc_dedup_scopes_by_event_type(self, fernet_key: bytes) -> None:
+    def test_transform_events_dedup_scopes_by_event_type(
+        self, fernet_key: bytes
+    ) -> None:
         """An order and a dividend sharing event_id "12345" are kept distinct.
 
         order.id is an integer cast to string; dividend.reference is a separate
@@ -1050,15 +1055,15 @@ class TestCdcTransform:
             "tickerCurrency": "USD",
             "type": "ORDINARY",
         }
-        raw_orders = self._build_raw_cdc_table(
+        raw_orders = self._build_raw_events_table(
             [order_event], "/equity/history/orders", fernet_key
         )
-        raw_dividends = self._build_raw_cdc_table(
+        raw_dividends = self._build_raw_events_table(
             [dividend_event], "/equity/history/dividends", fernet_key
         )
         raw = pa.concat_tables([raw_orders, raw_dividends])
 
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         # Both events survive — event_type scopes the uniqueness.
         assert result.num_rows == 2
@@ -1072,7 +1077,7 @@ class TestCdcTransform:
         assert ("TRADE", "12345") in keys
         assert ("DIVIDEND", "12345") in keys
 
-    def test_transform_cdc_dedup_keeps_latest_fetched_version(
+    def test_transform_events_dedup_keeps_latest_fetched_version(
         self, fernet_key: bytes
     ) -> None:
         """When an event is re-fetched with a corrected value, the latest wins.
@@ -1090,10 +1095,10 @@ class TestCdcTransform:
         stale_event["fill"]["walletImpact"]["netValue"] = 1500.0
         corrected_event = self._make_order_event()
         corrected_event["fill"]["walletImpact"]["netValue"] = 2000.0
-        raw_stale = self._build_raw_cdc_table(
+        raw_stale = self._build_raw_events_table(
             [stale_event], "/equity/history/orders", fernet_key, fetched_at=earlier
         )
-        raw_corrected = self._build_raw_cdc_table(
+        raw_corrected = self._build_raw_events_table(
             [corrected_event],
             "/equity/history/orders",
             fernet_key,
@@ -1101,7 +1106,7 @@ class TestCdcTransform:
         )
         raw = pa.concat_tables([raw_stale, raw_corrected])
 
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.column("event_id")[0].as_py() == "12345"
@@ -1109,7 +1114,7 @@ class TestCdcTransform:
         # BUY = outflow -> negative; latest correction (netValue 2000.0) must win.
         assert cash == pytest.approx(-2000.0)
 
-    def test_transform_cdc_order_with_taxes(self, fernet_key: bytes) -> None:
+    def test_transform_events_order_with_taxes(self, fernet_key: bytes) -> None:
         """T212 orders with walletImpact.taxes correctly split fees and taxes."""
 
         event = self._make_order_event()
@@ -1117,8 +1122,10 @@ class TestCdcTransform:
             {"name": "CURRENCY_CONVERSION_FEE", "quantity": 3.0, "currency": "EUR"},
             {"name": "FRENCH_TRANSACTION_TAX", "quantity": 1.5, "currency": "EUR"},
         ]
-        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(
+            [event], "/equity/history/orders", fernet_key
+        )
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         fee = decrypt_float(result.column("fee_amount")[0].as_py(), fernet_key)
@@ -1126,7 +1133,7 @@ class TestCdcTransform:
         tax = decrypt_float(result.column("tax_amount")[0].as_py(), fernet_key)
         assert tax == pytest.approx(1.5)  # FRENCH_TRANSACTION_TAX
 
-    def test_transform_cdc_order_sell_side(self, fernet_key: bytes) -> None:
+    def test_transform_events_order_sell_side(self, fernet_key: bytes) -> None:
         """T212 SELL orders correctly map the side field and stay positive.
 
         Per the sign convention (ADR 0058), SELL = inflow -> positive cash.
@@ -1135,14 +1142,16 @@ class TestCdcTransform:
 
         event = self._make_order_event()
         event["order"]["side"] = "SELL"
-        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(
+            [event], "/equity/history/orders", fernet_key
+        )
+        result = transform_events(raw, fernet_key)
 
         assert result.column("side")[0].as_py() == "SELL"
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(1500.0)  # SELL inflow stays positive
 
-    def test_transform_cdc_order_cross_currency_fx_rate(
+    def test_transform_events_order_cross_currency_fx_rate(
         self, fernet_key: bytes
     ) -> None:
         """T212 orders with wallet→security FX rate produce cash_amount in security ccy.
@@ -1174,8 +1183,10 @@ class TestCdcTransform:
         event["fill"]["price"] = 50.0  # USD per share
         event["fill"]["quantity"] = 10
 
-        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(
+            [event], "/equity/history/orders", fernet_key
+        )
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
 
@@ -1192,7 +1203,9 @@ class TestCdcTransform:
         assert result.column("target_fx_rate")[0].as_py() is None
         assert result.column("target_value")[0].as_py() is None
 
-    def test_transform_cdc_order_gbx_security_currency(self, fernet_key: bytes) -> None:
+    def test_transform_events_order_gbx_security_currency(
+        self, fernet_key: bytes
+    ) -> None:
         """T212 order for a GBX-denominated security correctly converts wallet amount.
 
         GBX is British pence (1/100 GBP).  The fx_rate from PLN→GBX is a large
@@ -1221,8 +1234,10 @@ class TestCdcTransform:
         event["fill"]["price"] = 14961.75  # GBX per share
         event["fill"]["quantity"] = 10
 
-        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(
+            [event], "/equity/history/orders", fernet_key
+        )
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.column("security_ccy")[0].as_py() == "GBX"
@@ -1234,7 +1249,7 @@ class TestCdcTransform:
         # target_fx_rate, target_value, target_ccy are null for T212 orders
         assert result.column("target_value")[0].as_py() is None
 
-    def test_transform_cdc_order_fee_tax_converted_to_security_ccy(
+    def test_transform_events_order_fee_tax_converted_to_security_ccy(
         self, fernet_key: bytes
     ) -> None:
         """T212 cross-currency orders convert fee/tax from wallet ccy to security ccy.
@@ -1270,8 +1285,10 @@ class TestCdcTransform:
         event["fill"]["price"] = 50.0  # USD per share
         event["fill"]["quantity"] = 10
 
-        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(
+            [event], "/equity/history/orders", fernet_key
+        )
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
 
@@ -1287,7 +1304,7 @@ class TestCdcTransform:
         tax = decrypt_float(result.column("tax_amount")[0].as_py(), fernet_key)
         assert tax == pytest.approx(0.5)
 
-    def test_transform_cdc_dividend_currency_mismatch_warning(
+    def test_transform_events_dividend_currency_mismatch_warning(
         self, fernet_key: bytes, caplog: pytest.LogCaptureFixture
     ) -> None:
         """T212 dividends with currency != tickerCurrency produce a warning log."""
@@ -1311,10 +1328,12 @@ class TestCdcTransform:
                 "type": "ORDINARY",
             }
         ]
-        raw = self._build_raw_cdc_table(events, "/equity/history/dividends", fernet_key)
+        raw = self._build_raw_events_table(
+            events, "/equity/history/dividends", fernet_key
+        )
 
         with caplog.at_level(logging.WARNING):
-            result = transform_cdc(raw, fernet_key)
+            result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.column("security_ccy")[0].as_py() == "EUR"
@@ -1327,7 +1346,7 @@ class TestCdcTransform:
             f"Expected currency mismatch warning, got: {[r.message for r in caplog.records]}"
         )
 
-    def test_transform_cdc_dividend_same_currency_no_warning(
+    def test_transform_events_dividend_same_currency_no_warning(
         self, fernet_key: bytes, caplog: pytest.LogCaptureFixture
     ) -> None:
         """T212 dividends with currency == tickerCurrency produce no mismatch warning."""
@@ -1351,10 +1370,12 @@ class TestCdcTransform:
                 "type": "ORDINARY",
             }
         ]
-        raw = self._build_raw_cdc_table(events, "/equity/history/dividends", fernet_key)
+        raw = self._build_raw_events_table(
+            events, "/equity/history/dividends", fernet_key
+        )
 
         with caplog.at_level(logging.WARNING):
-            result = transform_cdc(raw, fernet_key)
+            result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         # Same currency: instrument_ccy equals security_ccy
@@ -1365,7 +1386,7 @@ class TestCdcTransform:
             "differs from tickerCurrency" in record.message for record in caplog.records
         ), f"Unexpected warning logged: {[r.message for r in caplog.records]}"
 
-    def test_transform_cdc_dividends_produces_dividend_events(
+    def test_transform_events_dividends_produces_dividend_events(
         self, fernet_key: bytes
     ) -> None:
         """T212 dividends are transformed into DIVIDEND events with nested instrument."""
@@ -1389,8 +1410,10 @@ class TestCdcTransform:
                 "type": "ORDINARY",
             }
         ]
-        raw = self._build_raw_cdc_table(events, "/equity/history/dividends", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(
+            events, "/equity/history/dividends", fernet_key
+        )
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.column("event_type")[0].as_py() == "DIVIDEND"
@@ -1406,7 +1429,7 @@ class TestCdcTransform:
         price = decrypt_float(result.column("price")[0].as_py(), fernet_key)
         assert price == pytest.approx(0.425)
 
-    def test_transform_cdc_transactions_classifies_event_types(
+    def test_transform_events_transactions_classifies_event_types(
         self, fernet_key: bytes
     ) -> None:
         """T212 transactions are classified into normalized event types."""
@@ -1420,10 +1443,10 @@ class TestCdcTransform:
                 "dateTime": "2024-01-01T09:00:00Z",
             }
         ]
-        raw = self._build_raw_cdc_table(
+        raw = self._build_raw_events_table(
             events, "/equity/history/transactions", fernet_key
         )
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.column("event_type")[0].as_py() == "DEPOSIT"
@@ -1431,7 +1454,9 @@ class TestCdcTransform:
         cash = decrypt_float(result.column("cash_amount")[0].as_py(), fernet_key)
         assert cash == pytest.approx(1000.0)
 
-    def test_transform_cdc_transaction_withdraw_type(self, fernet_key: bytes) -> None:
+    def test_transform_events_transaction_withdraw_type(
+        self, fernet_key: bytes
+    ) -> None:
         """T212 WITHDRAW transactions are mapped to WITHDRAWAL event type."""
 
         events = [
@@ -1443,56 +1468,56 @@ class TestCdcTransform:
                 "dateTime": "2024-02-01T12:00:00Z",
             }
         ]
-        raw = self._build_raw_cdc_table(
+        raw = self._build_raw_events_table(
             events, "/equity/history/transactions", fernet_key
         )
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.column("event_type")[0].as_py() == "WITHDRAWAL"
         assert result.column("raw_event_type")[0].as_py() == "WITHDRAW"
 
-    def test_transform_cdc_empty_events_produces_empty_table(
+    def test_transform_events_empty_events_produces_empty_table(
         self, fernet_key: bytes
     ) -> None:
         """When no events are parsed, transform returns an empty schema-correct table."""
 
         events: list[dict] = []
-        raw = self._build_raw_cdc_table(events, "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(events, "/equity/history/orders", fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 0
-        assert result.schema == cdc_events_normalized_schema
+        assert result.schema == events_normalized_schema
 
-    def test_transform_cdc_unwraps_paginated_dict(self, fernet_key: bytes) -> None:
+    def test_transform_events_unwraps_paginated_dict(self, fernet_key: bytes) -> None:
         """Paginated T212 responses (dict with 'items') are unwrapped correctly."""
 
         events = [self._make_order_event()]
         paginated_payload = {"items": events, "nextPagePath": None}
-        raw = self._build_raw_cdc_table(
+        raw = self._build_raw_events_table(
             paginated_payload, "/equity/history/orders", fernet_key
         )
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         assert result.column("event_type")[0].as_py() == "TRADE"
         assert result.column("ticker")[0].as_py() == "AAPL_US_EQ"
 
-    def test_transform_cdc_paginated_dict_with_empty_items(
+    def test_transform_events_paginated_dict_with_empty_items(
         self, fernet_key: bytes
     ) -> None:
         """Paginated response with empty items list produces zero rows."""
 
         paginated_payload = {"items": [], "nextPagePath": None}
-        raw = self._build_raw_cdc_table(
+        raw = self._build_raw_events_table(
             paginated_payload, "/equity/history/dividends", fernet_key
         )
-        result = transform_cdc(raw, fernet_key)
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 0
-        assert result.schema == cdc_events_normalized_schema
+        assert result.schema == events_normalized_schema
 
-    def test_transform_cdc_order_missing_optional_fields(
+    def test_transform_events_order_missing_optional_fields(
         self, fernet_key: bytes
     ) -> None:
         """Orders missing optional struct fields (e.g. filledQuantity) don't crash.
@@ -1510,8 +1535,10 @@ class TestCdcTransform:
         del event["order"]["filledQuantity"]
         del event["order"]["filledValue"]
 
-        raw = self._build_raw_cdc_table([event], "/equity/history/orders", fernet_key)
-        result = transform_cdc(raw, fernet_key)
+        raw = self._build_raw_events_table(
+            [event], "/equity/history/orders", fernet_key
+        )
+        result = transform_events(raw, fernet_key)
 
         assert result.num_rows == 1
         # quantity falls back to fill.quantity (10.0)

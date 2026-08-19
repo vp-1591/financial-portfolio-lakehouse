@@ -12,12 +12,12 @@ class TestRegistry:
         class FakeConnector:
             name = "fake"
             display_name = "Fake"
-            cdc_raw_layer = "cdc"
+            events_raw_layer = "events"
 
             def fetch_kwargs(self, args):
                 return {}
 
-            def fetch_cdc_kwargs(self):
+            def fetch_events_kwargs(self):
                 return {}
 
             def required_secrets(self):
@@ -29,13 +29,13 @@ class TestRegistry:
             def fetch_snapshot(self, **kwargs):
                 raise NotImplementedError
 
-            def fetch_cdc(self, **kwargs):
+            def fetch_events(self, **kwargs):
                 raise NotImplementedError
 
             def transform_snapshot(self, raw, fernet_key):
                 raise NotImplementedError
 
-            def transform_cdc(self, raw, fernet_key):
+            def transform_events(self, raw, fernet_key):
                 raise NotImplementedError
 
         try:
@@ -44,7 +44,7 @@ class TestRegistry:
             assert get("fake") is connector
         finally:
             # Clean up so "fake" does not leak into all() for later tests
-            # (consolidate_cdc_events derives candidates from all_connectors()).
+            # (consolidate_events derives candidates from all_connectors()).
             unregister("fake")
 
     def test_get_unknown_connector_raises(self) -> None:

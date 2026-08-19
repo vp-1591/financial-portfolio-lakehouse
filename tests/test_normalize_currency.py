@@ -11,16 +11,16 @@ from deltalake import DeltaTable, write_deltalake
 from pipeline.connectors.transform_utils import build_normalized_table
 from pipeline.crypto import decrypt_float, generate_key
 from pipeline.normalized.consolidate import CurrencyConverter
-from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.normalized.models import events_normalized_schema
 from pipeline.normalized.normalize import normalize_currency
 from pipeline.secrets import set_mode
 
 
-def _make_cdc_table(
+def _make_events_table(
     events: list[dict],
     fernet_key: bytes,
 ) -> pa.Table:
-    """Build a CDC events table from event dicts."""
+    """Build an events table from event dicts."""
 
     now = datetime.now(UTC)
     records = []
@@ -59,7 +59,7 @@ def _make_cdc_table(
 
     return build_normalized_table(
         records,
-        cdc_events_normalized_schema,
+        events_normalized_schema,
         fernet_key,
         encrypt_columns=encrypt_cols,
     )
@@ -77,14 +77,14 @@ class TestNormalizeCurrency:
     def test_same_currency_gets_rate_1(self, tmp_path) -> None:
         """When security_ccy == target_ccy, target_fx_rate = 1.0."""
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [{"security_ccy": "EUR", "cash_amount": 42.5}],
             fernet_key,
         )
 
         # Write the Delta table
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
@@ -108,7 +108,7 @@ class TestNormalizeCurrency:
     def test_ibkr_with_broker_rate(self, tmp_path) -> None:
         """IBKR events with target_fx_rate already set use the broker rate."""
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [
                 {
                     "broker": "IBKR",
@@ -120,7 +120,7 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
@@ -141,7 +141,7 @@ class TestNormalizeCurrency:
     def test_t212_falls_back_to_converter(self, tmp_path) -> None:
         """T212 events without target_fx_rate use CurrencyConverter."""
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [
                 {
                     "broker": "Trading 212",
@@ -153,7 +153,7 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.85})
@@ -174,7 +174,7 @@ class TestNormalizeCurrency:
     def test_mixed_brokers_and_currencies(self, tmp_path) -> None:
         """Mixed IBKR (with rate) and T212 (without rate) events."""
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [
                 {
                     "broker": "IBKR",
@@ -201,7 +201,7 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.90, "GBP": 1.15})
@@ -254,19 +254,19 @@ class TestNormalizeCurrency:
         assert all(c == "EUR" for c in ccys)
 
     def test_empty_table_returns_early(self, tmp_path) -> None:
-        """An empty CDC events table returns early without error."""
+        """An empty events table returns early without error."""
         fernet_key = generate_key()
 
         # Create an empty table matching the schema
         empty_table = pa.table(
             {
                 field.name: pa.array([], type=field.type)
-                for field in cdc_events_normalized_schema
+                for field in events_normalized_schema
             },
-            schema=cdc_events_normalized_schema,
+            schema=events_normalized_schema,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, empty_table, mode="overwrite")
 
         converter = CurrencyConverter("EUR")
@@ -280,12 +280,12 @@ class TestNormalizeCurrency:
         assert result.num_rows == 0
 
     def test_missing_table_raises_file_not_found(self, tmp_path) -> None:
-        """When CDC events table doesn't exist, raises FileNotFoundError."""
+        """When events table doesn't exist, raises FileNotFoundError."""
         fernet_key = generate_key()
 
         converter = CurrencyConverter("EUR")
 
-        with pytest.raises(FileNotFoundError, match="CDC events table not found"):
+        with pytest.raises(FileNotFoundError, match="events table not found"):
             normalize_currency(
                 table_path=str(tmp_path / "nonexistent"),
                 fernet_key=fernet_key,
@@ -301,7 +301,7 @@ class TestNormalizeCurrency:
         corruption the null-target checks are meant to catch.
         """
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [
                 {
                     "security_ccy": None,
@@ -311,7 +311,7 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         converter = CurrencyConverter("EUR")
@@ -326,12 +326,12 @@ class TestNormalizeCurrency:
     def test_gbx_converted_via_gbp_divided_by_100(self, tmp_path) -> None:
         """GBX (British pence) should convert via GBP rate / 100.
 
-        A T212 CDC event with security_ccy=GBX and cash_amount in GBX pence
+        A T212 events row with security_ccy=GBX and cash_amount in GBX pence
         should be converted to EUR using the GBX→EUR rate, which is the
         GBP→EUR rate divided by 100.
         """
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [
                 {
                     "broker": "Trading 212",
@@ -343,7 +343,7 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         # GBP→EUR rate of 1.17 means GBX→EUR rate of 0.0117
@@ -363,7 +363,7 @@ class TestNormalizeCurrency:
         assert result.column("target_ccy")[0].as_py() == "EUR"
 
     def test_normalize_overwrites_not_appends(self, tmp_path) -> None:
-        """normalize_currency OVERWRITES (not appends) the cdc_events table.
+        """normalize_currency OVERWRITES (not appends) the events table.
 
         Runs the writer twice on the same table and re-opens the persisted
         Delta table after each run.  Under overwrite the row count stays at 1
@@ -374,12 +374,12 @@ class TestNormalizeCurrency:
         """
 
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [{"security_ccy": "EUR", "cash_amount": 42.5}],
             fernet_key,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         converter = CurrencyConverter("EUR", manual_rates={"USD": 0.9})
@@ -425,7 +425,7 @@ class TestNormalizeCurrency:
         from pipeline.normalized.consolidate import PortfolioConnectorError
 
         fernet_key = generate_key()
-        table = _make_cdc_table(
+        table = _make_events_table(
             [
                 {
                     "broker": "Trading 212",
@@ -437,7 +437,7 @@ class TestNormalizeCurrency:
             fernet_key,
         )
 
-        table_path = str(tmp_path / "cdc_events")
+        table_path = str(tmp_path / "events")
         write_deltalake(table_path, table, mode="overwrite")
 
         converter = CurrencyConverter("EUR")

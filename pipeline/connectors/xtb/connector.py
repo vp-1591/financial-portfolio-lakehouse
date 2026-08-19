@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 class XtbConnector:
     name = "xtb"
     display_name = "XTB"
-    # D17 shared bronze: CDC transform reads the snapshot raw table, not a
-    # separate CDC raw. ``run.transform_connector`` reads
-    # ``get_raw_path(name, cdc_raw_layer)`` for the CDC layer.
-    cdc_raw_layer = "snapshot"
+    # D17 shared bronze: events transform reads the snapshot raw table, not a
+    # separate events raw. ``run.transform_connector`` reads
+    # ``get_raw_path(name, events_raw_layer)`` for the events layer.
+    events_raw_layer = "snapshot"
 
     def fetch_kwargs(self, args: argparse.Namespace) -> dict:
         xtb_file = getattr(args, "xtb_file", None)
@@ -68,21 +68,21 @@ class XtbConnector:
     def fetch_snapshot(self, **kwargs: Any) -> pa.Table:
         return fetch.fetch_snapshot(**kwargs)
 
-    # D17 shared bronze: XTB has no dedicated CDC fetch. CDC is derived from
-    # the snapshot raw via ``cdc_raw_layer = "snapshot"`` (transform_cdc reads
+    # D17 shared bronze: XTB has no dedicated events fetch. Events are derived from
+    # the snapshot raw via ``events_raw_layer = "snapshot"`` (transform_events reads
     # ``xtb_snapshot`` raw). The ``fetch_connector`` XTB branch returns before
-    # reaching the generic ``fetch_cdc`` call site, so these stubs are never
+    # reaching the generic ``fetch_events`` call site, so these stubs are never
     # invoked at runtime; they exist solely to satisfy the BrokerConnector
     # structural protocol (pyright requires the methods to be declared on the
     # class, not just inherited from the Protocol's abstract bodies).
-    def fetch_cdc_kwargs(self) -> dict:
+    def fetch_events_kwargs(self) -> dict:
         return {}
 
-    def fetch_cdc(self, **kwargs: Any) -> pa.Table:
-        raise NotImplementedError("XTB CDC is produced from the snapshot raw (D17)")
+    def fetch_events(self, **kwargs: Any) -> pa.Table:
+        raise NotImplementedError("XTB events are produced from the snapshot raw (D17)")
 
     def transform_snapshot(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
         return transform.transform_snapshot(raw, fernet_key)
 
-    def transform_cdc(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
-        return transform.transform_cdc(raw, fernet_key)
+    def transform_events(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
+        return transform.transform_events(raw, fernet_key)
