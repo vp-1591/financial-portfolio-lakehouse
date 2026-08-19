@@ -12,7 +12,7 @@ Rename inventory (verified 2026-08-19):
 | Delta table (normalized) | `normalized/{broker}_cdc` | `normalized/{broker}_events` |
 | Delta table (consolidated) | `normalized/cdc_events` | `normalized/events` |
 | Module | `pipeline/normalized/consolidate_cdc.py` | `consolidate_events.py` |
-| Module | `pipeline/analytics/cdc_tables.py` | `events_tables.py` (open Q3) |
+| Module | `pipeline/analytics/cdc_tables.py` | `events_tables.py` |
 | Method | `fetch_cdc`, `fetch_cdc_kwargs` (base + 3 connectors) | `fetch_events`, `fetch_events_kwargs` |
 | Function | `dedup_cdc_events` (transform_utils) | `dedup_events` |
 | Function | `consolidate_cdc_events` | `consolidate_events` |
@@ -20,9 +20,10 @@ Rename inventory (verified 2026-08-19):
 | Constant | `_REQUIRED_CDC_BROKERS` | `_REQUIRED_EVENTS_BROKERS` |
 | Paths env names | `RAW_*_CDC`, `NORMALIZED_*_CDC` (paths.py) | `*_EVENTS` |
 | CLI | `consolidate-cdc`, `normalize-cdc` subcommands | `consolidate-events`, `normalize-events` |
-| Misc | comments, docstrings, logger labels, report sections, DQ config keys | `events` equivalents |
+| DQ config | DQ/quality-check config keys referencing `cdc`/`cdc_events` | `events` equivalents |
+| Misc | comments, docstrings, logger labels, report sections | `events` equivalents |
 
-Scope size: ~27 pipeline sources, ~20 test files, 37 ADRs (historical — untouched), ~11 docs. The `event_*` columns do **not** change.
+Scope size: ~27 pipeline sources, ~20 test files, 37 ADRs (historical — untouched), ~11 docs. The `event_*` columns do **not** change. User-confirmed scope: the rename extends to `pipeline/analytics/cdc_tables.py` **and** all DQ/quality-check config keys; the success bar is `grep -rni "cdc" pipeline/ tests/` (excluding `docs/adr/`) returning zero matches.
 
 **Migration A** — new script `pipeline/migrations/migrate_cdc_to_events.py`:
 1. For each `{broker}_cdc` raw and normalized Delta table present in the environment bucket: read location, rename to `{broker}_events` (Delta `ALTER TABLE RENAME` or S3 copy preserving the `_delta_log`), skip absent tables.

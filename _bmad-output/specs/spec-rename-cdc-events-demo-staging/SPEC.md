@@ -65,4 +65,3 @@ The demo→staging and CDC→events renames are merged as one PR and applied to 
 
 - Should the physical S3 bucket name change (globally unique → full data copy) or only logical references and prefixes, leaving the bucket as-is? The rename intent says the former; the copy cost is real.
 - What happens to the retired `/portfolio/demo/*` SSM parameters after `/portfolio/staging/*` is live — immediate deletion or a grace period?
-- Does the CDC rename extend to `pipeline/analytics/cdc_tables.py` and DQ/quality-check config keys that reference `cdc_events`, or only the tables/functions/files the issue lists?
