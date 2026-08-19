@@ -19,18 +19,21 @@ Rename inventory (verified 2026-08-19):
 | Schema | `cdc_events_normalized_schema` | `events_normalized_schema` |
 | Constant | `_REQUIRED_CDC_BROKERS` | `_REQUIRED_EVENTS_BROKERS` |
 | Paths env names | `RAW_*_CDC`, `NORMALIZED_*_CDC` (paths.py) | `*_EVENTS` |
-| CLI | `consolidate-cdc`, `normalize-cdc` subcommands | `consolidate-events`, `normalize-events` |
+| CLI | step helpers `_consolidate_cdc()`/`_normalize_cdc(args)` (run.py — no argparse subcommands) + user-facing error strings "Run the consolidate-cdc step first" / "run normalize-cdc before analytics" | `_consolidate_events()`/`_normalize_events()`, "Run the consolidate-events step first" / "run normalize-events before analytics" |
 | DQ config | DQ/quality-check config keys referencing `cdc`/`cdc_events` | `events` equivalents |
 | Misc | comments, docstrings, logger labels, report sections | `events` equivalents |
+| Data value | raw `source` value `flex_cdc` (IBKR payload; AD-2(d)) | `flex_events` + A1 in-place rewrite of historical values |
+| Docs | `docs/ibkr/flex-query-required-fields-cdc.md` + other non-ADR `docs/` "cdc" hits | renamed to `events` per CAP-1 bar (`docs/adr/` exempt) |
 
-Scope size: ~27 pipeline sources, ~20 test files, 37 ADRs (historical — untouched), ~11 docs. The `event_*` columns do **not** change. User-confirmed scope: the rename extends to `pipeline/analytics/cdc_tables.py` **and** all DQ/quality-check config keys; the success bar is `grep -rni "cdc" pipeline/ tests/` (excluding `docs/adr/`) returning zero matches.
+Scope size: ~27 pipeline sources, ~20 test files, 37 ADRs (historical — untouched), ~11 docs. The `event_*` columns do **not** change. User-confirmed scope: the rename extends to `pipeline/analytics/cdc_tables.py` **and** all DQ/quality-check config keys; the success bar is `grep -rni "cdc" pipeline/ tests/ docs/` (excluding `docs/adr/`) returning zero matches.
 
 **Migration A** — new script `pipeline/migrations/migrate_cdc_to_events.py`:
 1. For each `{broker}_cdc` raw and normalized Delta table present in the environment bucket: read location, rename to `{broker}_events` (Delta `ALTER TABLE RENAME` or S3 copy preserving the `_delta_log`), skip absent tables.
 2. Rename `cdc_events` → `events`.
-3. Idempotent: exit 0 when all target names already exist / sources absent; raise on auth/region/permission errors or unexpected schema (mirror `migrate_cdc_events_drop_gross_amount.py` conventions — the current live migration; `migrate_xtb_purge_legacy_raw.py` and `migrate_snapshot_schema_unify.py` were removed).
-4. Run manually pre-deploy, per env: `.venv/Scripts/python -m pipeline.migrations.migrate_cdc_to_events --mode staging [--dry-run]`.
-5. Verify: `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals pre-migration `cdc_events` count.
+3. Rewrite historical raw `source` values `flex_cdc` → `flex_events` in place (AD-2(d)) — a code-only rename would silently skip every historical IBKR row.
+4. Idempotent: exit 0 when all target names already exist / sources absent; raise on auth/region/permission errors or unexpected schema (mirror `migrate_cdc_events_drop_gross_amount.py` conventions — the current live migration; `migrate_xtb_purge_legacy_raw.py` and `migrate_snapshot_schema_unify.py` were removed).
+5. Run manually pre-deploy, per env: `.venv/Scripts/python -m pipeline.migrations.migrate_cdc_to_events --mode staging [--dry-run]`.
+6. Verify: `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals pre-migration `cdc_events` count; for the data rewrite, count `source`-gated `events` rows.
 
 ## Track B — demo → staging (staging AWS env)
 
