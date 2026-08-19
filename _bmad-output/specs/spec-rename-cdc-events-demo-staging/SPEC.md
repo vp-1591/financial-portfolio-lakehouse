@@ -1,0 +1,67 @@
+---
+id: SPEC-rename-cdc-events-demo-staging
+companions:
+  - rename-plan.md
+sources: []
+---
+
+> **Canonical contract.** This SPEC and the files in `companions:` are the complete, preservation-validated contract for what to build, test, and validate. Source documents listed in frontmatter are for traceability only — consult them only if you need narrative rationale or prose color this contract intentionally omits.
+
+# Rename CDC→events and demo→staging in one PR
+
+## Why
+
+Two naming debts in one codebase, both resolved in a single PR because each requires a migration and they touch overlapping plumbing (Delta tables on S3, config paths, deploy workflow, SSM).
+
+1. **Pain (issue #131):** The pipeline calls its broker activity log "CDC" (Change Data Capture) — `{broker}_cdc`, `cdc_events`, `consolidate_cdc.py`, `fetch_cdc`, `dedup_cdc_events`, `cdc_events_normalized_schema`, `_REQUIRED_CDC_BROKERS`. What these tables hold is a chronological log of broker account events — trades, dividends, deposits, withdrawals, fees, taxes, interest, transfers, adjustments. CDC in data engineering means row-level database replication; no broker uses the term (Trading 212: orders/dividends/transactions; IBKR Flex: "activity"; XTB: report sheets). The name misleads any data-engineering reader, and the schema already speaks `event_*` vocabulary (`event_type`, `event_id`, `event_datetime`), so the honest rename is cheap.
+
+2. **Opportunity:** The staging environment is internally named "demo" — S3 bucket `investment-portfolio-pipeline-demo`, IAM user `pipeline-demo`, VPC/IGW/SG `pipeline_demo`, SSM params under `/portfolio/demo/`, state machine `portfolio-pipeline-orchestrator-demo`, env label `demo`, IAM role patterns `pipeline-task-*-demo-*`, data prefix `pipeline_demo`. "demo" is the wrong name for a persistent, data-bearing staging environment; operators and docs say "staging" while the infra says "demo".
+
+Both renames change names that live in Delta table paths / AWS resource names / SSM parameter names, so they need migration scripts and state-safe terraform changes — which is why they ship together.
+
+## Capabilities
+
+- **CAP-1 — codebase calls the event layer "events", not "CDC"**
+  - **intent:** Reader and operator can refer to the consolidated broker activity log as `events` across pipeline sources, test files, config paths, CLI subcommands, report sections, quality checks, and Delta table names — no "CDC" remaining.
+  - **success:** `grep -rni "cdc" pipeline/ tests/` (excluding `docs/adr/` historical records) returns zero matches, and the full test suite passes with the renamed symbols.
+- **CAP-2 — staging AWS environment is named "staging", not "demo"**
+  - **intent:** Operator can see every staging-environment AWS resource and function named "staging" — terraform identifiers, live resource names (S3 bucket, IAM user/policies/roles, VPC, SG, state machine), SSM parameter paths, data prefix, and env label.
+  - **success:** `grep -rni "demo" terraform/` returns no naming-context matches (comments explaining history excepted); applied staging AWS resources carry `-staging`/`pipeline_staging` names.
+- **CAP-3 — renames preserve existing encrypted Delta data**
+  - **intent:** After the migration(s) run pre-deploy, all historical broker data is queryable under the new table/path names with identical rows and intact Fernet encryption.
+  - **success:** `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals the pre-migration `cdc_events` count; migration scripts are idempotent (exit 0 on absent or already-migrated, raise on genuine failures).
+- **CAP-4 — both renames ship as one reviewed PR**
+  - **intent:** Reviewer can review a single PR containing both rename tracks plus migrations, updated tests, and a new ADR recording the event-layer rename.
+  - **success:** PR opens with both tracks; `ruff`, `pyright`, `pytest` all pass; migrations applied to staging; a new ADR records the rename.
+
+## Constraints
+
+- Old ADRs are permanent records — never rewritten to "events"; the rename supersedes the naming, not the decisions.
+- `event_*` column names are already correct and must not change.
+- Migrations follow the existing `pipeline/migrations/` pattern: idempotent, raise on genuine failures, run manually **before** deploying code referencing new names, via `pipeline.run` CLI (never manual `DeltaTable()` construction).
+- S3 bucket name is globally unique, so `investment-portfolio-pipeline-demo` → `investment-portfolio-pipeline-staging` means a **new bucket + full encrypted-data copy**, not an in-place rename.
+- SSM `/portfolio/demo/*` → `/portfolio/staging/*` requires creating new parameters with the same secret values and updating deploy-workflow references before retiring the old ones.
+- Terraform renames use planned state migration (`moved` blocks) or deliberate destroy/recreate — never apply prod terraform.
+- Both tracks land in one PR (explicit user direction).
+
+## Non-goals
+
+- Rewriting old ADRs to use "events" — they stay as historical decision records.
+- Changing `event_*` column names.
+- Renaming prod-environment resources (prod keeps its names; only the staging/demo side and shared patterns that name staging resources change).
+- Renaming docker/MinIO local-mode resource names, except where a shared naming code path (e.g. `MODE_TO_ENV_LABEL`) forces consistency.
+
+## Success signal
+
+The demo→staging and CDC→events renames are merged as one PR and applied to staging: `grep` sweeps for "demo" (naming context) and "cdc" (outside ADRs) in code and terraform come back clean, the migration scripts ran idempotently against staging and preserved every encrypted row (counts verified via `pipeline.query --decrypt`), and the full test suite is green. The word "CDC" survives only in historical ADRs; "demo" survives only in comments describing the old naming.
+
+## Assumptions
+
+- "Function names" in the user's phrasing means Step Function (state machine) names plus the Python `fetch_cdc` / `dedup_cdc_events` functions — all covered by the two rename tracks.
+- The residual "demo" naming in staging infra — terraform module var `demo`, `env_label = "demo"`, `MODE_TO_ENV_LABEL = {"staging": "demo"}` — is in scope; `prod/main.tf`'s `demo = false` flips to `staging = false`.
+
+## Open Questions
+
+- Should the physical S3 bucket name change (globally unique → full data copy) or only logical references and prefixes, leaving the bucket as-is? The rename intent says the former; the copy cost is real.
+- What happens to the retired `/portfolio/demo/*` SSM parameters after `/portfolio/staging/*` is live — immediate deletion or a grace period?
+- Does the CDC rename extend to `pipeline/analytics/cdc_tables.py` and DQ/quality-check config keys that reference `cdc_events`, or only the tables/functions/files the issue lists?
