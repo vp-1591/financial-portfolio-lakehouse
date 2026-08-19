@@ -94,7 +94,7 @@ recorded in ADRs 0073, 0074, and 0077.
 
 | Column | Type | Nullable | Meaning |
 |--------|------|----------|---------|
-| `security_ccy` | string | no | The currency `cash_amount`, `gross_amount`, `fee_amount`, and `tax_amount` are denominated in. For all event types this is the amount currency — not necessarily the instrument's trading currency (see `instrument_ccy`). |
+| `security_ccy` | string | no | The currency `cash_amount`, `fee_amount`, and `tax_amount` are denominated in. For all event types this is the amount currency — not necessarily the instrument's trading currency (see `instrument_ccy`). |
 | `instrument_ccy` | string | yes | The instrument's trading currency, when known (e.g. USD for AAPL, GBX for SGLN.L). Null when unknown or N/A (deposits, fees). For cross-currency dividends, this differs from `security_ccy`: a GBX-denominated stock paying a GBP dividend has `security_ccy=GBP, instrument_ccy=GBX`. |
 | `cash_amount` | binary | no | Fernet-encrypted signed cash impact **in `security_ccy`**. For T212 orders: converted from wallet currency using `walletImpact.fxRate`. For T212 dividends/transactions: converted from native currency using `CurrencyConverter` when needed. For IBKR: already in trade currency. |
 | `target_fx_rate` | binary | yes | The rate from `security_ccy` to `target_ccy` used to compute `target_value`. Always satisfies `target_value = cash_amount × target_fx_rate`. IBKR: set from `fxRateToBase` at connector stage (historical, trade-date rate). T212: set by `normalize_currency()` via `CurrencyConverter` (the raw `walletImpact.fxRate` is consumed in the connector to compute `cash_amount` in `security_ccy` and then dropped). Set to `1.0` when `security_ccy == target_ccy`. |
@@ -102,7 +102,7 @@ recorded in ADRs 0073, 0074, and 0077.
 | `target_ccy` | string | no | Always "EUR" (the pipeline target currency). |
 | `fee_amount` | binary | yes | Fernet-encrypted fees. In `security_ccy` (converted if broker reports in a different currency). |
 | `tax_amount` | binary | yes | Fernet-encrypted taxes. In `security_ccy` (converted if broker reports in a different currency). |
-| (other columns) | — | — | `fetched_at`, `broker`, `account_id`, `event_id`, `source`, `event_type`, `raw_event_type`, `event_datetime`, `settle_date`, `ticker`, `isin`, `description`, `quantity`, `price`, `side`, `gross_amount` — unchanged from current schema |
+| (other columns) | — | — | `fetched_at`, `broker`, `account_id`, `event_id`, `source`, `event_type`, `raw_event_type`, `event_datetime`, `settle_date`, `ticker`, `isin`, `description`, `quantity`, `price`, `side` — unchanged from current schema |
 
 **Removed:** `value_currency` (replaced by `security_ccy`), `base_currency` (replaced by `target_ccy`), `fx_rate_to_base` (replaced by `target_fx_rate`), `amount_base` (replaced by `target_value`), `net_amount` (always identical to `cash_amount` — redundant column).
 

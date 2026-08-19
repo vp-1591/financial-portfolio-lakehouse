@@ -62,7 +62,7 @@ _XTB_EVENT_TYPE_MAP: dict[str, str] = {
 _TRADE_OPERATION_TYPES = frozenset(
     {"Stock sell", "Stock purchase", "Open position", "Close position"}
 )
-# Closing-row operation types (fee/gross/settle enriched from Closed Positions, D8).
+# Closing-row operation types (fee/settle enriched from Closed Positions, D8).
 _SELL_OPERATION_TYPES = frozenset({"Stock sell", "Close position"})
 
 # Guard 6: trade-row comment pattern "OPEN/CLOSE {side} {qty} @ {price}".
@@ -289,7 +289,6 @@ def _build_cdc_record(
 
     # Sell-row enrichment from Closed Positions (D8, guard 7).
     fee_amount: float | None = None
-    gross_amount: float | None = None
     settle_date: str | None = None
     if op.operation_type in _SELL_OPERATION_TYPES:
         closed = closed_lookup.get(op.position_id)
@@ -297,20 +296,18 @@ def _build_cdc_record(
             if op.position_id:
                 logger.warning(
                     "XTB CDC account %s: sell row position_id %s has no Closed "
-                    "Positions match; leaving fee_amount/gross_amount/settle_date null",
+                    "Positions match; leaving fee_amount/settle_date null",
                     op.account_id,
                     op.position_id,
                 )
             else:
                 logger.warning(
                     "XTB CDC account %s: sell row has no position_id; leaving "
-                    "fee_amount/gross_amount/settle_date null",
+                    "fee_amount/settle_date null",
                     op.account_id,
                 )
         else:
             fee_amount = closed.commission
-            # Guard 2: round gross_amount to 2dp to avoid IEEE-754 artifacts (D11).
-            gross_amount = round(closed.sale_value - closed.purchase_value, 2)
             settle_date = closed.close_time.isoformat()
 
     return {
@@ -332,7 +329,6 @@ def _build_cdc_record(
         "quantity": quantity,
         "price": price,
         "side": side,
-        "gross_amount": gross_amount,
         "fee_amount": fee_amount,
         "tax_amount": None,  # tax is its own TAX event in cash_amount
         "target_fx_rate": None,  # D7: do NOT parse Exchange rate:X
@@ -351,7 +347,7 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     emits one event per cash operation (Total rows excluded; subaccount
     transfers filtered by the parser — D7/D10). Trade rows carry
     qty/price/side parsed from the comment; closing rows are enriched with
-    ``fee_amount``/``gross_amount``/``settle_date`` from Closed Positions (D8).
+    ``fee_amount``/``settle_date`` from Closed Positions (D8).
     ``dedup_cdc_events`` on ``(event_type, event_id, account_id)`` is a safety
     net (D9, ADR 0105 parity).
     """
@@ -386,7 +382,6 @@ def transform_cdc(raw: pa.Table, fernet_key: bytes) -> pa.Table:
             "cash_amount",
             "quantity",
             "price",
-            "gross_amount",
             "fee_amount",
             "tax_amount",
             "target_fx_rate",

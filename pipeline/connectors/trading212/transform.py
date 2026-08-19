@@ -135,7 +135,6 @@ _CDC_ENCRYPT_COLUMNS = [
     "cash_amount",
     "quantity",
     "price",
-    "gross_amount",
     "fee_amount",
     "tax_amount",
     "target_fx_rate",
@@ -376,10 +375,11 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         [instrument.struct.field("currency"), order.struct.field("currency")]
     ).cast(pl.Utf8)
 
-    # Decision: docs/adr/0104-fix-t212-trade-sign-convention.md
-    # Sign convention (origin ADR 0058, carried forward into the active schema
-    # ADR 0077): positive = inflow, negative = outflow.  T212 reports the trade
-    # cash impact as an unsigned magnitude in walletImpact.netValue for both
+    # Decision: docs/adr/0112-remove-yagni-gross-amount-column.md
+    # Sign convention (origin ADR 0058, carried forward via the active schema
+    # ADR 0077; gross_amount half removed in ADR 0112, cash_amount retained):
+    # positive = inflow, negative = outflow.  T212 reports the trade cash
+    # impact as an unsigned magnitude in walletImpact.netValue for both
     # BUY and SELL, carrying direction only in ``side``.  IBKR already reports a
     # signed netCash (BUY negative).  Apply the direction sign here so T212
     # trades conform to the convention and match IBKR: BUY = outflow ->
@@ -426,14 +426,9 @@ def _transform_orders(events: list[dict], fetched_at, source: str) -> pl.DataFra
         price=fill.struct.field("price").cast(pl.Float64),
         side=order.struct.field("side"),
         # Decision: docs/adr/0078-fix-t212-wallet-fx-rate.md
-        # gross_amount, fee_amount, and tax_amount are converted from wallet ccy
-        # to security_ccy using walletImpact.fxRate (the wallet→security rate),
+        # fee_amount and tax_amount are converted from wallet ccy to
+        # security_ccy using walletImpact.fxRate (the wallet→security rate),
         # the same rate used for cash_amount conversion.
-        gross_amount=pl.coalesce(
-            [order.struct.field("filledValue"), order.struct.field("value")]
-        ).cast(pl.Float64)
-        * fx_rate
-        * direction,
         fee_amount=pl.Series("fee_amount", fee_amounts, dtype=pl.Float64) * fx_rate,
         tax_amount=pl.Series("tax_amount", tax_amounts, dtype=pl.Float64) * fx_rate,
         # target_fx_rate, target_value, target_ccy are null for T212 orders;
@@ -496,7 +491,6 @@ def _transform_dividends(events: list[dict], fetched_at, source: str) -> pl.Data
         quantity=qty,
         price=price,
         side=pl.lit(""),
-        gross_amount=(price * qty),
         fee_amount=pl.lit(0.0),
         tax_amount=pl.lit(0.0),
         # target_fx_rate, target_value, target_ccy are null for T212 dividends;
@@ -541,7 +535,6 @@ def _transform_transactions(
         quantity=pl.lit(0.0),
         price=pl.lit(0.0),
         side=pl.lit(""),
-        gross_amount=pl.lit(0.0),
         fee_amount=pl.lit(0.0),
         tax_amount=pl.lit(0.0),
         # target_fx_rate, target_value, target_ccy are null for T212 transactions;

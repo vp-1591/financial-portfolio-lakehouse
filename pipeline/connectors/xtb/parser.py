@@ -62,8 +62,6 @@ class XtbClosedPosition:
 
     position_id: str  # join key to Cash Operations trade rows
     commission: float  # -> fee_amount on the closing (Stock sell) row only (D8)
-    purchase_value: float  # -> gross_amount = sale_value - purchase_value (transform)
-    sale_value: float
     close_time: datetime  # -> settle_date on the closing row (UTC)
 
 
@@ -421,10 +419,9 @@ def _find_closed_header(rows: list[list[Any]]) -> int | None:
 def _parse_closed_positions(rows: list[list[Any]]) -> list[XtbClosedPosition]:
     """Parse Closed Positions -> fee-enrichment rows.
 
-    Extracts only ``Position ID, Commission, Purchase value, Sale value,
-    Close time`` (the fee-enrichment fields, D8). The ``Profit/loss`` total
-    row is excluded. ``position_id`` is string-coerced (guard 1). Commission /
-    Purchase value / Sale value rounded to 2dp (D11).
+    Extracts only ``Position ID, Commission, Close time`` (the
+    fee-enrichment fields, D8). The ``Profit/loss`` total row is excluded.
+    ``position_id`` is string-coerced (guard 1). Commission rounded to 2dp (D11).
     """
     header_index = _find_closed_header(rows)
     if header_index is None:
@@ -450,8 +447,6 @@ def _parse_closed_positions(rows: list[list[Any]]) -> list[XtbClosedPosition]:
             XtbClosedPosition(
                 position_id=position_id,
                 commission=round(as_float(row[16]) if len(row) > 16 else 0.0, 2),
-                purchase_value=round(as_float(row[12]) if len(row) > 12 else 0.0, 2),
-                sale_value=round(as_float(row[13]) if len(row) > 13 else 0.0, 2),
                 close_time=close_time,
             )
         )

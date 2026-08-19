@@ -51,7 +51,6 @@ def _make_cdc_table(
         "cash_amount",
         "target_value",
         "target_fx_rate",
-        "gross_amount",
         "fee_amount",
         "tax_amount",
         "quantity",

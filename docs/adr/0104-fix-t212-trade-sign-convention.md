@@ -1,5 +1,7 @@
 # 0104 — Fix T212 Trade `cash_amount`/`gross_amount` Sign Convention
 
+> **Superseded by [ADR 0112](./0112-remove-yagni-gross-amount-column.md)** — the `gross_amount` half of the decision is removed together with the column; the `cash_amount` sign convention carries forward unchanged, see 0112 §Decision.
+
 ## Context
 
 ADR 0058 (superseded by the active ADR 0077) established the CDC events sign
