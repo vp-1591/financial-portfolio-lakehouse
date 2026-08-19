@@ -27,7 +27,7 @@ isolation between environments is handled at the SSM / ECS level.
 The IAM permissions the trigger needs differ by environment (ADR 0053 /
 0093):
 
-- **staging** — the ``pipeline-demo-cicd`` policy grants the full set:
+- **staging** — the ``pipeline-staging-cicd`` policy grants the full set:
   ``states:ListStateMachines``, ``states:StartExecution``,
   ``states:DescribeExecution``, ``states:GetExecutionHistory``,
   ``ecs:DescribeTaskDefinition``, and ``logs:FilterLogEvents``.  Staging
@@ -53,20 +53,15 @@ from typing import Any
 
 import boto3
 
-# ``--mode`` value → ECS environment label used in task definition families
-# and CloudWatch log group names.  Staging mode runs against the demo
-# infrastructure (env label "demo"); prod mode against prod.
-MODE_TO_ENV_LABEL: dict[str, str] = {"staging": "demo", "prod": "prod"}
-
 # ``--mode`` value → Step Functions state machine name.  The ARN is resolved
 # at runtime via ``list_state_machines`` so no env var or hardcoded ARN is
 # needed — the names come from Terraform
 # (``terraform/staging/main.tf``: ``state_machine_name =
-# "portfolio-pipeline-orchestrator-demo"``,
+# "portfolio-pipeline-orchestrator-staging"``,
 # ``terraform/prod/main.tf``: ``state_machine_name =
 # "portfolio-pipeline-orchestrator"``).
 STATE_MACHINE_NAMES: dict[str, str] = {
-    "staging": "portfolio-pipeline-orchestrator-demo",
+    "staging": "portfolio-pipeline-orchestrator-staging",
     "prod": "portfolio-pipeline-orchestrator",
 }
 
@@ -74,7 +69,7 @@ STATE_MACHINE_NAMES: dict[str, str] = {
 # driven solely by the EventBridge S3 file-arrival trigger (fetch + transform
 # only when a new file is uploaded), so scheduled/CI runs do not launch a
 # no-op ``run-connector xtb`` task.  ``run-consolidate-analytics`` still reads
-# XTB silver (``xtb_snapshot``/``xtb_cdc``) on every run via the connector
+# XTB silver (``xtb_snapshot``/``xtb_events``) on every run via the connector
 # registry, whenever present.
 # Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
 DEFAULT_CONNECTORS: list[str] = ["ibkr", "trading212"]
@@ -94,16 +89,15 @@ TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"}
 
 
 def _env_label(mode: str) -> str:
-    try:
-        return MODE_TO_ENV_LABEL[mode]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported mode for SFN trigger: {mode!r}") from exc
+    if mode not in {"staging", "prod"}:
+        raise ValueError(f"Unsupported mode for SFN trigger: {mode!r}")
+    return mode
 
 
 def task_def_family(mode: str, connector_name: str) -> str:
     """Return the ECS task definition family for a connector in a mode.
 
-    e.g. ``staging`` + ``ibkr`` → ``portfolio-pipeline-demo-ibkr``.
+    e.g. ``staging`` + ``ibkr`` → ``portfolio-pipeline-staging-ibkr``.
     """
     return TASK_FAMILY_TEMPLATE.format(env_label=_env_label(mode), name=connector_name)
 
@@ -146,8 +140,8 @@ def build_execution_input(
           "consolidate_command": [str, ...]
         }
 
-    The vestigial ``demo`` field is intentionally absent — the ASL never
-    references ``$.demo``.  ``consolidate_command`` is consumed by the
+    The vestigial ``staging`` field is intentionally absent — the ASL never
+    references ``$.staging``.  ``consolidate_command`` is consumed by the
     ConsolidateAllocate state via ``"Command.$": "$.consolidate_command"``.
     """
     return {

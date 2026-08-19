@@ -42,7 +42,7 @@ import polars as pl
 from cryptography.fernet import InvalidToken
 
 from pipeline.crypto import decrypt, decrypt_float, decrypt_string, load_key
-from pipeline.secrets import is_demo, resolve_aws_credentials
+from pipeline.secrets import is_staging, resolve_aws_credentials
 from pipeline.storage import S3Backend, get_storage
 
 logger = logging.getLogger(__name__)
@@ -307,11 +307,11 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     environment.
 
     When credentials are available (even if empty strings for missing
-    demo credentials), they are registered as a DuckDB SECRET.  Empty
+    staging credentials), they are registered as a DuckDB SECRET.  Empty
     credentials prevent DuckDB from falling back to environment
     variables that may contain production credentials.
 
-    When both key_id and secret_key are ``None`` in demo mode, a
+    When both key_id and secret_key are ``None`` in staging mode, a
     SECRET with empty credentials is created to prevent DuckDB from
     falling back to production credentials.  In production mode,
     :func:`pipeline.secrets.resolve_aws_credentials` already attempts
@@ -338,9 +338,9 @@ def _configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
     # resolve_aws_credentials() already tried boto3's default chain (AWS
     # config/SSO) and found nothing, so raise an actionable error.
     if creds.key_id is None and creds.secret_key is None:
-        if is_demo():
+        if is_staging():
             # Empty credentials prevent fallback to production env vars.
-            # S3 operations will fail, which is correct — demo isolation
+            # S3 operations will fail, which is correct — staging isolation
             # must not silently use production credentials.
             conn.execute(f"CREATE SECRET (TYPE S3, {', '.join(parts)})")
         else:

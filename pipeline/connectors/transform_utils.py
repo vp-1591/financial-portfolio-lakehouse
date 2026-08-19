@@ -67,8 +67,8 @@ def filter_latest_snapshot(raw: pa.Table) -> pa.Table:
     newer timestamps. Filtering per source preserves the latest payload for
     every endpoint, preventing missing-endpoint errors in the snapshot transform.
 
-    For CDC (change data capture) data this filter should **not** be used
-    -- CDC rows are chronological events, not replaceable snapshots.
+    For events (change data capture) data this filter should **not** be used
+    -- event rows are chronological, not replaceable snapshots.
 
     Parameters
     ----------
@@ -257,12 +257,12 @@ def build_normalized_table(
     return arrow_table.cast(schema)
 
 
-def decrypt_cdc_payloads(
+def decrypt_events_payloads(
     raw: pa.Table, fernet_key: bytes
 ) -> list[tuple[datetime, str, list[dict]]]:
-    """Decrypt and parse CDC payloads, returning event lists ready for transform.
+    """Decrypt and parse events payloads, returning event lists ready for transform.
 
-    Replaces :func:`iter_raw_payloads` for CDC transforms.  Instead of
+    Replaces :func:`iter_raw_payloads` for events transforms.  Instead of
     yielding one :class:`DecodedRow` at a time, returns a list of
     ``(fetched_at, source, events)`` tuples where *events* is the unwrapped
     list of event dicts from each payload.  This allows callers to construct
@@ -303,7 +303,7 @@ def decrypt_cdc_payloads(
 
     if decode_failures or parse_failures or empty_events:
         logger.warning(
-            "decrypt_cdc_payloads: %d decode failures, %d parse failures, "
+            "decrypt_events_payloads: %d decode failures, %d parse failures, "
             "%d empty-event payloads (out of %d total rows)",
             decode_failures,
             parse_failures,
@@ -315,7 +315,7 @@ def decrypt_cdc_payloads(
 
 
 def _unwrap_events(payload: object) -> list[dict]:
-    """Unwrap a CDC API response into a list of event dicts.
+    """Unwrap an events API response into a list of event dicts.
 
     Handles both bare JSON lists and paginated dicts with
     ``{"items": [...], "nextPagePath": ...}``.
@@ -387,14 +387,14 @@ def finalize_table(
     return arrow_table.cast(schema)
 
 
-def dedup_cdc_events(
+def dedup_events(
     df: pl.DataFrame,
     subset: list[str],
     *,
     sort_after: list[str] | None = None,
-    label: str = "CDC",
+    label: str = "events",
 ) -> pl.DataFrame:
-    """Deduplicate CDC events, keeping the latest-``fetched_at`` version.
+    """Deduplicate events, keeping the latest-``fetched_at`` version.
 
     Sorts by ``fetched_at`` descending so the newest fetch is first, then
     keeps the first row per *subset* group.  ``keep="first"`` is required:

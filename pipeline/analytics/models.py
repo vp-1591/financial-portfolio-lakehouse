@@ -52,7 +52,7 @@ data_quality_schema = pa.schema(
     ]
 )
 
-# --- CDC analytics tables (gold layer) ---
+# --- Events analytics tables (gold layer) ---
 
 dividend_income_schema = pa.schema(
     [

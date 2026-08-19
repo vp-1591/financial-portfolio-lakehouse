@@ -47,17 +47,17 @@ def _setup_storage(tmp_path: Path) -> None:
     data = tmp_path / "data"
     for subdir in [
         "raw/ibkr_snapshot",
-        "raw/ibkr_cdc",
+        "raw/ibkr_events",
         "raw/trading212_snapshot",
-        "raw/trading212_cdc",
+        "raw/trading212_events",
         "raw/xtb_snapshot",
-        "raw/xtb_cdc",
+        "raw/xtb_events",
         "normalized/ibkr_snapshot",
-        "normalized/ibkr_cdc",
+        "normalized/ibkr_events",
         "normalized/trading212_snapshot",
-        "normalized/trading212_cdc",
+        "normalized/trading212_events",
         "normalized/xtb_snapshot",
-        "normalized/xtb_cdc",
+        "normalized/xtb_events",
         "normalized/consolidated_holdings",
         "analytics/portfolio_holdings",
         "analytics/dividend_income",
@@ -117,8 +117,8 @@ def _build_all_gold_tables(fernet_key: bytes) -> None:
     build_portfolio_holdings(fernet_key=fernet_key)
 
 
-def _write_minimal_cdc_tables(fernet_key: bytes) -> None:
-    """Write minimal CDC analytics tables so the report has data for charts.
+def _write_minimal_events_tables(fernet_key: bytes) -> None:
+    """Write minimal events analytics tables so the report has data for charts.
 
     Value columns (cash_amount, target_value) are Fernet-encrypted as pa.binary().
     """
@@ -246,7 +246,7 @@ class TestCmdReport:
     def test_returns_zero_and_writes_file(self, fernet_key: bytes, tmp_path: Path):
         """cmd_report returns 0 and creates an HTML file."""
         _build_all_gold_tables(fernet_key)
-        _write_minimal_cdc_tables(fernet_key)
+        _write_minimal_events_tables(fernet_key)
 
         output = str(tmp_path / "report.html")
         args = _make_args(output)
@@ -259,7 +259,7 @@ class TestCmdReport:
     def test_report_contains_section_markers(self, fernet_key: bytes, tmp_path: Path):
         """HTML contains id markers for all four sections."""
         _build_all_gold_tables(fernet_key)
-        _write_minimal_cdc_tables(fernet_key)
+        _write_minimal_events_tables(fernet_key)
 
         output = str(tmp_path / "report.html")
         args = _make_args(output)
@@ -282,7 +282,7 @@ class TestCmdReport:
         to N and this test fails.
         """
         _build_all_gold_tables(fernet_key)
-        _write_minimal_cdc_tables(fernet_key)
+        _write_minimal_events_tables(fernet_key)
 
         output = str(tmp_path / "report.html")
         args = _make_args(output)
@@ -306,7 +306,7 @@ class TestCmdReport:
     def test_partial_data_still_renders(self, fernet_key: bytes, tmp_path: Path):
         """Report renders even if dividend_income is missing."""
         _build_all_gold_tables(fernet_key)
-        _write_minimal_cdc_tables(fernet_key)
+        _write_minimal_events_tables(fernet_key)
 
         # Delete dividend_income to simulate partial data
 
@@ -336,7 +336,7 @@ class TestCmdReport:
     def test_default_output_path(self, fernet_key: bytes, tmp_path: Path, monkeypatch):
         """Default output writes a timestamped, mode-suffixed file under data/reports/."""
         _build_all_gold_tables(fernet_key)
-        _write_minimal_cdc_tables(fernet_key)
+        _write_minimal_events_tables(fernet_key)
 
         # Change CWD to tmp_path so the default path is written there
         monkeypatch.chdir(tmp_path)
@@ -367,7 +367,7 @@ class TestCmdReport:
     def test_failed_table_hides_its_section(self, fernet_key: bytes, tmp_path: Path):
         """Report hides sections whose dependency tables have FAIL in DQ."""
         _build_all_gold_tables(fernet_key)
-        _write_minimal_cdc_tables(fernet_key)
+        _write_minimal_events_tables(fernet_key)
 
         # Overwrite data_quality with a FAIL for portfolio_holdings
 

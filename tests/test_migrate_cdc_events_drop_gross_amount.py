@@ -20,7 +20,9 @@ import pipeline.migrations.migrate_cdc_events_drop_gross_amount as mod
 from pipeline.migrations.migrate_cdc_events_drop_gross_amount import (
     drop_gross_amount,
 )
-from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.normalized.models import (
+    events_normalized_schema as cdc_events_normalized_schema,
+)
 
 _TS = pa.timestamp("us", tz="UTC")
 

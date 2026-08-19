@@ -1,20 +1,20 @@
-"""Consolidate broker CDC normalized tables into a single cdc_events table.
+"""Consolidate broker events normalized tables into a single events table.
 
-Reads each broker's CDC normalized Delta table and concatenates all rows
-into ``normalized/cdc_events``, producing a unified broker-neutral CDC
+Reads each broker's events normalized Delta table and concatenates all rows
+into ``normalized/events``, producing a unified broker-neutral events
 table suitable for dashboard queries.
 
 Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
-CDC is mandatory for every registered broker (ibkr, trading212) — a
-missing or empty required broker CDC table raises RuntimeError (the
+Events are mandatory for every registered broker (ibkr, trading212) — a
+missing or empty required broker events table raises RuntimeError (the
 required-non-empty gate, carried forward from ADR 0087 §Decision).  XTB is
 not a scheduled connector: fetch+transform runs only on the EventBridge S3
-file-arrival rule, and ``xtb_cdc`` is consolidated whenever present (a
+file-arrival rule, and ``xtb_events`` is consolidated whenever present (a
 missing or empty table is skipped, not raised).
 
 D15: the candidate broker set is derived from the connector registry
-(``connectors.all()``), not a hardcoded ``_OPTIONAL_CDC_BROKERS`` list. Only
-``_REQUIRED_CDC_BROKERS`` is hardcoded (the ADR 0087 required-non-empty gate).
+(``connectors.all()``), not a hardcoded ``_OPTIONAL_EVENTS_BROKERS`` list. Only
+``_REQUIRED_EVENTS_BROKERS`` is hardcoded (the ADR 0087 required-non-empty gate).
 D15: ``account_id`` is part of the consolidate dedup subset so multi-account
 brokers (XTB, D18) do not drop same-ID events across accounts.
 """
@@ -27,35 +27,35 @@ import polars as pl
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
-from pipeline.connectors.transform_utils import dedup_cdc_events
-from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.connectors.transform_utils import dedup_events
+from pipeline.normalized.models import events_normalized_schema
 from pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
-# Brokers whose CDC tables are required — must be present and non-empty.
-_REQUIRED_CDC_BROKERS = ["ibkr", "trading212"]
+# Brokers whose events tables are required — must be present and non-empty.
+_REQUIRED_EVENTS_BROKERS = ["ibkr", "trading212"]
 
 
-def consolidate_cdc_events() -> pa.Table:
-    """Merge broker CDC normalized tables into ``normalized/cdc_events``.
+def consolidate_events() -> pa.Table:
+    """Merge broker events normalized tables into ``normalized/events``.
 
-    Reads ``normalized/{broker}_cdc`` for each registered broker, concatenates
-    the rows, and writes the result to ``normalized/cdc_events`` using
+    Reads ``normalized/{broker}_events`` for each registered broker, concatenates
+    the rows, and writes the result to ``normalized/events`` using
     overwrite mode.
 
     The candidate broker set is derived from the connector registry
     (``connectors.all()``) — D15. Required brokers
-    (:data:`_REQUIRED_CDC_BROKERS`) must be present and non-empty (raise on
+    (:data:`_REQUIRED_EVENTS_BROKERS`) must be present and non-empty (raise on
     missing/empty).
 
-    Raises :class:`RuntimeError` if a required broker CDC table is missing
+    Raises :class:`RuntimeError` if a required broker events table is missing
     or empty.  Returns the concatenated table (guaranteed non-empty because
     all required brokers contributed rows).
     """
     # Import lazily inside the function to avoid an import cycle:
     # ``connectors.base`` imports ``pipeline.normalized.consolidate`` (for
-    # ``Holding``), so ``consolidate_cdc`` -> ``connectors.registry`` could
+    # ``Holding``), so ``consolidate_events`` -> ``connectors.registry`` could
     # close a loop if imported at module level.
     from pipeline.connectors.registry import all as all_connectors
 
@@ -68,27 +68,29 @@ def consolidate_cdc_events() -> pa.Table:
     tables: list[pa.Table] = []
 
     for broker in candidate_brokers:
-        cdc_path = config.normalized_path(f"{broker}_cdc")
+        events_path = config.normalized_path(f"{broker}_events")
         try:
-            dt = DeltaTable(str(cdc_path), storage_options=storage_opts)
+            dt = DeltaTable(str(events_path), storage_options=storage_opts)
             table = dt.to_pyarrow_table()
         except Exception as exc:
-            if broker in _REQUIRED_CDC_BROKERS:
+            if broker in _REQUIRED_EVENTS_BROKERS:
                 raise RuntimeError(
-                    f"Required CDC table {broker}_cdc not found at {cdc_path}"
+                    f"Required events table {broker}_events not found at {events_path}"
                 ) from exc
-            logger.debug("CDC %s: no data, skipping (optional)", broker)
+            logger.debug("events %s: no data, skipping (optional)", broker)
             continue
         if table.num_rows == 0:
-            if broker in _REQUIRED_CDC_BROKERS:
-                raise RuntimeError(f"Required CDC table {broker}_cdc is empty (0 rows)")
-            logger.debug("CDC %s: 0 rows, skipping (optional)", broker)
+            if broker in _REQUIRED_EVENTS_BROKERS:
+                raise RuntimeError(
+                    f"Required events table {broker}_events is empty (0 rows)"
+                )
+            logger.debug("events %s: 0 rows, skipping (optional)", broker)
             continue
         tables.append(table)
-        logger.info("CDC %s: %d rows", broker, table.num_rows)
+        logger.info("events %s: %d rows", broker, table.num_rows)
 
     # tables is guaranteed non-empty because all required brokers contributed.
-    result = pa.concat_tables(tables, schema=cdc_events_normalized_schema)
+    result = pa.concat_tables(tables, schema=events_normalized_schema)
 
     # Defense-in-depth: dedup across brokers on (broker, event_type, event_id,
     # account_id). D15: ``account_id`` is part of the subset so multi-account
@@ -100,13 +102,13 @@ def consolidate_cdc_events() -> pa.Table:
     # Decision: docs/adr/0105-fix-t212-cdc-dedup-and-concat-type-mismatch.md
     df = pl.from_arrow(result)
     assert isinstance(df, pl.DataFrame)  # pl.from_arrow(pa.Table) -> DataFrame
-    df = dedup_cdc_events(
+    df = dedup_events(
         df,
         subset=["broker", "event_type", "event_id", "account_id"],
-        label="CDC consolidate",
+        label="events consolidate",
     )
 
-    output_path = config.normalized_path("cdc_events")
+    output_path = config.normalized_path("events")
     config.backend.ensure_parent(output_path)
     write_deltalake(
         str(output_path),
@@ -114,7 +116,7 @@ def consolidate_cdc_events() -> pa.Table:
         mode="overwrite",
         storage_options=storage_opts,
     )
-    logger.info("Consolidated CDC events: %d rows", df.height)
+    logger.info("Consolidated events: %d rows", df.height)
     # Return an Arrow table to honor the -> pa.Table contract (callers and
     # tests access result.num_rows / result.column(...)); write_deltalake
     # receives the Polars frame directly per the repo rule (no pa.Table write).

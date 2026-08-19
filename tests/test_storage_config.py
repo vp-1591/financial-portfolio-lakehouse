@@ -100,7 +100,7 @@ class TestResolveStorage:
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert config.backend.bucket == "my-staging-bucket"
-        assert config.backend.prefix == "pipeline_demo"
+        assert config.backend.prefix == ""
 
     def test_staging_mode_explicit_prefix(self, monkeypatch):
         """S3_BUCKET and S3_PREFIX override defaults in staging mode."""
@@ -112,14 +112,14 @@ class TestResolveStorage:
         assert config.backend.bucket == "my-staging-bucket"
         assert config.backend.prefix == "custom-prefix"
 
-    def test_staging_mode_paths_include_prefix(self, monkeypatch):
-        """Staging mode uses pipeline_demo prefix in S3 paths."""
+    def test_staging_mode_paths_no_prefix(self, monkeypatch):
+        """Staging mode uses no prefix in S3 paths (buckets isolate envs)."""
         monkeypatch.setenv("S3_BUCKET", "pipeline-staging")
         set_mode("staging")
         config = resolve_storage()
-        assert config.raw_dir == "s3://pipeline-staging/pipeline_demo/raw"
-        assert config.normalized_dir == "s3://pipeline-staging/pipeline_demo/normalized"
-        assert config.analytics_dir == "s3://pipeline-staging/pipeline_demo/analytics"
+        assert config.raw_dir == "s3://pipeline-staging/raw"
+        assert config.normalized_dir == "s3://pipeline-staging/normalized"
+        assert config.analytics_dir == "s3://pipeline-staging/analytics"
 
     def test_staging_mode_s3_bucket_alone(self, monkeypatch):
         """S3_BUCKET alone works in staging mode."""
@@ -128,7 +128,7 @@ class TestResolveStorage:
         config = resolve_storage()
         assert isinstance(config.backend, S3Backend)
         assert config.backend.bucket == "my-staging-bucket"
-        assert config.backend.prefix == "pipeline_demo"
+        assert config.backend.prefix == ""
 
     def test_staging_mode_requires_bucket(self, monkeypatch):
         """Staging mode raises ValueError when no S3 bucket is configured."""
@@ -137,13 +137,13 @@ class TestResolveStorage:
         with pytest.raises(ValueError, match="Staging mode requires"):
             resolve_storage()
 
-    def test_staging_prefix_empty_falls_back(self, monkeypatch):
-        """Empty S3_PREFIX falls back to pipeline_demo in staging mode."""
+    def test_staging_prefix_empty_stays_empty(self, monkeypatch):
+        """Empty S3_PREFIX stays empty in staging mode (no fallback prefix)."""
         monkeypatch.setenv("S3_BUCKET", "my-bucket")
         monkeypatch.setenv("S3_PREFIX", "")
         set_mode("staging")
         config = resolve_storage()
-        assert config.backend.prefix == "pipeline_demo"
+        assert config.backend.prefix == ""
 
     def test_staging_empty_bucket_raises(self, monkeypatch):
         """Empty S3_BUCKET in staging mode raises ValueError (no suffix fallback)."""
@@ -460,11 +460,12 @@ class TestS3Backend:
             == "s3://my-bucket/xtb_uploads/report.xlsx"
         )
 
-    def test_staging_path_demo_prefix(self):
-        backend = S3Backend(bucket="my-bucket-demo", prefix="pipeline_demo")
+    def test_staging_path_empty_prefix(self):
+        # Staging env: no prefix (buckets isolate envs) -> bucket-root paths.
+        backend = S3Backend(bucket="my-bucket-staging", prefix="")
         assert (
             backend.staging_path("xtb_uploads", "report.xlsx")
-            == "s3://my-bucket-demo/pipeline_demo/xtb_uploads/report.xlsx"
+            == "s3://my-bucket-staging/xtb_uploads/report.xlsx"
         )
 
     def test_staging_path_no_xtb_subfolder(self):
@@ -478,12 +479,12 @@ class TestS3Backend:
         assert "/xtb_uploads/xtb/" not in prod_uri
         assert prod_uri.count("/xtb_uploads/") == 1
 
-        # Demo: s3://<bucket>/pipeline_demo/xtb_uploads/<file>
-        demo_backend = S3Backend(bucket="demo-bucket", prefix="pipeline_demo")
-        demo_uri = demo_backend.staging_path("xtb_uploads", "report.xlsx")
-        assert demo_uri == "s3://demo-bucket/pipeline_demo/xtb_uploads/report.xlsx"
-        assert "/xtb_uploads/xtb/" not in demo_uri
-        assert demo_uri.count("/xtb_uploads/") == 1
+        # Staging: s3://<bucket>/xtb_uploads/<file> (no prefix)
+        staging_backend = S3Backend(bucket="staging-bucket", prefix="")
+        staging_uri = staging_backend.staging_path("xtb_uploads", "report.xlsx")
+        assert staging_uri == "s3://staging-bucket/xtb_uploads/report.xlsx"
+        assert "/xtb_uploads/xtb/" not in staging_uri
+        assert staging_uri.count("/xtb_uploads/") == 1
 
     def test_storage_options_lowercase_keys(self, monkeypatch):
         """S3Backend.storage_options returns lowercase keys for deltalake."""
@@ -514,7 +515,7 @@ class TestS3Backend:
 
         On ECS with IAM task roles, omitting credential keys allows the SDK to
         fall through its default credential chain. In CI, step-level conditionals
-        ensure production env vars are absent in demo runs.
+        ensure production env vars are absent in staging runs.
         """
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
@@ -737,7 +738,7 @@ class TestStorageConfigHelpers:
 
     def test_staging_path_local_backend_staging(self, tmp_path: Path) -> None:
 
-        data = tmp_path / "data_demo"
+        data = tmp_path / "data_staging"
         secrets = tmp_path / ".secrets"
         secrets.mkdir()
         config = StorageConfig(
@@ -770,17 +771,17 @@ class TestStorageConfigHelpers:
         assert result == "s3://my-bucket/pipeline/xtb_uploads/report.xlsx"
 
     def test_staging_path_s3_backend_staging(self, monkeypatch) -> None:
-        # D20: demo -> s3://<bucket>/pipeline_demo/xtb_uploads/<file>
-        backend = S3Backend(bucket="my-bucket-demo", prefix="pipeline_demo")
+        # D20: staging -> s3://<bucket>/xtb_uploads/<file> (no prefix)
+        backend = S3Backend(bucket="my-bucket-staging", prefix="")
         config = StorageConfig(
-            data_dir="s3://my-bucket-demo/pipeline_demo",
-            raw_dir="s3://my-bucket-demo/pipeline_demo/raw",
-            normalized_dir="s3://my-bucket-demo/pipeline_demo/normalized",
-            analytics_dir="s3://my-bucket-demo/pipeline_demo/analytics",
+            data_dir="s3://my-bucket-staging",
+            raw_dir="s3://my-bucket-staging/raw",
+            normalized_dir="s3://my-bucket-staging/normalized",
+            analytics_dir="s3://my-bucket-staging/analytics",
             secrets_dir="/app/.secrets",
             encryption_key_file="/app/.secrets/encryption.key",
             backend=backend,
         )
         set_mode("staging")
         result = config.staging_path("xtb", "report.xlsx")
-        assert result == "s3://my-bucket-demo/pipeline_demo/xtb_uploads/report.xlsx"
+        assert result == "s3://my-bucket-staging/xtb_uploads/report.xlsx"

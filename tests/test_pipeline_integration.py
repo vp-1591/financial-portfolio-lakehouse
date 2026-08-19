@@ -95,13 +95,13 @@ class TestEncryptRawPayloadsSetColumn:
         assert result.num_rows == 0
 
 
-class TestT212CdcKwargsSeparation:
-    """Test that CDC fetch calls work with the same kwargs as snapshot."""
+class TestT212EventsKwargsSeparation:
+    """Test that events fetch calls work with the same kwargs as snapshot."""
 
-    @patch("pipeline.connectors.trading212.fetch.fetch_cdc")
+    @patch("pipeline.connectors.trading212.fetch.fetch_events")
     @patch("pipeline.connectors.trading212.fetch.fetch_snapshot")
-    def test_cdc_and_snapshot_use_same_kwargs(
-        self, mock_snapshot: MagicMock, mock_cdc: MagicMock
+    def test_events_and_snapshot_use_same_kwargs(
+        self, mock_snapshot: MagicMock, mock_events: MagicMock
     ) -> None:
 
         connector = get("trading212")
@@ -124,25 +124,25 @@ class TestT212CdcKwargsSeparation:
             schema=RAW_SCHEMA,
         )
 
-        mock_cdc.return_value = pa.table(
+        mock_events.return_value = pa.table(
             {
                 "fetched_at": [None],
                 "broker": ["Trading 212"],
-                "source": ["test_cdc"],
+                "source": ["test_events"],
                 "payload": [b"[]"],
-                "payload_hash": ["hash_cdc"],
+                "payload_hash": ["hash_events"],
                 "source_file": [""],
             },
             schema=RAW_SCHEMA,
         )
 
-        # Both snapshot and CDC should work with the same kwargs
+        # Both snapshot and events should work with the same kwargs
         connector.fetch_snapshot(**common_kwargs)
-        connector.fetch_cdc(**common_kwargs)
+        connector.fetch_events(**common_kwargs)
 
         # Verify both were called
         mock_snapshot.assert_called_once()
-        mock_cdc.assert_called_once()
+        mock_events.assert_called_once()
 
 
 class TestT212BasicAuth:

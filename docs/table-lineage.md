@@ -17,21 +17,21 @@ flowchart TD
 
   %% Raw
   r_ibkr_snap["ibkr_snapshot"]:::raw
-  r_ibkr_cdc["ibkr_cdc"]:::raw
+  r_ibkr_events["ibkr_events"]:::raw
   r_t212_snap["trading212_snapshot"]:::raw
-  r_t212_cdc["trading212_cdc"]:::raw
+  r_t212_events["trading212_events"]:::raw
   r_xtb_snap["xtb_snapshot"]:::raw
-  r_xtb_cdc["xtb_cdc"]:::raw
+  r_xtb_events["xtb_events"]:::raw
 
   %% Normalized
   n_ibkr_snap["ibkr_snapshot"]:::norm
-  n_ibkr_cdc["ibkr_cdc"]:::norm
+  n_ibkr_events["ibkr_events"]:::norm
   n_t212_snap["trading212_snapshot"]:::norm
-  n_t212_cdc["trading212_cdc"]:::norm
+  n_t212_events["trading212_events"]:::norm
   n_xtb_snap["xtb_snapshot"]:::norm
-  n_xtb_cdc["xtb_cdc"]:::norm
+  n_xtb_events["xtb_events"]:::norm
   n_consolidated["consolidated_holdings"]:::norm
-  n_cdc_events["cdc_events"]:::norm
+  n_events["events"]:::norm
 
   %% Gold
   g_holdings["portfolio_holdings"]:::gold
@@ -42,32 +42,32 @@ flowchart TD
 
   %% Raw → Normalized
   r_ibkr_snap -->|transform_snapshot| n_ibkr_snap
-  r_ibkr_cdc -->|transform_cdc| n_ibkr_cdc
+  r_ibkr_events -->|transform_events| n_ibkr_events
 
   r_t212_snap -->|transform_snapshot| n_t212_snap
-  r_t212_cdc -->|transform_cdc| n_t212_cdc
+  r_t212_events -->|transform_events| n_t212_events
 
   r_xtb_snap -->|transform_snapshot| n_xtb_snap
-  r_xtb_cdc -->|transform_cdc| n_xtb_cdc
+  r_xtb_events -->|transform_events| n_xtb_events
 
   %% Snapshot path
   n_ibkr_snap -->|extract_holdings| n_consolidated
   n_t212_snap -->|extract_holdings| n_consolidated
   n_xtb_snap -->|extract_holdings| n_consolidated
 
-  %% CDC path
-  n_ibkr_cdc -->|consolidate_cdc_events| n_cdc_events
-  n_t212_cdc -->|consolidate_cdc_events| n_cdc_events
-  n_xtb_cdc -->|consolidate_cdc_events| n_cdc_events
+  %% events path
+  n_ibkr_events -->|consolidate_events| n_events
+  n_t212_events -->|consolidate_events| n_events
+  n_xtb_events -->|consolidate_events| n_events
 
-  n_cdc_events -.->|normalize_currency| n_cdc_events
+  n_events -.->|normalize_currency| n_events
 
   %% Gold
   n_consolidated -->|build_portfolio_holdings| g_holdings
 
-  n_cdc_events -->|build_dividend_income| g_dividends
-  n_cdc_events -->|build_interest_income| g_interest
-  n_cdc_events -->|build_cash_flow_summary| g_cashflow
+  n_events -->|build_dividend_income| g_dividends
+  n_events -->|build_interest_income| g_interest
+  n_events -->|build_cash_flow_summary| g_cashflow
 ```
 
 ---
@@ -108,8 +108,8 @@ flowchart TD
 
 ## Notes
 
-* **Snapshot vs CDC tracks never merge.** `consolidated_holdings` is built from broker position snapshots, while `cdc_events` is built from transaction history.
-* **`normalize_currency()` enriches `cdc_events` in place**, adding `target_fx_rate`, `target_value`, and `target_ccy`.
+* **Snapshot vs events tracks never merge.** `consolidated_holdings` is built from broker position snapshots, while `events` is built from transaction history.
+* **`normalize_currency()` enriches `events` in place**, adding `target_fx_rate`, `target_value`, and `target_ccy`.
 * **Gold value columns are Fernet-encrypted.** Monetary values (`security_value`, `target_value`, `cash_amount`) are stored as `pa.binary()`. Metadata columns remain plaintext.
 * **Allocation charts** use the plaintext `percentage` column and therefore do not require decryption.
 * **Data quality** is a validation stage that scans every normalized and gold table before producing the `data_quality` report. It is included in the storage lineage as a gold table, but its validation edges (reading all tables) are omitted for clarity.

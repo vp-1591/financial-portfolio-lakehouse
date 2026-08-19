@@ -13,7 +13,7 @@ from pipeline.secrets import (
     get_mode,
     get_secret,
     inject_secrets,
-    is_demo,
+    is_staging,
     load_env,
     parse_bool,
     reset_mode,
@@ -250,25 +250,25 @@ class TestSetMode:
             get_mode()
 
 
-class TestIsDemo:
-    """Test is_demo() returns True only for staging mode."""
+class TestIsStaging:
+    """Test is_staging() returns True only for staging mode."""
 
-    def test_is_demo_true_for_staging(self):
+    def test_is_staging_true_for_staging(self):
         set_mode("staging")
-        assert is_demo() is True
+        assert is_staging() is True
 
-    def test_is_demo_false_for_docker(self):
+    def test_is_staging_false_for_docker(self):
         set_mode("docker")
-        assert is_demo() is False
+        assert is_staging() is False
 
-    def test_is_demo_false_for_prod(self):
+    def test_is_staging_false_for_prod(self):
         set_mode("prod")
-        assert is_demo() is False
+        assert is_staging() is False
 
-    def test_is_demo_raises_when_mode_not_set(self):
-        """is_demo() raises RuntimeError if mode has not been set."""
+    def test_is_staging_raises_when_mode_not_set(self):
+        """is_staging() raises RuntimeError if mode has not been set."""
         with pytest.raises(RuntimeError, match="Mode not set"):
-            is_demo()
+            is_staging()
 
 
 class TestResolveSecret:

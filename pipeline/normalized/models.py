@@ -44,11 +44,11 @@ snapshot_normalized_schema = pa.schema(
     ]
 )
 
-# --- CDC schema (broker-neutral) ---
+# --- Events schema (broker-neutral) ---
 
-cdc_events_normalized_schema = pa.schema(
+events_normalized_schema = pa.schema(
     [
-        # Non-nullable core columns (every CDC row must have these)
+        # Non-nullable core columns (every events row must have these)
         pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
         pa.field("broker", pa.string()),
         pa.field("account_id", pa.string()),

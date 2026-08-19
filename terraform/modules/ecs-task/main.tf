@@ -16,8 +16,8 @@
 # ------------------------------------------------------------------------------
 
 locals {
-  env_suffix     = var.demo ? "-demo" : ""
-  env_label      = var.demo ? "demo" : "prod"
+  env_suffix     = var.staging ? "-staging" : ""
+  env_label      = var.staging ? "staging" : "prod"
   # All task definitions use a consistent container name so the Step Functions
   # orchestrator can reference it without per-connector configuration.
   container_name = "pipeline"

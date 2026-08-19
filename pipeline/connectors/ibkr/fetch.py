@@ -1,4 +1,4 @@
-"""IBKR connector: fetch raw snapshot and CDC data via the Flex Web Service API."""
+"""IBKR connector: fetch raw snapshot and events data via the Flex Web Service API."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def fetch_snapshot_via_flex(
     )
 
 
-def fetch_cdc_via_flex(
+def fetch_events_via_flex(
     token: str,
     query_id: str,
     base_url: str = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
@@ -66,10 +66,10 @@ def fetch_cdc_via_flex(
     retries: int = 6,
     delay: float = 3.0,
 ) -> pa.Table:
-    """Fetch IBKR CDC (activity) data via the Flex Web Service API.
+    """Fetch IBKR events (activity) data via the Flex Web Service API.
 
     Uses the same Flex query mechanism as snapshots, but with a source
-    of ``"flex_cdc"`` to distinguish CDC activity data during transformation.
+    of ``"flex_events"`` to distinguish events activity data during transformation.
     The Flex query should include Trades, CashTransactions, Transfers,
     and TransactionFees sections.
     """
@@ -92,7 +92,7 @@ def fetch_cdc_via_flex(
         {
             "fetched_at": [now],
             "broker": ["IBKR"],
-            "source": ["flex_cdc"],
+            "source": ["flex_events"],
             "payload": [xml_bytes],
             "payload_hash": [payload_hash],
             "source_file": [""],
@@ -101,6 +101,6 @@ def fetch_cdc_via_flex(
     )
 
 
-def fetch_cdc(**kwargs: Any) -> pa.Table:
-    """IBKR CDC fetch via Flex Web Service."""
-    return fetch_cdc_via_flex(**kwargs)
+def fetch_events(**kwargs: Any) -> pa.Table:
+    """IBKR events fetch via Flex Web Service."""
+    return fetch_events_via_flex(**kwargs)

@@ -22,8 +22,8 @@ RAW_SCHEMA = pa.schema(
 
 # Individual schema aliases for clarity when writing to specific table paths
 ibkr_snapshot_raw_schema = RAW_SCHEMA
-ibkr_cdc_raw_schema = RAW_SCHEMA
+ibkr_events_raw_schema = RAW_SCHEMA
 trading212_snapshot_raw_schema = RAW_SCHEMA
-trading212_cdc_raw_schema = RAW_SCHEMA
+trading212_events_raw_schema = RAW_SCHEMA
 xtb_snapshot_raw_schema = RAW_SCHEMA
-xtb_cdc_raw_schema = RAW_SCHEMA
+xtb_events_raw_schema = RAW_SCHEMA

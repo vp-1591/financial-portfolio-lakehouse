@@ -1,4 +1,4 @@
-"""Tests for CDC analytics table builders."""
+"""Tests for events analytics table builders."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pyarrow as pa
 import pytest
 from deltalake import DeltaTable, write_deltalake
 
-from pipeline.analytics.cdc_tables import (
+from pipeline.analytics.events_tables import (
     _add_period_columns,
     build_cash_flow_summary,
     build_dividend_income,
@@ -23,9 +23,9 @@ from pipeline.analytics.models import (
     interest_income_schema,
 )
 from pipeline.connectors.transform_utils import build_normalized_table
-from pipeline.connectors.xtb.transform import transform_cdc
+from pipeline.connectors.xtb.transform import transform_events
 from pipeline.crypto import decrypt_float, encrypt, encrypt_float, generate_key
-from pipeline.normalized.models import cdc_events_normalized_schema
+from pipeline.normalized.models import events_normalized_schema
 from pipeline.raw.models import RAW_SCHEMA
 from pipeline.storage import StorageConfig, use_storage
 from tests.fixtures.xtb import build_new_format_xlsx_bytes
@@ -36,13 +36,13 @@ from tests.local_backend import LocalBackend
 # ---------------------------------------------------------------------------
 
 
-def _make_cdc_table(
+def _make_events_table(
     fernet_key: bytes,
     rows: list[dict],
 ) -> pa.Table:
-    """Build a cdc_events table from row dicts, encrypting binary columns.
+    """Build an events table from row dicts, encrypting binary columns.
 
-    Each row dict should have all required CDC fields.  Encrypted columns
+    Each row dict should have all required events fields.  Encrypted columns
     (cash_amount, target_value, target_fx_rate, etc.) should contain plain
     floats — the helper encrypts them automatically.
     """
@@ -88,19 +88,19 @@ def _make_cdc_table(
 
     return build_normalized_table(
         prepared_rows,
-        cdc_events_normalized_schema,
+        events_normalized_schema,
         fernet_key,
         encrypt_columns=encrypt_columns,
     )
 
 
-def _write_cdc_to_delta(
+def _write_events_to_delta(
     table: pa.Table,
     tmp_path: Path,
     storage: StorageConfig,
 ) -> str:
-    """Write a CDC events table to Delta and return its path."""
-    path = storage.normalized_path("cdc_events")
+    """Write an events table to Delta and return its path."""
+    path = storage.normalized_path("events")
     storage.backend.ensure_parent(path)
     write_deltalake(
         path, table, mode="overwrite", storage_options=storage.storage_options
@@ -110,10 +110,10 @@ def _write_cdc_to_delta(
 
 @pytest.fixture(autouse=True)
 def _setup_storage(tmp_path: Path) -> None:
-    """Inject a tmp_path-based StorageConfig for all CDC analytics tests."""
+    """Inject a tmp_path-based StorageConfig for all events analytics tests."""
     data = tmp_path / "data"
     for subdir in [
-        "normalized/cdc_events",
+        "normalized/events",
         "normalized/consolidated_holdings",
         "analytics/portfolio_holdings",
         "analytics/data_quality",
@@ -190,7 +190,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -207,7 +207,7 @@ class TestBuildDividendIncome:
                 }
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert isinstance(result, pl.DataFrame)
@@ -228,7 +228,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -264,7 +264,7 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -287,7 +287,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -331,7 +331,7 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.height == 3  # Two different months for IBKR, one for T212
@@ -359,7 +359,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -386,7 +386,7 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -415,7 +415,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -432,7 +432,7 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         with pytest.raises(RuntimeError, match="null target_value"):
             build_dividend_income(fernet_key=fernet_key)
@@ -452,7 +452,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -469,7 +469,7 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         with pytest.raises(RuntimeError, match="null target_value"):
             build_dividend_income(fernet_key=fernet_key)
@@ -480,7 +480,7 @@ class TestBuildDividendIncome:
         """Null security_ccy among null target_value rows raises, not TypeError.
 
         security_ccy is schema-nullable (Delta Lake marks all fields nullable
-        and it is not in REQUIRED_FIELDS for cdc_events), so a legacy row with
+        and it is not in REQUIRED_FIELDS for events), so a legacy row with
         null target_value can also carry a null security_ccy.  The raise must
         filter nulls before sorting the affected currencies instead of
         crashing with ``TypeError: '<' not supported``.
@@ -496,7 +496,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -525,7 +525,7 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         with pytest.raises(RuntimeError, match="null target_value"):
             build_dividend_income(fernet_key=fernet_key)
@@ -533,7 +533,7 @@ class TestBuildDividendIncome:
     def test_raises_on_missing_target_value_column(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """A cdc_events table without target_value raises instead of aliasing cash_amount."""
+        """An events table without target_value raises instead of aliasing cash_amount."""
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -545,7 +545,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -561,8 +561,8 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        cdc = cdc.drop_columns(["target_value"])
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        events = events.drop_columns(["target_value"])
+        _write_events_to_delta(events, tmp_path, storage)
 
         with pytest.raises(RuntimeError, match="missing"):
             build_dividend_income(fernet_key=fernet_key)
@@ -580,7 +580,7 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -596,7 +596,7 @@ class TestBuildDividendIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -610,10 +610,10 @@ class TestBuildDividendIncome:
         readback = dt.to_pyarrow_table()
         assert readback.num_rows == 1
 
-    def test_raises_on_missing_cdc_table(
+    def test_raises_on_missing_events_table(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """FileNotFoundError when no cdc_events table exists."""
+        """FileNotFoundError when no events table exists."""
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -625,13 +625,13 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        with pytest.raises(FileNotFoundError, match="CDC events table not found"):
+        with pytest.raises(FileNotFoundError, match="Events table not found"):
             build_dividend_income(fernet_key=fernet_key)
 
     def test_empty_input_writes_declared_schema(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """An empty (filtered-out) CDC input must still write a dividend_income
+        """An empty (filtered-out) events input must still write a dividend_income
         table whose on-disk schema matches dividend_income_schema exactly.
 
         Regression guard for ADR 0106: the empty branch must route through
@@ -650,9 +650,9 @@ class TestBuildDividendIncome:
         )
         use_storage(storage)
 
-        # Write an empty CDC events table (no DIVIDEND rows to aggregate).
-        cdc = _make_cdc_table(fernet_key, [])
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        # Write an empty events table (no DIVIDEND rows to aggregate).
+        events = _make_events_table(fernet_key, [])
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert isinstance(result, pl.DataFrame)
@@ -683,7 +683,7 @@ class TestBuildInterestIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -697,7 +697,7 @@ class TestBuildInterestIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
         assert isinstance(result, pl.DataFrame)
@@ -718,7 +718,7 @@ class TestBuildInterestIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -744,7 +744,7 @@ class TestBuildInterestIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -755,7 +755,7 @@ class TestBuildInterestIncome:
         # reliable discriminator is the encrypted cash_amount: the INTEREST
         # event paid 35.0 EUR; the DIVIDEND paid 42.5 EUR.  Under the C13
         # mutation (``event_type == "INTEREST" -> "DIVIDEND"`` at
-        # cdc_tables.py:~410) the DIVIDEND row survives and cash_amount
+        # events_tables.py:~410) the DIVIDEND row survives and cash_amount
         # decrypts to 42.5, failing this assertion.
         cash = decrypt_float(result["cash_amount"][0], fernet_key)
         assert cash == pytest.approx(35.0)
@@ -776,7 +776,7 @@ class TestBuildInterestIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -801,7 +801,7 @@ class TestBuildInterestIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
         assert result.height == 2  # Two different months
@@ -819,7 +819,7 @@ class TestBuildInterestIncome:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -844,7 +844,7 @@ class TestBuildInterestIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -862,7 +862,7 @@ class TestBuildInterestIncome:
         persisted table and asserts the sentinel is GONE (overwrite) rather
         than retained alongside the new row (append).  Catches the
         ``mode="overwrite" -> "append"`` mutation in ``_write_analytics_table``
-        (cdc_tables.py:~259) for the interest_income path, which has no
+        (events_tables.py:~259) for the interest_income path, which has no
         re-read test today.
         """
         storage = StorageConfig(
@@ -907,8 +907,8 @@ class TestBuildInterestIncome:
             storage_options=storage.storage_options,
         )
 
-        # Write a real INTEREST CDC event and run the writer.
-        cdc = _make_cdc_table(
+        # Write a real INTEREST event and run the writer.
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -923,7 +923,7 @@ class TestBuildInterestIncome:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -959,7 +959,7 @@ class TestBuildCashFlowSummary:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -973,7 +973,7 @@ class TestBuildCashFlowSummary:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert isinstance(result, pl.DataFrame)
@@ -982,7 +982,7 @@ class TestBuildCashFlowSummary:
         )
 
     def test_includes_all_event_types(self, fernet_key: bytes, tmp_path: Path) -> None:
-        """All CDC event types appear in the summary."""
+        """All event types appear in the summary."""
         storage = StorageConfig(
             data_dir=str(tmp_path / "data"),
             raw_dir=str(tmp_path / "data" / "raw"),
@@ -1008,8 +1008,8 @@ class TestBuildCashFlowSummary:
             }
             for etype in event_types
         ]
-        cdc = _make_cdc_table(fernet_key, rows)
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        events = _make_events_table(fernet_key, rows)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         result_types = set(result["event_type"].to_list())
@@ -1030,7 +1030,7 @@ class TestBuildCashFlowSummary:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1066,7 +1066,7 @@ class TestBuildCashFlowSummary:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.height == 3  # March deposit, April deposit, March dividend
@@ -1084,7 +1084,7 @@ class TestBuildCashFlowSummary:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1109,7 +1109,7 @@ class TestBuildCashFlowSummary:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.height == 1
@@ -1133,7 +1133,7 @@ class TestBuildCashFlowSummary:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1169,7 +1169,7 @@ class TestBuildCashFlowSummary:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.height == 2  # Two groups: DEPOSIT and DIVIDEND
@@ -1192,7 +1192,7 @@ class TestBuildCashFlowSummary:
         persisted table and asserts the sentinel is GONE (overwrite) rather
         than retained alongside the new rows (append).  Catches the
         ``mode="overwrite" -> "append"`` mutation in ``_write_analytics_table``
-        (cdc_tables.py:~259) for the cash_flow_summary path, which has no
+        (events_tables.py:~259) for the cash_flow_summary path, which has no
         re-read test today.
         """
         storage = StorageConfig(
@@ -1238,8 +1238,8 @@ class TestBuildCashFlowSummary:
             storage_options=storage.storage_options,
         )
 
-        # Write a real CDC event and run the writer.
-        cdc = _make_cdc_table(
+        # Write a real event and run the writer.
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1254,7 +1254,7 @@ class TestBuildCashFlowSummary:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.height == 1
@@ -1290,7 +1290,7 @@ class TestDateParsing:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1306,7 +1306,7 @@ class TestDateParsing:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_dividend_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -1326,7 +1326,7 @@ class TestDateParsing:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1341,7 +1341,7 @@ class TestDateParsing:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.height == 1
@@ -1360,7 +1360,7 @@ class TestDateParsing:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1375,7 +1375,7 @@ class TestDateParsing:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.height == 1
@@ -1394,7 +1394,7 @@ class TestDateParsing:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1409,7 +1409,7 @@ class TestDateParsing:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -1430,7 +1430,7 @@ class TestDateParsing:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1445,7 +1445,7 @@ class TestDateParsing:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_cash_flow_summary(fernet_key=fernet_key)
         assert result.height == 1
@@ -1466,7 +1466,7 @@ class TestDateParsing:
         )
         use_storage(storage)
 
-        cdc = _make_cdc_table(
+        events = _make_events_table(
             fernet_key,
             [
                 {
@@ -1481,7 +1481,7 @@ class TestDateParsing:
                 },
             ],
         )
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        _write_events_to_delta(events, tmp_path, storage)
 
         result = build_interest_income(fernet_key=fernet_key)
         assert result.height == 1
@@ -1494,7 +1494,7 @@ class TestDateParsing:
 
 
 class TestXtbEventDatetimeRegression:
-    """Regression: XTB CDC rows with ISO event_datetime survive _add_period_columns.
+    """Regression: XTB events rows with ISO event_datetime survive _add_period_columns.
 
     The old XTB parser emitted Excel-serial strings like "46236.875" which
     broke ``_add_period_columns`` (no strptime format matched -> rows were
@@ -1529,13 +1529,13 @@ class TestXtbEventDatetimeRegression:
         result = _add_period_columns(df)
         assert result.height == 0  # unparseable -> dropped
 
-    def test_xtb_cdc_rows_survive_analytics_end_to_end(
+    def test_xtb_events_rows_survive_analytics_end_to_end(
         self, fernet_key: bytes, tmp_path: Path
     ) -> None:
-        """End-to-end: transform_cdc -> normalize -> Delta -> build_cash_flow_summary.
+        """End-to-end: transform_events -> normalize -> Delta -> build_cash_flow_summary.
 
-        Builds a raw XTB snapshot, runs the real transform_cdc (which emits
-        ISO event_datetime strings), writes the CDC events to Delta, runs
+        Builds a raw XTB snapshot, runs the real transform_events (which emits
+        ISO event_datetime strings), writes the events to Delta, runs
         normalize_currency (the fixture account ccy is PLN, so a manual rate
         is required), and runs build_cash_flow_summary. Asserts the XTB events
         are aggregated into the expected period_month / period_quarter buckets
@@ -1553,13 +1553,13 @@ class TestXtbEventDatetimeRegression:
         use_storage(storage)
 
         raw = _build_xtb_raw(fernet_key)
-        cdc = transform_cdc(raw, fernet_key)
+        events = transform_events(raw, fernet_key)
         # The fixture has 6 events (deposit, interest, tax, transfer, purchase,
         # sell); all should survive into the analytics table.
-        assert cdc.num_rows == 6
-        _write_cdc_to_delta(cdc, tmp_path, storage)
+        assert events.num_rows == 6
+        _write_events_to_delta(events, tmp_path, storage)
 
-        # transform_cdc leaves target_value/target_fx_rate null for PLN rows;
+        # transform_events leaves target_value/target_fx_rate null for PLN rows;
         # analytics now raises on null target_value, so normalize first.
         from pipeline.normalized.normalize import normalize_currency
 

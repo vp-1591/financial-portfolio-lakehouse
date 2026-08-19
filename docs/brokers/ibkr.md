@@ -18,18 +18,18 @@ Enable **Flex Web Service Configuration** and generate a token.
 |----------|---------|
 | `IBKR_FLEX_TOKEN` | Flex Web Service token |
 | `IBKR_FLEX_QUERY_ID` | Flex Query ID |
-| `IBKR_FLEX_CDC_QUERY_ID` | *Optional.* Separate Flex Query ID for CDC data. Falls back to `IBKR_FLEX_QUERY_ID` if not set |
+| `IBKR_FLEX_EVENTS_QUERY_ID` | *Optional.* Separate Flex Query ID for events data. Falls back to `IBKR_FLEX_QUERY_ID` if not set |
 | `IBKR_FLEX_BASE_URL` | Base URL (default: `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService`) |
 
 ### Staging mode
 
 In `--mode staging`, the connector uses `IBKR_FLEX_TOKEN`,
-`IBKR_FLEX_QUERY_ID`, and `IBKR_FLEX_CDC_QUERY_ID` (injected from
-`/portfolio/demo/` SSM parameters in ECS, or set in `.env` locally).
+`IBKR_FLEX_QUERY_ID`, and `IBKR_FLEX_EVENTS_QUERY_ID` (injected from
+`/portfolio/staging/` SSM parameters in ECS, or set in `.env` locally).
 
 ## Detailed field configuration
 
 For the exact fields required in your Flex Query, see:
 
 - [Flex Query Required Fields](../ibkr/flex-query-required-fields.md)
-- [Flex Query Required Fields (CDC)](../ibkr/flex-query-required-fields-cdc.md)
+- [Flex Query Required Fields (events)](../ibkr/flex-query-required-fields-events.md)

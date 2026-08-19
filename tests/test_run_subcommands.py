@@ -43,7 +43,7 @@ class TestArgparseDispatch:
         """main() parses the 'keygen' subcommand and dispatches to cmd_keygen.
 
         Exercises the full argparse parse -> commands[args.command](args) path
-        (round1-persistence §2b demonstration 1). A dispatch-break mutation
+        (round1-persistence §2b example 1). A dispatch-break mutation
         (key removed from the commands dict) would raise KeyError instead of
         returning 99, failing this test.
         """
@@ -128,7 +128,7 @@ class TestFetchConnectorIsolation:
             patch.object(
                 connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
             ) as mock_snapshot,
-            patch.object(connector, "fetch_cdc_kwargs", return_value={}),
+            patch.object(connector, "fetch_events_kwargs", return_value={}),
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
@@ -176,7 +176,7 @@ class TestFetchConnectorIsolation:
                 "fetch_snapshot",
                 side_effect=RuntimeError("API timeout"),
             ),
-            patch.object(connector, "fetch_cdc_kwargs", return_value={}),
+            patch.object(connector, "fetch_events_kwargs", return_value={}),
         ):
             fernet_key = generate_key()
             rc = fetch_connector(connector, args, fernet_key)
@@ -222,7 +222,7 @@ class TestCmdRunConnector:
         mock_transform.assert_called_once()
         mock_validate.assert_called_once_with(
             fernet_key=b"test-key",
-            tables=["ibkr_snapshot", "ibkr_cdc"],
+            tables=["ibkr_snapshot", "ibkr_events"],
         )
 
     @patch("pipeline.run.run_validation", return_value=0)
@@ -316,10 +316,10 @@ class TestCmdRunConnector:
         args = argparse.Namespace(connector="xtb", xtb_file=["report.xlsx"])
         rc = cmd_run_connector(args)
         assert rc == 0
-        # D14: validation is unconditional — CDC table is always validated.
+        # D14: validation is unconditional — events table is always validated.
         mock_validate.assert_called_once_with(
             fernet_key=b"test-key",
-            tables=["xtb_snapshot", "xtb_cdc"],
+            tables=["xtb_snapshot", "xtb_events"],
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
@@ -350,8 +350,8 @@ class TestFetchConnectorXtbSkip:
 class TestCmdRunConsolidateAnalytics:
     """cmd_run_consolidate_analytics runs consolidate, validates silver, then analytics."""
 
-    @patch("pipeline.run._normalize_cdc", return_value=0)
-    @patch("pipeline.run._consolidate_cdc", return_value=0)
+    @patch("pipeline.run._normalize_events", return_value=0)
+    @patch("pipeline.run._consolidate_events", return_value=0)
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
@@ -362,8 +362,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_analytics: MagicMock,
         mock_validate: MagicMock,
-        mock_consolidate_cdc: MagicMock,
-        mock_normalize_cdc: MagicMock,
+        mock_consolidate_events: MagicMock,
+        mock_normalize_events: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -377,7 +377,7 @@ class TestCmdRunConsolidateAnalytics:
         assert mock_validate.call_count == 2
         mock_validate.assert_any_call(
             fernet_key=b"test-key",
-            tables=["consolidated_holdings", "cdc_events"],
+            tables=["consolidated_holdings", "events"],
         )
         mock_validate.assert_any_call(
             fernet_key=b"test-key",
@@ -389,8 +389,8 @@ class TestCmdRunConsolidateAnalytics:
             ],
         )
 
-    @patch("pipeline.run._normalize_cdc", return_value=0)
-    @patch("pipeline.run._consolidate_cdc", return_value=0)
+    @patch("pipeline.run._normalize_events", return_value=0)
+    @patch("pipeline.run._consolidate_events", return_value=0)
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.cmd_consolidate", return_value=1)
@@ -401,8 +401,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_analytics: MagicMock,
         mock_validate: MagicMock,
-        mock_consolidate_cdc: MagicMock,
-        mock_normalize_cdc: MagicMock,
+        mock_consolidate_events: MagicMock,
+        mock_normalize_events: MagicMock,
     ) -> None:
         args = argparse.Namespace(
             target_currency="EUR",
@@ -413,8 +413,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_analytics.assert_not_called()
         mock_validate.assert_not_called()
 
-    @patch("pipeline.run._normalize_cdc", return_value=0)
-    @patch("pipeline.run._consolidate_cdc", return_value=0)
+    @patch("pipeline.run._normalize_events", return_value=0)
+    @patch("pipeline.run._consolidate_events", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.run_validation", return_value=1)
     @patch("pipeline.run.cmd_consolidate", return_value=0)
@@ -425,8 +425,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_validate: MagicMock,
         mock_analytics: MagicMock,
-        mock_consolidate_cdc: MagicMock,
-        mock_normalize_cdc: MagicMock,
+        mock_consolidate_events: MagicMock,
+        mock_normalize_events: MagicMock,
     ) -> None:
         """Silver validation failure prevents analytics from running."""
         args = argparse.Namespace(
@@ -437,8 +437,8 @@ class TestCmdRunConsolidateAnalytics:
         assert rc == 1
         mock_analytics.assert_not_called()
 
-    @patch("pipeline.run._normalize_cdc", return_value=0)
-    @patch("pipeline.run._consolidate_cdc", return_value=0)
+    @patch("pipeline.run._normalize_events", return_value=0)
+    @patch("pipeline.run._consolidate_events", return_value=0)
     @patch("pipeline.run.cmd_analytics", return_value=0)
     @patch("pipeline.run.run_validation", side_effect=[0, 1])
     @patch("pipeline.run.cmd_consolidate", return_value=0)
@@ -449,8 +449,8 @@ class TestCmdRunConsolidateAnalytics:
         mock_consolidate: MagicMock,
         mock_validate: MagicMock,
         mock_analytics: MagicMock,
-        mock_consolidate_cdc: MagicMock,
-        mock_normalize_cdc: MagicMock,
+        mock_consolidate_events: MagicMock,
+        mock_normalize_events: MagicMock,
     ) -> None:
         """Gold validation failure after analytics returns non-zero."""
         args = argparse.Namespace(

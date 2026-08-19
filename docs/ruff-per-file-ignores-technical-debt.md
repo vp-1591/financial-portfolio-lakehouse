@@ -16,13 +16,13 @@ All 7 sites are `raise Exception(...)` inside mock functions in test fixtures, n
 
 | File | Line | Pattern | Context |
 |---|---|---|---|
-| `tests/test_consolidate_cdc.py` | 109 | `raise Exception("no data")` | Mock DeltaTable failure for XTB |
-| `tests/test_consolidate_cdc.py` | 114 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
-| `tests/test_consolidate_cdc.py` | 165 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
-| `tests/test_consolidate_cdc.py` | 211 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
-| `tests/test_consolidate_cdc.py` | 266 | `raise Exception("no data")` | Mock DeltaTable failure for XTB |
-| `tests/test_consolidate_cdc.py` | 271 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
-| `tests/test_consolidate_cdc.py` | 333 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
+| `tests/test_consolidate_events.py` | 109 | `raise Exception("no data")` | Mock DeltaTable failure for XTB |
+| `tests/test_consolidate_events.py` | 114 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
+| `tests/test_consolidate_events.py` | 165 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
+| `tests/test_consolidate_events.py` | 211 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
+| `tests/test_consolidate_events.py` | 266 | `raise Exception("no data")` | Mock DeltaTable failure for XTB |
+| `tests/test_consolidate_events.py` | 271 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
+| `tests/test_consolidate_events.py` | 333 | `raise Exception("unknown path")` | Mock DeltaTable routing fallback |
 
 **Recommended fix:** Define a local test helper exception (e.g., `_MockDeltaError`) and use it instead of `Exception`. This makes the mock intent explicit while keeping tests readable.
 
@@ -47,7 +47,7 @@ Both sites test that Fernet decryption fails with the wrong key or a tampered ci
 
 ## Recommended Approach
 
-1. **TRY002:** Create a `_MockDeltaError(Exception)` helper in `test_consolidate_cdc.py` and replace all 7 `raise Exception(...)` calls. Remove TRY002 from per-file-ignores.
+1. **TRY002:** Create a `_MockDeltaError(Exception)` helper in `test_consolidate_events.py` and replace all 7 `raise Exception(...)` calls. Remove TRY002 from per-file-ignores.
 2. **B017:** Narrow the 2 `pytest.raises(Exception)` sites to `pytest.raises(InvalidToken)` (imported from `cryptography.fernet`). Remove B017 from per-file-ignores.
 3. **S110:** Add a `# noqa: S110` comment with justification at the single site. Remove S110 from per-file-ignores.
 4. Remove the entire `[tool.ruff.lint.per-file-ignores]` section from `pyproject.toml` once all three rules are addressed.

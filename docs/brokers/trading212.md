@@ -16,9 +16,8 @@ instruments. Requires an API key and secret.
 ### Staging mode
 
 In `--mode staging`, the connector uses `T212_API_KEY` and
-`T212_API_SECRET` (injected from `/portfolio/demo/` SSM parameters in ECS,
-or set in `.env` locally). The base URL is automatically set to the
-demo endpoint.
+`T212_API_SECRET` (injected from `/portfolio/staging/` SSM parameters in ECS,
+or set in `.env` locally). The base URL is automatically set to the demo endpoint (`https://demo.trading212.com/api/v0`).
 
 ## API key permissions
 

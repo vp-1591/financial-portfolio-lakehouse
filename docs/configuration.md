@@ -18,7 +18,7 @@ inline documentation.
 ### Variable categories
 
 - **Broker secrets** — `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`,
-  `IBKR_FLEX_CDC_QUERY_ID` (optional, falls back to `IBKR_FLEX_QUERY_ID`),
+  `IBKR_FLEX_EVENTS_QUERY_ID` (optional, falls back to `IBKR_FLEX_QUERY_ID`),
   `T212_API_KEY`, `T212_API_SECRET`
 - **Encryption** — `ENCRYPTION_KEY` (Fernet key, generated via `keygen` command)
 - **Storage** — `S3_BUCKET`, AWS credentials, S3 endpoint
@@ -42,7 +42,7 @@ Required environment variables: `IBKR_FLEX_TOKEN`, `IBKR_FLEX_QUERY_ID`,
 
 For detailed field configuration, see:
 - [Flex Query Required Fields](ibkr/flex-query-required-fields.md)
-- [Flex Query Required Fields (CDC)](ibkr/flex-query-required-fields-cdc.md)
+- [Flex Query Required Fields (events)](ibkr/flex-query-required-fields-events.md)
 
 ### Trading 212 API
 
@@ -100,7 +100,7 @@ stored in S3.**
 The `--mode` flag controls how the pipeline resolves secrets and storage:
 
 ```
---mode docker    # Local Docker Compose (MinIO, demo-friendly defaults)
+--mode docker    # Local Docker Compose (MinIO, friendly defaults)
 --mode staging   # Staging environment (AWS staging secrets, staging bucket)
 --mode prod      # Production environment (AWS production secrets, production bucket)
 ```

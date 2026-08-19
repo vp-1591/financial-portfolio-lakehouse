@@ -33,8 +33,8 @@ from pipeline.analytics.models import (
     portfolio_holdings_schema,
 )
 from pipeline.normalized.models import (
-    cdc_events_normalized_schema,
     consolidated_holdings_schema,
+    events_normalized_schema,
     snapshot_normalized_schema,
 )
 
@@ -66,13 +66,13 @@ class CheckResult:
 TABLE_SCHEMAS: dict[str, pa.Schema] = {
     # Silver tables
     "consolidated_holdings": consolidated_holdings_schema,
-    "cdc_events": cdc_events_normalized_schema,
+    "events": events_normalized_schema,
     "ibkr_snapshot": snapshot_normalized_schema,
     "trading212_snapshot": snapshot_normalized_schema,
     "xtb_snapshot": snapshot_normalized_schema,
-    "ibkr_cdc": cdc_events_normalized_schema,
-    "trading212_cdc": cdc_events_normalized_schema,
-    "xtb_cdc": cdc_events_normalized_schema,
+    "ibkr_events": events_normalized_schema,
+    "trading212_events": events_normalized_schema,
+    "xtb_events": events_normalized_schema,
     # Gold tables
     "portfolio_holdings": portfolio_holdings_schema,
     "dividend_income": dividend_income_schema,
@@ -83,13 +83,13 @@ TABLE_SCHEMAS: dict[str, pa.Schema] = {
 FRESHNESS_COLUMNS: dict[str, str] = {
     # Silver tables
     "consolidated_holdings": "fetched_at",
-    "cdc_events": "fetched_at",
+    "events": "fetched_at",
     "ibkr_snapshot": "fetched_at",
     "trading212_snapshot": "fetched_at",
     "xtb_snapshot": "fetched_at",
-    "ibkr_cdc": "fetched_at",
-    "trading212_cdc": "fetched_at",
-    "xtb_cdc": "fetched_at",
+    "ibkr_events": "fetched_at",
+    "trading212_events": "fetched_at",
+    "xtb_events": "fetched_at",
     # Gold tables
     "portfolio_holdings": "calculated_at",
     "dividend_income": "calculated_at",
@@ -109,7 +109,7 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "target_ccy",
         "target_value",
     ],
-    "cdc_events": [
+    "events": [
         "fetched_at",
         "broker",
         "event_id",
@@ -134,21 +134,21 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "security_ccy",
         "security_value",
     ],
-    "ibkr_cdc": [
+    "ibkr_events": [
         "fetched_at",
         "broker",
         "event_id",
         "event_type",
         "cash_amount",
     ],
-    "trading212_cdc": [
+    "trading212_events": [
         "fetched_at",
         "broker",
         "event_id",
         "event_type",
         "cash_amount",
     ],
-    "xtb_cdc": [
+    "xtb_events": [
         "fetched_at",
         "broker",
         "event_id",
@@ -194,17 +194,17 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
     ],
 }
 
-# Tables that must contain at least one row.  CDC is mandatory: an empty
-# CDC table indicates misconfiguration or a fully-blank account, both of
+# Tables that must contain at least one row.  Events are mandatory: an empty
+# events table indicates misconfiguration or a fully-blank account, both of
 # which must fail the pipeline rather than silently produce no analytics.
 # XTB is fully optional until a file arrives (driven by the EventBridge
-# file-arrival trigger) and is not in any required gate: its CDC is
+# file-arrival trigger) and is not in any required gate: its events are
 # consolidated whenever present.
 # Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
 NON_EMPTY_REQUIRED: set[str] = {
-    "cdc_events",
-    "ibkr_cdc",
-    "trading212_cdc",
+    "events",
+    "ibkr_events",
+    "trading212_events",
 }
 
 
@@ -382,9 +382,9 @@ def check_freshness(
 def check_reconciliation(
     table_name: str,
     arrow_table: pa.Table,
-    cdc_table: pa.Table | None,
+    events_table: pa.Table | None,
 ) -> CheckResult:
-    """Structural reconciliation: every broker in holdings appears in CDC events."""
+    """Structural reconciliation: every broker in holdings appears in events."""
     if table_name != "consolidated_holdings":
         # Only consolidated_holdings has structural reconciliation for now
         return CheckResult(
@@ -392,48 +392,48 @@ def check_reconciliation(
             details="Reconciliation not applicable for this table",
         )
 
-    if cdc_table is None:
+    if events_table is None:
         return CheckResult(
             status=WARN,
-            details="CDC events table not available for reconciliation",
+            details="Events table not available for reconciliation",
         )
 
     holdings_df = pl.from_arrow(arrow_table)
-    cdc_df = pl.from_arrow(cdc_table)
+    events_df = pl.from_arrow(events_table)
 
     holdings_brokers = set(holdings_df["broker"].unique().to_list())
-    cdc_brokers = set(cdc_df["broker"].unique().to_list())
+    events_brokers = set(events_df["broker"].unique().to_list())
 
-    missing = holdings_brokers - cdc_brokers
+    missing = holdings_brokers - events_brokers
     if missing:
         return CheckResult(
             status=WARN,
-            details=f"Brokers in holdings but not in CDC events: {sorted(missing)}",
-            threshold="All holdings brokers present in CDC",
+            details=f"Brokers in holdings but not in events: {sorted(missing)}",
+            threshold="All holdings brokers present in events",
             actual=f"Missing: {sorted(missing)}",
         )
 
     # Currency coverage check
     holdings_currencies = set(holdings_df["target_ccy"].unique().to_list())
-    # CDC target_value is encrypted — use security_ccy column for currency coverage
-    cdc_currencies = (
-        set(cdc_df["security_ccy"].unique().to_list())
-        if "security_ccy" in cdc_df.columns
+    # events target_value is encrypted — use security_ccy column for currency coverage
+    events_currencies = (
+        set(events_df["security_ccy"].unique().to_list())
+        if "security_ccy" in events_df.columns
         else set()
     )
 
-    uncovered = holdings_currencies - cdc_currencies
+    uncovered = holdings_currencies - events_currencies
     if uncovered:
         return CheckResult(
             status=WARN,
-            details=f"Currencies in holdings but not in CDC events: {sorted(uncovered)}",
-            threshold="Holdings currency set ⊆ CDC currency set",
+            details=f"Currencies in holdings but not in events: {sorted(uncovered)}",
+            threshold="Holdings currency set ⊆ events currency set",
             actual=f"Uncovered: {sorted(uncovered)}",
         )
 
     return CheckResult(
         status=PASS,
-        details="All holdings brokers and currencies present in CDC events",
+        details="All holdings brokers and currencies present in events",
     )
 
 
@@ -525,13 +525,13 @@ def run_validation(
     all_tables: dict[str, str] = {
         # Silver tables
         "consolidated_holdings": storage.normalized_path("consolidated_holdings"),
-        "cdc_events": storage.normalized_path("cdc_events"),
+        "events": storage.normalized_path("events"),
         "ibkr_snapshot": storage.normalized_path("ibkr_snapshot"),
         "trading212_snapshot": storage.normalized_path("trading212_snapshot"),
         "xtb_snapshot": storage.normalized_path("xtb_snapshot"),
-        "ibkr_cdc": storage.normalized_path("ibkr_cdc"),
-        "trading212_cdc": storage.normalized_path("trading212_cdc"),
-        "xtb_cdc": storage.normalized_path("xtb_cdc"),
+        "ibkr_events": storage.normalized_path("ibkr_events"),
+        "trading212_events": storage.normalized_path("trading212_events"),
+        "xtb_events": storage.normalized_path("xtb_events"),
         # Gold tables
         "portfolio_holdings": storage.analytics_path("portfolio_holdings"),
         "dividend_income": storage.analytics_path("dividend_income"),
@@ -554,16 +554,16 @@ def run_validation(
     else:
         validated_tables = all_tables
 
-    # Load CDC events for reconciliation (shared across checks)
-    cdc_table: pa.Table | None = None
+    # Load events for reconciliation (shared across checks)
+    events_table: pa.Table | None = None
     try:
-        cdc_dt = DeltaTable(
-            storage.normalized_path("cdc_events"),
+        events_dt = DeltaTable(
+            storage.normalized_path("events"),
             storage_options=storage_options,
         )
-        cdc_table = cdc_dt.to_pyarrow_table()
+        events_table = events_dt.to_pyarrow_table()
     except Exception:
-        logger.warning("CDC events table not found, skipping reconciliation")
+        logger.warning("Events table not found, skipping reconciliation")
 
     all_results: list[CheckResult] = []
     result_metadata: list[tuple[str, str]] = []  # (table_name, check_name)
@@ -629,7 +629,7 @@ def run_validation(
             all_results.append(result)
             result_metadata.append((table_name, "freshness"))
 
-        # 5. Non-empty check (CDC tables and any NON_EMPTY_REQUIRED entry)
+        # 5. Non-empty check (events tables and any NON_EMPTY_REQUIRED entry)
         # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
         if table_name in NON_EMPTY_REQUIRED:
             result = check_non_empty(table_name, arrow_table)
@@ -638,7 +638,7 @@ def run_validation(
 
         # 6. Reconciliation (consolidated_holdings only)
         if table_name == "consolidated_holdings":
-            result = check_reconciliation(table_name, arrow_table, cdc_table)
+            result = check_reconciliation(table_name, arrow_table, events_table)
             all_results.append(result)
             result_metadata.append((table_name, "reconciliation"))
 

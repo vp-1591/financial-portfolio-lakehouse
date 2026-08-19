@@ -1,17 +1,17 @@
 # Variables for the orchestrator module.
 #
 # This module creates a Step Functions state machine and optional EventBridge
-# triggers (daily schedule + S3 file arrival) for a single environment (demo or
-# prod). The ASL definition is identical across environments — only the input
-# values differ (subnets, task def ARNs, demo flag, bucket name).
+# triggers (daily schedule + S3 file arrival) for a single environment (staging
+# or prod). The ASL definition is identical across environments — only the input
+# values differ (subnets, task def ARNs, staging flag, bucket name).
 
 variable "env" {
-  description = "Environment label (prod or demo) used in naming and execution input."
+  description = "Environment label (prod or staging) used in naming and execution input."
   type        = string
 }
 
-variable "demo" {
-  description = "Whether this is the demo environment (drives the --mode flag: demo -> staging, prod -> prod)."
+variable "staging" {
+  description = "Whether this is the staging environment (drives the --mode flag: staging vs prod)."
   type        = bool
 }
 

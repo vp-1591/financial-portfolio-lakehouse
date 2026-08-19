@@ -29,17 +29,17 @@ def _setup_storage(tmp_path: Path) -> None:
     data = tmp_path / "data"
     for subdir in [
         "raw/ibkr_snapshot",
-        "raw/ibkr_cdc",
+        "raw/ibkr_events",
         "raw/trading212_snapshot",
-        "raw/trading212_cdc",
+        "raw/trading212_events",
         "raw/xtb_snapshot",
-        "raw/xtb_cdc",
+        "raw/xtb_events",
         "normalized/ibkr_snapshot",
-        "normalized/ibkr_cdc",
+        "normalized/ibkr_events",
         "normalized/trading212_snapshot",
-        "normalized/trading212_cdc",
+        "normalized/trading212_events",
         "normalized/xtb_snapshot",
-        "normalized/xtb_cdc",
+        "normalized/xtb_events",
         "normalized/consolidated_holdings",
         "analytics/portfolio_holdings",
     ]:
@@ -228,7 +228,7 @@ def assert_golden_equal(
     The ``expected`` table is still used for schema + string-column comparison
     (string columns are not Fernet-encrypted, so a broken ``decrypt_float``
     cannot mask string drift). It is sourced from the F1/F2 round-trip-verified
-    fixtures (diffed against real demo bronze), NOT from re-running the SUT — so
+    fixtures (diffed against real staging bronze), NOT from re-running the SUT — so
     a transform bug cannot be baked into the golden values.
     """
     assert result.schema.equals(expected.schema), (
@@ -275,7 +275,7 @@ class TestTransformSnapshotGolden:
     are tripwires pinning specific mutations. This golden test is a complementary
     full-output comparison that catches drift the targeted asserts never name
     (an un-asserted column, a mutation nobody thought to try). Expected values
-    come from the F1/F2 round-trip-verified fixtures (diffed against real demo
+    come from the F1/F2 round-trip-verified fixtures (diffed against real staging
     bronze), NOT from snapshotting ``transform_snapshot`` output.
     """
 
@@ -300,7 +300,7 @@ class TestTransformSnapshotGolden:
     _FLOAT_COLS: ClassVar[list[str]] = ["security_value"]
 
     # Hand-verified plaintext expected values, keyed by (account_id, label).
-    # Sourced from the F1/F2 fixtures (round-trip-verified against real demo
+    # Sourced from the F1/F2 fixtures (round-trip-verified against real staging
     # bronze). NOT from running transform_snapshot, so a transform bug cannot
     # be baked in. NB: these are the VALUES the transform must produce, not a
     # decryption of the expected table — so a broken decrypt_float cannot make

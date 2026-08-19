@@ -133,11 +133,11 @@ def ibkr_normalized_snapshot(
     )
 
 
-def ibkr_raw_cdc(
+def ibkr_raw_events(
     account_id: str = "U123456",
     fernet_key: bytes | None = None,
 ) -> pa.Table:
-    """Build a raw IBKR CDC table with an encrypted Flex XML payload.
+    """Build a raw IBKR events table with an encrypted Flex XML payload.
 
     Default data includes a Trade, a CashTransaction (dividend),
     a CashTransaction (bond interest), a CashTransaction (deposit),
@@ -147,7 +147,7 @@ def ibkr_raw_cdc(
         fernet_key = generate_key()
 
     xml_str = (
-        '<FlexQueryResponse queryName="test_cdc" type="AF">'
+        '<FlexQueryResponse queryName="test_events" type="AF">'
         '<FlexStatements count="1">'
         f'<FlexStatement accountId="{account_id}" fromDate="20260101" toDate="20260625">'
         "<AccountInformation>"
@@ -227,7 +227,7 @@ def ibkr_raw_cdc(
         {
             "fetched_at": [now],
             "broker": ["IBKR"],
-            "source": ["flex_cdc"],
+            "source": ["flex_events"],
             "payload": [encrypted_payload],
             "payload_hash": [payload_hash],
             "source_file": [""],

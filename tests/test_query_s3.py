@@ -229,7 +229,7 @@ class TestConfigureS3:
         are missing, the pipeline must NOT fall back to credentials from a
         different environment. We verify the CONTENT of the SECRET's
         credential fields is empty -- not merely that a SECRET exists -- so
-        a mutation leaking production credentials into the demo SECRET fails.
+        a mutation leaking production credentials into the staging SECRET fails.
         """
         conn = duckdb.connect()
         with patch.dict(os.environ, {"AWS_REGION": "eu-west-1"}, clear=False):
@@ -250,12 +250,12 @@ class TestConfigureS3:
         )
         # Content check (A5 C4/W1): the SECRET's KEY_ID field must be EMPTY
         # (not merely present), so a mutation that injects non-empty (e.g.
-        # leaked production) credentials into the demo SECRET fails. DuckDB
+        # leaked production) credentials into the staging SECRET fails. DuckDB
         # redacts the SECRET value (``secret=redacted``) so only KEY_ID can
         # be verified verbatim from the secret_string.
         fields = _secret_fields(conn)
         assert fields["key_id"] == "", (
-            "demo SECRET KEY_ID must be empty so DuckDB cannot fall back to "
+            "staging SECRET KEY_ID must be empty so DuckDB cannot fall back to "
             f"production credentials; got: {fields!r}"
         )
         assert fields["region"] == "eu-west-1", f"REGION field: {fields}"

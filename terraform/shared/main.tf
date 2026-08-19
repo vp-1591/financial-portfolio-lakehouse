@@ -75,6 +75,16 @@ provider "aws" {
 }
 
 # ------------------------------------------------------------------------------
+# State migration (B3)
+# ------------------------------------------------------------------------------
+# No moved blocks are needed in this config: the Track B rename changed no shared
+# resource addresses (ECR repository, ECS cluster, and the Step Functions role
+# below keep their labels). The only change here is the PassRole ARN patterns in
+# the SFN policy, which now target the staging task-role prefix — an in-place
+# policy update, no state move. State moves for the renamed staging resources
+# live in terraform/staging/main.tf.
+
+# ------------------------------------------------------------------------------
 # ECR Repository
 # ------------------------------------------------------------------------------
 
@@ -201,7 +211,7 @@ resource "aws_iam_role" "sfn" {
 # Step Functions needs ecs:RunTask to start Fargate tasks, ecs:StopTask to
 # cancel them, ecs:DescribeTasks to poll for completion, and iam:PassRole
 # to pass the task role to ECS. PassRole is scoped to a role-name prefix
-# (pipeline-task-*-prod or -demo-*) so a new connector task role needs no
+# (pipeline-task-*-prod or -staging-*) so a new connector task role needs no
 # policy edit.
 data "aws_iam_policy_document" "sfn" {
   statement {
@@ -225,9 +235,9 @@ data "aws_iam_policy_document" "sfn" {
     # A new connector adds a role matching pipeline-task-{env}-{name} — no policy edit needed.
     resources = [
       "arn:aws:iam::*:role/pipeline-task-exec-prod-*",
-      "arn:aws:iam::*:role/pipeline-task-exec-demo-*",
+      "arn:aws:iam::*:role/pipeline-task-exec-staging-*",
       "arn:aws:iam::*:role/pipeline-task-prod-*",
-      "arn:aws:iam::*:role/pipeline-task-demo-*",
+      "arn:aws:iam::*:role/pipeline-task-staging-*",
     ]
   }
 

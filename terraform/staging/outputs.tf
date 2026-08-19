@@ -4,6 +4,6 @@
 
 output "access_key_secret" {
   description = "IAM secret access key (store as GitHub Secret AWS_SECRET_ACCESS_KEY_STAGING)."
-  value       = aws_iam_access_key.pipeline_demo.secret
+  value       = aws_iam_access_key.pipeline_staging.secret
   sensitive   = true
 }

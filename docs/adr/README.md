@@ -123,6 +123,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0110 | XTB Driven Solely by the File-Arrival Trigger | 2026-08-18 | active | — |
 | 0111 | Remove cash_amount Fallback for Null target_value | 2026-08-18 | active | — |
 | 0112 | Remove YAGNI gross_amount Column from CDC Events Schema | 2026-08-19 | active | — |
+| 0113 | Rename CDC Events Layer to events and Demo Staging Environment to staging | 2026-08-19 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

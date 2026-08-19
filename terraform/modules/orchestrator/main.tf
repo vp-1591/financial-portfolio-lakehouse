@@ -9,7 +9,7 @@
 #   - IAM role for EventBridge to start the state machine
 #
 # The ASL definition is identical across environments. Only the tfvars values
-# differ (subnets, task def ARNs, demo flag, bucket name).
+# differ (subnets, task def ARNs, staging flag, bucket name).
 
 terraform {
   required_version = ">= 1.11"
@@ -39,10 +39,10 @@ terraform {
 # (set in the ecs-task module) so the orchestrator can use a static name.
 
 locals {
-  # --mode flag passed through to connector / consolidate commands.  The demo
-  # environment runs in "staging" mode (demo S3 bucket, base-name secrets from /portfolio/demo/ SSM); prod
+  # --mode flag passed through to connector / consolidate commands.  The staging
+  # environment runs in "staging" mode (staging S3 bucket, base-name secrets from /portfolio/staging/ SSM); prod
   # runs in "prod" mode.  Decision: docs/adr/0091-trigger-step-functions-in-cmd-full.md
-  mode_flag = var.demo ? "staging" : "prod"
+  mode_flag = var.staging ? "staging" : "prod"
 
   sfn_definition = jsonencode({
     Comment = "Portfolio pipeline orchestrator — Map over connectors then consolidate-allocate"
