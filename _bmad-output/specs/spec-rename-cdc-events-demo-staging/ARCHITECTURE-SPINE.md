@@ -48,7 +48,7 @@ Dependency rule: implementers may depend on the map and on the token gates; migr
 - **Binds:** all units, especially where the same token recurs
 - **Prevents:** the `is_demo` split — one unit renaming the staging-mode predicate to `is_staging` while another uniform-renames the IBKR broker-tier param to `is_staging` (it must be `is_paper`), or a sweep over "demo" breaking the Trading 212 practice API
 - **Rule:** classify each occurrence by role before renaming:
-  - (a) **pipeline environment mode** → `staging`: `secrets.is_demo()`→`is_staging()`, `MODE_TO_ENV_LABEL = {"staging": "staging", "prod": "prod"}` (identity — the env label for state machine, log groups, task names is derived, never hardcoded), `env_label = "staging"`, SSM `/portfolio/staging/*`, S3 `investment-portfolio-pipeline-staging`, data prefix removed (empty)
+  - (a) **pipeline environment mode** → `staging`: `secrets.is_demo()`→`is_staging()`, `MODE_TO_ENV_LABEL` **removed** — `_env_label(mode)` returns `mode` directly (identity mapping is dead indirection; unsupported-mode `ValueError` guard kept; decision 2026-08-19), `env_label = "staging"`, SSM `/portfolio/staging/*`, S3 `investment-portfolio-pipeline-staging`, data prefix removed (empty)
   - (b) **broker product tier** → the broker's own vocabulary: Trading 212 keeps `demo` (`demo.trading212.com`, `DEMO_BASE_URL`/`_DEMO_BASE_URL`); IBKR uses `paper` (`is_paper`, `_inject_paper_deposit`, `_PAPER_INITIAL_DEPOSIT_AMOUNT`)
   - (c) **stale local project jargon** → the map's target
   - (d) **data-embedded sentinels are data, not names**: the raw `source` value `flex_cdc` (IBKR payload) is a column value, not a symbol. The CAP-1 bar forces its code-constant rename (`flex_events`) and the historical raw `source` values **are rewritten by migration A1 in place before the renamed transform deploys** — a code-only rename silently skips every historical IBKR row. Ratified 2026-08-19 (rename + data rewrite; CAP-3 verify counts `source`-gated `events` rows, not just table names)
@@ -116,7 +116,7 @@ Where the rename lands (seed, owned by the code once it exists):
 pipeline/migrations/migrate_cdc_to_events.py   # A1: Delta table renames, idempotent
 pipeline/migrations/                           # B1-B3: bucket copy, SSM swap, terraform state
 pipeline/{raw,normalized,analytics,connectors}/# renamed events-* symbols, files, schemas
-pipeline/sfn.py                                # MODE_TO_ENV_LABEL identity; state machine name
+pipeline/sfn.py                                # _env_label(mode) returns mode; state machine name
 pipeline/secrets.py                            # is_staging() predicate, /portfolio/staging/*
 pipeline/storage.py, pipeline/paths.py, pipeline/run.py  # empty staging prefix, *_EVENTS names, CLI
 terraform/{staging,shared}/*.tf                # staging names, empty s3_prefix, moved blocks

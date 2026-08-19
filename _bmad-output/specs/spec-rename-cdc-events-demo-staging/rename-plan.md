@@ -53,7 +53,7 @@ Rename inventory (verified 2026-08-19):
 | State machine | `portfolio-pipeline-orchestrator-demo` | `portfolio-pipeline-orchestrator-staging` |
 | ECS task defs / log groups | `pipeline-task-*-demo-*` | `-staging-*` |
 | Module var / env label | `var.demo` (`demo = true/false`), `env_label = "demo"` | `var.staging` |
-| Code mapping | `MODE_TO_ENV_LABEL = {"staging": "demo", "prod": "prod"}` (sfn.py) | identity `{"staging": "staging", "prod": "prod"}` |
+| Code mapping | `MODE_TO_ENV_LABEL = {"staging": "demo", "prod": "prod"}` (sfn.py) | **removed** — `_env_label(mode)` returns `mode` directly, keeping its unsupported-mode `ValueError` guard (decision 2026-08-19: identity mapping is dead indirection) |
 | Mode predicate | `is_demo()` (pipeline/secrets.py staging-mode gate; used by query.py, crypto.py, connectors) + `TestIsDemo` | `is_staging()` |
 | IBKR account tier | `is_demo` (transform param), `_inject_demo_deposit`, `_DEMO_INITIAL_DEPOSIT_AMOUNT`, "demo account" text | `is_paper`, `_inject_paper_deposit`, `_PAPER_INITIAL_DEPOSIT_AMOUNT`, "paper account" |
 | Terraform tags / comments | `Project = "…-demo"` etc. | `-staging` |
