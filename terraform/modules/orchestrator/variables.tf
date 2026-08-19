@@ -53,7 +53,7 @@ variable "xtb_staging_bucket_name" {
 variable "xtb_staging_prefix" {
   description = "S3 key prefix for XTB uploads within the bucket (must match the EventBridge rule prefix)."
   type        = string
-  default     = "pipeline/xtb_uploads/"
+  default     = "xtb_uploads/"
 }
 
 # Decision: docs/adr/0107-move-orchestrator-config-to-committed-auto-tfvars.md

@@ -39,7 +39,7 @@ Rename both layers per the rename map in `_bmad-output/specs/spec-rename-cdc-eve
 - **Immutables (AD-5):** `docs/adr/` files are never rewritten (old ADRs keep their "cdc"/"demo" references; this ADR is the bridge); `event_*` column names unchanged; prod is untouched except the `staging = false` flip.
 - Migration A1 must never overwrite a destination object whose size differs from the source (conflict raises), and must delete source objects only after post-copy verification.
 - Environments that ran pre-rename code must run A1 before the renamed deploy, or they silently start with empty tables and lose history.
-- Prod retains old naming for its `pipeline` storage prefix (deferred; out of scope for this rename).
+- Prod data originally lived under the `pipeline` storage prefix; the `S3_PREFIX` concept was removed entirely as a follow-up applied 2026-08-19 (see Consequences), so prod now stores at the bucket root like staging and docker.
 
 ## Consequences
 
@@ -47,7 +47,7 @@ Rename both layers per the rename map in `_bmad-output/specs/spec-rename-cdc-eve
 - **Positive:** the grep-zero bars give a closed, mechanically verifiable enforcement gate for the rename.
 - **Negative:** historical names persist in exempt artifacts — migration scripts, their tests, terraform `moved` blocks, and all prior ADRs — and are the intended inputs to the one-time migrations. Anyone reading old ADRs must apply the substitution "old name → new name."
 - **Negative:** environments must run the migrations in the documented order (drop-gross-amount → A1 → B1/B2/B3) with a deploy window; a skipped migration silently loses history (A1) or breaks secret resolution (B2).
-- **Negative:** prod still carries the old `pipeline` prefix naming; the rename does not fully unify naming across all environments until a follow-up.
+- **Negative (resolved):** prod originally still carried the old `pipeline` prefix naming. Follow-up applied 2026-08-19: the `S3_PREFIX` concept was deleted entirely (no `S3_DEFAULT_PREFIX`, no `S3Backend.prefix`, no `S3_PREFIX` env var, no `s3_prefix` terraform variable) and prod's `pipeline/*` data was moved to the bucket root by the one-time migration `migrate_prod_pipeline_prefix_to_root.py` before the prefix-removed code deployed. All environments (prod, staging, docker/MinIO) now read/write at the bucket root; ADR 0108's `pipeline/xtb_uploads/` references are superseded for prod by `xtb_uploads/`.
 
 ## Validation
 

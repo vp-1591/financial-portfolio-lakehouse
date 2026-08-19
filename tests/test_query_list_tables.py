@@ -213,13 +213,13 @@ class TestListTables:
         """With S3Backend pointing to nonexistent bucket, result is empty."""
 
         set_mode("docker")
-        backend = S3Backend(bucket="test-bucket", prefix="pipeline")
+        backend = S3Backend(bucket="test-bucket")
         use_storage(
             StorageConfig(
-                data_dir="s3://test-bucket/pipeline",
-                raw_dir="s3://test-bucket/pipeline/raw",
-                normalized_dir="s3://test-bucket/pipeline/normalized",
-                analytics_dir="s3://test-bucket/pipeline/analytics",
+                data_dir="s3://test-bucket",
+                raw_dir="s3://test-bucket/raw",
+                normalized_dir="s3://test-bucket/normalized",
+                analytics_dir="s3://test-bucket/analytics",
                 secrets_dir="/tmp/secrets",
                 encryption_key_file="/tmp/secrets/encryption.key",
                 backend=backend,

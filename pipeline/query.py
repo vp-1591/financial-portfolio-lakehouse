@@ -83,8 +83,8 @@ def _discover_tables_local(data_dir: Path) -> list[tuple[str, str]]:
     return tables
 
 
-def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
-    """Discover Delta tables under an S3 prefix.
+def _discover_tables_s3(bucket: str) -> list[tuple[str, str]]:
+    """Discover Delta tables at the S3 bucket root.
 
     Uses PyArrow's S3FileSystem to list directories under each layer
     prefix and checks for ``_delta_log/`` objects to identify Delta tables.
@@ -107,7 +107,7 @@ def _discover_tables_s3(bucket: str, prefix: str) -> list[tuple[str, str]]:
 
     tables: list[tuple[str, str]] = []
     for layer in LAYERS:
-        base = f"{bucket}/{prefix}/{layer}/" if prefix else f"{bucket}/{layer}/"
+        base = f"{bucket}/{layer}/"
         try:
             selector = pafs.FileSelector(base, recursive=False)
             entries = fs.get_file_info(selector)
@@ -169,7 +169,7 @@ def list_tables(*, refresh: bool = False) -> list[str]:
     config = get_storage()
 
     if isinstance(config.backend, S3Backend):
-        raw_tables = _discover_tables_s3(config.backend.bucket, config.backend.prefix)
+        raw_tables = _discover_tables_s3(config.backend.bucket)
     else:
         raw_tables = _discover_tables_local(Path(config.data_dir))
 

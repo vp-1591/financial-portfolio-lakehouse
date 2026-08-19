@@ -75,12 +75,12 @@ class TestResolveStorage:
         monkeypatch.setenv("AWS_REGION", "us-east-1")
         config = resolve_storage()
         assert config.backend.bucket == "test-bucket"
-        # Exact path assertion (A5 C6): the prefix must appear in every path
-        # so a bug dropping the prefix from the docker base is detected.
-        assert config.data_dir == "s3://test-bucket/pipeline"
-        assert config.raw_dir == "s3://test-bucket/pipeline/raw"
-        assert config.normalized_dir == "s3://test-bucket/pipeline/normalized"
-        assert config.analytics_dir == "s3://test-bucket/pipeline/analytics"
+        # Exact path assertion (A5 C6): all environments use the bucket root,
+        # so a bug adding a prefix segment to the docker base is detected.
+        assert config.data_dir == "s3://test-bucket"
+        assert config.raw_dir == "s3://test-bucket/raw"
+        assert config.normalized_dir == "s3://test-bucket/normalized"
+        assert config.analytics_dir == "s3://test-bucket/analytics"
         use_storage(config)  # just verify it doesn't crash
         reset_mode()
 
@@ -93,7 +93,6 @@ class TestResolveStorage:
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
         config = resolve_storage()
         assert config.backend.bucket == "staging-bucket"
-        assert config.backend.prefix == ""
         reset_mode()
 
     def test_prod_mode_uses_prod_bucket(self, monkeypatch) -> None:
@@ -105,13 +104,12 @@ class TestResolveStorage:
         monkeypatch.setenv("AWS_REGION", "eu-west-1")
         config = resolve_storage()
         assert config.backend.bucket == "prod-bucket"
-        assert config.backend.prefix == "pipeline"
-        # Exact path assertion (A5 C6): the prod prefix must appear in every
-        # path so a bug dropping the prefix from the prod base is detected.
-        assert config.data_dir == "s3://prod-bucket/pipeline"
-        assert config.raw_dir == "s3://prod-bucket/pipeline/raw"
-        assert config.normalized_dir == "s3://prod-bucket/pipeline/normalized"
-        assert config.analytics_dir == "s3://prod-bucket/pipeline/analytics"
+        # Exact path assertion (A5 C6): prod uses the bucket root, so paths
+        # are s3://bucket/... with no prefix segment.
+        assert config.data_dir == "s3://prod-bucket"
+        assert config.raw_dir == "s3://prod-bucket/raw"
+        assert config.normalized_dir == "s3://prod-bucket/normalized"
+        assert config.analytics_dir == "s3://prod-bucket/analytics"
         reset_mode()
 
     def test_docker_mode_missing_bucket_raises(self, monkeypatch) -> None:
@@ -128,7 +126,6 @@ class TestResolveStorage:
         # S3_BUCKET not set — defaults to the production bucket
         config = resolve_storage()
         assert config.backend.bucket == S3_DEFAULT_PROD_BUCKET
-        assert config.backend.prefix == "pipeline"
         reset_mode()
 
     def test_staging_mode_missing_bucket_raises(self, monkeypatch) -> None:

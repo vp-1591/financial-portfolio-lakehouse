@@ -16,7 +16,6 @@ from tests.local_backend import LocalBackend
 # Note: STAGING and STORAGE_TYPE are removed (replaced by --mode flag).
 _PIPELINE_ENV_VARS = [
     "S3_BUCKET",
-    "S3_PREFIX",
     "PIPELINE_DATA_DIR",
     "S3_ENDPOINT_URL",
     "S3_ALLOW_HTTP",

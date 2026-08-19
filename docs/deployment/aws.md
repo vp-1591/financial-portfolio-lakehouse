@@ -73,7 +73,7 @@ terraform apply
    values and `lifecycle ignore_changes`. Set real values manually (see
    [SSM secrets reference](#ssm-secrets-reference) below).
 2. **Push Docker image** to ECR so task definitions have something to run.
-3. **Store outputs** in GitHub Secrets: `access_key_id`, `s3_bucket`, `s3_prefix`
+3. **Store outputs** in GitHub Secrets: `access_key_id`, `s3_bucket`
    (use `_STAGING` variants for the staging environment).
 
 ### SSM secrets reference

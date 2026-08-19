@@ -34,12 +34,6 @@ variable "bucket_name" {
   default     = "investment-portfolio-pipeline-staging"
 }
 
-variable "s3_prefix" {
-  description = "Key prefix within the S3 bucket for staging pipeline data."
-  type        = string
-  default     = ""
-}
-
 variable "iam_user_name" {
   description = "Name of the IAM user for staging pipeline access."
   type        = string
@@ -572,7 +566,6 @@ locals {
 
   common_environment = {
     S3_BUCKET  = var.bucket_name
-    S3_PREFIX  = var.s3_prefix
     AWS_REGION = var.aws_region
   }
 
@@ -600,7 +593,6 @@ module "connector_task" {
     { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ])
   bucket_arn     = aws_s3_bucket.pipeline_staging.arn
-  s3_prefix      = var.s3_prefix
   ecr_policy_arn = var.ecr_push_pull_policy_arn
   kms_key_arn    = aws_kms_key.ssm.arn
   region         = var.aws_region
@@ -620,7 +612,6 @@ module "consolidate_allocate" {
     { env_var = "ENCRYPTION_KEY", arn = aws_ssm_parameter.encryption_key.arn }
   ]
   bucket_arn     = aws_s3_bucket.pipeline_staging.arn
-  s3_prefix      = var.s3_prefix
   ecr_policy_arn = var.ecr_push_pull_policy_arn
   kms_key_arn    = aws_kms_key.ssm.arn
   region         = var.aws_region
@@ -753,11 +744,6 @@ output "s3_bucket_arn" {
 output "access_key_id" {
   description = "IAM access key ID (store as GitHub Secret AWS_ACCESS_KEY_ID_STAGING)."
   value       = aws_iam_access_key.pipeline_staging.id
-}
-
-output "s3_prefix" {
-  description = "S3 key prefix for staging pipeline data."
-  value       = var.s3_prefix
 }
 
 output "subnet_ids" {
