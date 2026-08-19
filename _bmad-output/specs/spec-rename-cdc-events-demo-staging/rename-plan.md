@@ -35,6 +35,7 @@ Scope size: ~27 pipeline sources, 21 test files (incl. `tests/test_migrate_cdc_e
 5. Run manually pre-deploy, per env: `.venv/Scripts/python -m pipeline.migrations.migrate_cdc_to_events --mode staging [--dry-run]`.
 6. Verify: `pipeline.run query "SELECT count(*) FROM events" --decrypt --mode staging` equals pre-migration `cdc_events` count; for the data rewrite, count `source`-gated `events` rows.
 7. Sequencing: A1 runs only after PR #143's `migrate_cdc_events_drop_gross_amount.py` has been applied per env — its `_CDC_TABLES` are the pre-rename names (`cdc_events`, `{broker}_cdc`; exempt historical artifact), and after A1 they no longer exist, so the drop must run first; A1's schema guard expects the post-drop schema (no `gross_amount`).
+8. **Historical scripts stay put:** `migrate_cdc_events_drop_gross_amount.py` is NEVER renamed — migrations apply in PR order, so this script runs first on every env (already applied to staging; prod pending). Its filename, docstring, `_CDC_TABLES` and module path stay as-is (exempt historical artifact). One lockstep exception: its `from pipeline.normalized.models import cdc_events_normalized_schema` import must track the schema constant rename to `events_normalized_schema` (same one-line fix in `tests/test_migrate_cdc_events_drop_gross_amount.py`) — a compatibility edit only, so the script stays runnable on any env where the drop has not yet applied.
 
 ## Track B — demo → staging (staging AWS env)
 
