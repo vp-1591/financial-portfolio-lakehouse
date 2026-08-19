@@ -32,7 +32,8 @@ Safety
   matching size (a run interrupted between copy and delete is completed, not
   duplicated), and exits 0 when there is nothing to migrate.
 - Never overwrites: a root object with a *different* size is a conflict and
-  raises instead of clobbering data.
+  raises instead of clobbering data; a matching-size root object is
+  byte-compared against the source, and differing content also raises.
 - Source objects are deleted only after post-copy verification passes; a
   verification failure raises and leaves the sources in place.
 - Dry-run: ``--dry-run`` prints the full plan without writing anything.
@@ -82,6 +83,10 @@ _MAX_SAMPLE_BYTES = 256 * 1024 * 1024
 
 # boto3 delete_objects accepts at most this many keys per call.
 _DELETE_CHUNK = 1000
+
+# Byte-comparison reads are streamed in bounded chunks so verification never
+# materializes a whole (potentially 100s of MB) object in memory at once.
+_COMPARE_CHUNK = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -155,13 +160,51 @@ def strip_source_prefix(key: str) -> str:
 
 
 def _delete_objects(client: Any, bucket: str, keys: list[str]) -> None:
-    """Delete *keys* from *bucket* in bounded batches."""
+    """Delete *keys* from *bucket* in bounded batches.
+
+    Raises ``RuntimeError`` when S3 reports per-key failures: a partial delete
+    would strand ``pipeline/*`` sources that the operator cannot see (the run
+    reports complete), and the migration must be re-run to finish the delete.
+    """
     for i in range(0, len(keys), _DELETE_CHUNK):
         chunk = keys[i : i + _DELETE_CHUNK]
-        client.delete_objects(
+        response = client.delete_objects(
             Bucket=bucket,
             Delete={"Objects": [{"Key": key} for key in chunk]},
         )
+        errors = response.get("Errors", [])
+        if errors:
+            failed = ", ".join(str(item.get("Key")) for item in errors[:5])
+            raise RuntimeError(
+                f"delete_objects reported {len(errors)} failure(s); source objects "
+                f"may remain. First failures: {failed}. Re-run to finish the delete."
+            )
+
+
+def _streams_equal(source: Any, dest: Any, chunk: int = _COMPARE_CHUNK) -> bool:
+    """Return True when *source* and *dest* byte streams are identical.
+
+    Reads both streams in bounded *chunk* pieces so the peak memory is two
+    chunks, not two full objects.
+    """
+    while True:
+        source_part = source.read(chunk)
+        dest_part = dest.read(chunk)
+        if source_part != dest_part:
+            return False
+        if not source_part:  # both streams hit EOF together
+            return True
+
+
+def _objects_equal(client: Any, bucket: str, key_a: str, key_b: str) -> bool:
+    """Return True when the objects at *key_a* and *key_b* are byte-identical."""
+    source_body = client.get_object(Bucket=bucket, Key=key_a)["Body"]
+    dest_body = client.get_object(Bucket=bucket, Key=key_b)["Body"]
+    try:
+        return _streams_equal(source_body, dest_body)
+    finally:
+        source_body.close()
+        dest_body.close()
 
 
 def verify_copy(
@@ -198,15 +241,13 @@ def verify_copy(
         dest_key = strip_source_prefix(obj.key)
         if dest_key not in root_by_key:
             continue  # already reported as missing above
-        source_body = client.get_object(Bucket=PROD_BUCKET, Key=obj.key)["Body"].read()
-        dest_body = client.get_object(Bucket=PROD_BUCKET, Key=dest_key)["Body"].read()
-        if source_body != dest_body:
+        if _objects_equal(client, PROD_BUCKET, obj.key, dest_key):
+            sample_verified += 1
+        else:
             errors.append(
                 f"byte mismatch for {dest_key}: destination content differs from "
                 "source (encryption/ciphertext not preserved)"
             )
-        else:
-            sample_verified += 1
 
     return VerificationResult(errors=errors, sample_verified=sample_verified)
 
@@ -219,9 +260,10 @@ def run_migration(
 ) -> MigrationReport:
     """Execute (or plan) the prod prefix strip.
 
-    Idempotent: root objects that already exist with the same size are skipped
-    (completing a run interrupted between copy and delete).  A root object with
-    a *different* size is a conflict and raises.  After copying,
+    Idempotent: root objects that already exist are byte-compared against the
+    source; identical bytes are skipped (completing a run interrupted between
+    copy and delete), differing content is a conflict and raises.  A root
+    object with a *different* size is also a conflict.  After copying,
     :func:`verify_copy` runs; only after it passes are the ``pipeline/*``
     sources deleted.  Any verification error raises ``RuntimeError`` so the
     caller exits non-zero with the sources untouched.
@@ -262,8 +304,20 @@ def run_migration(
         existing_size = head_object_size(client, PROD_BUCKET, dest_key)
         if existing_size is not None:
             if existing_size == obj.size:
-                report.skipped += 1
-                print(f"  Already at root (size {existing_size}): {dest_key}")
+                # A matching size is not proof of identical bytes: the root
+                # object could be a stray write that happens to match in length
+                # (or a corrupted interrupted-run copy). Only delete the source
+                # when the destination is byte-identical.
+                if _objects_equal(client, PROD_BUCKET, obj.key, dest_key):
+                    report.skipped += 1
+                    print(f"  Already at root (byte-identical): {dest_key}")
+                else:
+                    raise RuntimeError(
+                        f"Conflict: s3://{PROD_BUCKET}/{dest_key} already exists "
+                        f"with the same size ({existing_size}) but different "
+                        "content. Refusing to delete the source; investigate "
+                        "before re-running."
+                    )
             else:
                 raise RuntimeError(
                     f"Conflict: s3://{PROD_BUCKET}/{dest_key} already exists with "

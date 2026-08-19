@@ -39,15 +39,24 @@ class FakeS3:
         self.objects: dict[str, bytes] = objects or {}
         self.copy_calls: list[tuple[str, str]] = []
         self.delete_calls: list[list[str]] = []
+        self.delete_failures: set[str] = set()
 
     def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
         prefix = str(kwargs.get("Prefix", ""))
-        contents = [
-            {"Key": key, "Size": len(body)}
-            for key, body in sorted(self.objects.items())
-            if key.startswith(prefix)
-        ]
-        return {"KeyCount": len(contents), "Contents": contents, "IsTruncated": False}
+        token = kwargs.get("ContinuationToken")
+        page_size = int(str(kwargs.get("MaxKeys", 1000)))
+        keys = sorted(key for key in self.objects if key.startswith(prefix))
+        start = 0 if token is None else int(str(token))
+        page = keys[start : start + page_size]
+        truncated = start + page_size < len(keys)
+        result: dict[str, object] = {
+            "KeyCount": len(page),
+            "Contents": [{"Key": key, "Size": len(self.objects[key])} for key in page],
+            "IsTruncated": truncated,
+        }
+        if truncated:
+            result["NextContinuationToken"] = str(start + page_size)
+        return result
 
     def head_object(self, **kwargs: object) -> dict[str, object]:
         key = str(kwargs["Key"])
@@ -92,10 +101,18 @@ class FakeS3:
         objects = delete["Objects"]
         assert isinstance(objects, list)
         keys = [str(item["Key"]) for item in objects]
+        deleted: list[dict[str, str]] = []
+        errors: list[dict[str, str]] = []
         for key in keys:
-            self.objects.pop(key, None)
+            if key in self.delete_failures:
+                errors.append(
+                    {"Key": key, "Code": "InternalError", "Message": "simulated"}
+                )
+            else:
+                self.objects.pop(key, None)
+                deleted.append({"Key": key})
         self.delete_calls.append(keys)
-        return {}
+        return {"Deleted": deleted, "Errors": errors}
 
 
 def _prod_bucket() -> dict[str, bytes]:
@@ -178,18 +195,20 @@ def test_conflict_raises_on_size_mismatch() -> None:
     assert client.objects["raw/ibkr/part.parquet"] == b"123"
 
 
-def test_verify_failure_refuses_delete() -> None:
-    # Same size, different bytes: size check passes, byte comparison fails.
+def test_same_size_different_content_refuses_delete() -> None:
+    # A root object with the same size but different bytes must not be treated
+    # as "already copied": deleting the source would silently lose its content.
     objects = _prod_bucket()
     objects["raw/ibkr/part.parquet"] = b"AAAAAAAAAAAAAAAA"
     client = FakeS3(objects)
 
-    with pytest.raises(RuntimeError, match="byte mismatch"):
+    with pytest.raises(RuntimeError, match="different content"):
         run_migration(client)
 
-    # Sources are NOT deleted when verification fails.
+    # Nothing was deleted and the conflicting root object was not overwritten.
     assert client.delete_calls == []
     assert "pipeline/raw/ibkr/part.parquet" in client.objects
+    assert client.objects["raw/ibkr/part.parquet"] == b"AAAAAAAAAAAAAAAA"
 
 
 def test_empty_source_is_noop() -> None:
@@ -232,3 +251,47 @@ def test_verify_detects_missing_destination() -> None:
     assert "missing in destination: a" in result.errors
     assert "missing in destination: b" in result.errors
     assert result.sample_verified == 0
+
+
+def test_delete_partial_failure_raises() -> None:
+    # delete_objects returns per-key Errors (transient 5xx) without raising;
+    # the migration must fail loudly instead of reporting full success.
+    objects = _prod_bucket()
+    client = FakeS3(objects)
+    client.delete_failures = {"pipeline/raw/ibkr/part.parquet"}
+
+    with pytest.raises(RuntimeError, match="delete_objects reported 1 failure"):
+        run_migration(client)
+
+    # The failed source survives so a re-run can finish the delete; the
+    # successfully-deleted sibling is gone.
+    assert "pipeline/raw/ibkr/part.parquet" in client.objects
+    assert "pipeline/normalized/events/_delta_log/00000000000000000000.json" not in (
+        client.objects
+    )
+
+
+def test_streams_equal_handles_multiple_chunks() -> None:
+    from pipeline.migrations.migrate_prod_pipeline_prefix_to_root import (
+        _streams_equal,
+    )
+
+    assert _streams_equal(io.BytesIO(b"abcdefghij"), io.BytesIO(b"abcdefghij"), chunk=3)
+    assert not _streams_equal(
+        io.BytesIO(b"abcdefghij"), io.BytesIO(b"abcXefghij"), chunk=3
+    )
+    # One stream ending before the other is a mismatch, not an EOF-triggered pass.
+    assert not _streams_equal(io.BytesIO(b"abc"), io.BytesIO(b"abcd"), chunk=3)
+
+
+def test_list_objects_paginates() -> None:
+    from pipeline.migrations.migrate_prod_pipeline_prefix_to_root import list_objects
+
+    expected = {f"pipeline/obj{i:03d}" for i in range(2500)}
+    client = FakeS3({key: b"x" for key in expected})
+
+    objects = list_objects(client, PROD_BUCKET, "pipeline")
+
+    assert len(objects) == 2500
+    assert {obj.key for obj in objects} == expected
+    assert objects[0].key == "pipeline/obj000"
