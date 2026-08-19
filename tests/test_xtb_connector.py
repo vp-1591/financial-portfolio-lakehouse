@@ -349,7 +349,7 @@ class TestXtbParser:
         for op in report.cash_operations:
             assert round(op.amount, 2) == op.amount
 
-    def test_closed_values_rounded_to_2dp(self, report: XtbReport) -> None:
+    def test_commission_rounded_to_2dp(self, report: XtbReport) -> None:
         closed = report.closed_positions[0]
         assert round(closed.commission, 2) == closed.commission
 

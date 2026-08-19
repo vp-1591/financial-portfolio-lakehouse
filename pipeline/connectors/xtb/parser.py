@@ -433,7 +433,7 @@ def _parse_closed_positions(rows: list[list[Any]]) -> list[XtbClosedPosition]:
             continue
         # Column layout (0-based):
         # 0 Instrument | 1 Ticker | ... | 8 Close Time (UTC) | ... |
-        # 12 Purchase Value | 13 Sale Value | 16 Commission | 23 Position ID
+        # 16 Commission | 23 Position ID
         first = normalize_header(_str_cell(row[0]))
         if first == "profit/loss" or first == "total":
             continue

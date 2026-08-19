@@ -120,6 +120,22 @@ def test_drop_raises_on_unexpected_columns(tmp_path: Path) -> None:
         drop_gross_amount(str(table_path), {})
 
 
+def test_drop_raises_on_drift_without_gross_amount(tmp_path: Path) -> None:
+    """An already-migrated table that has since drifted (no gross_amount but an
+    unexpected extra column) is NOT reported as clean: the idempotent-skip path
+    still verifies the full schema and raises."""
+    table_path = tmp_path / "cdc_events"
+    drifted = (
+        _old_cdc_table()
+        .select(list(cdc_events_normalized_schema.names))
+        .append_column("unexpected", pa.array(["x"], type=pa.string()))
+    )
+    _write(table_path, drifted)
+
+    with pytest.raises(RuntimeError, match="Schema mismatch"):
+        drop_gross_amount(str(table_path), {})
+
+
 def test_drop_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> None:
     """An auth/region/permission error opening an existing table is NOT
     swallowed as 'absent' (only TableNotFoundError is) -- it propagates so
