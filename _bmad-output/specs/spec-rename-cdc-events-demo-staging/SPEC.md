@@ -2,6 +2,7 @@
 id: SPEC-rename-cdc-events-demo-staging
 companions:
   - rename-plan.md
+  - ARCHITECTURE-SPINE.md
 sources: []
 ---
 
