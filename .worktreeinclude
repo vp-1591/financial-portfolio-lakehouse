@@ -1,2 +1,4 @@
 # .worktreeinclude
 _bmad/
+terraform/staging/backend.tf
+terraform/staging/terraform.tfvars
