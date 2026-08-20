@@ -6,6 +6,8 @@ streams stderr asynchronously, so these lines survive an OOM kill even
 though the process itself is SIGKILLed.  Wired into ``pipeline.run`` at
 phase boundaries; deliberately dependency-light and side-effect free
 otherwise.
+
+Decision: docs/adr/0115-phase-level-rss-memory-observability.md
 """
 
 from __future__ import annotations

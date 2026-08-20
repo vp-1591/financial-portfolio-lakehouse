@@ -125,6 +125,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0112 | Remove YAGNI gross_amount Column from CDC Events Schema | 2026-08-19 | active | — |
 | 0113 | Rename CDC Events Layer to events and Demo Staging Environment to staging | 2026-08-19 | active | — |
 | 0114 | Single Bronze (Raw) Table Per Broker | 2026-08-20 | active | — |
+| 0115 | Phase-Level RSS Memory Observability in Pipeline Runs | 2026-08-20 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md
