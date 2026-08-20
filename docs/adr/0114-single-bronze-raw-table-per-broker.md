@@ -61,7 +61,10 @@ Concretely:
   ADR 0108 D18, survives), then removes every per-layer raw path — including the
   orphaned `raw/xtb_events` — via batched S3 delete, refusing to delete unless
   the merged table was written and verified. Idempotent, `--dry-run` support,
-  destination-schema conflict raises rather than clobbers (ADR 0113 A1).
+  destination-schema conflict raises rather than clobbers (ADR 0113 A1); the
+  destination must also be empty or a row-subset of the sources (checked on the
+  dedup key) and a partial per-key delete failure raises instead of reporting
+  success — review-hardening of the same never-clobber decision.
 
 Goal: the raw layer holds exactly one table per broker; no per-broker-name logic
 in fetch/transform; every raw row reaches the correct silver table without
@@ -126,11 +129,12 @@ ambiguity; `{broker}_raw` surfaces to query consumers via alias auto-discovery.
 
 ## Validation
 
-- `tests/test_migrate_single_bronze.py` — 18 tests: merges both sources into
+- `tests/test_migrate_single_bronze.py` — 21 tests: merges both sources into
   one table, dedup key, latest-`fetched_at` tie-break preserving `source_file`,
   source deletion, orphan `xtb_events` purge, idempotent no-op, absent source,
   `--dry-run` writes nothing, destination-schema conflict raises, verification-
-  failure refuses delete.
+  failure refuses delete, destination-row clobber refusal, destination row-
+  subset re-run, partial-delete failure raises.
 - `tests/test_single_bronze_routing.py` — 10 regression guards: Trading 212
   `/equity/positions` list payload never reaches the events silver; IBKR
   `flex`/`flex_events` in one merged `raw/ibkr` route to the right silver;

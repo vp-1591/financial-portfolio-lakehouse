@@ -31,12 +31,18 @@ Safety and idempotency
   reproduces the same destination, so an interrupted run re-succeeds.  An
   already-migrated broker (sources absent, merged table present) is skipped
   and exits 0.
-- Never clobbers: a destination ``raw/{broker}`` whose schema is not exactly
-  ``RAW_SCHEMA`` (order-sensitive ``schema.equals``) raises instead of being
-  overwritten (ADR 0113 A1 conflict convention).
+- Never clobbers: a destination ``raw/{broker}`` is overwritten only when it
+  is empty or its rows are a subset of the source tables (matched on the
+  dedup key).  A destination whose schema is not exactly ``RAW_SCHEMA``
+  (order-sensitive ``schema.equals``) or that holds rows not present in the
+  sources raises instead of being overwritten (ADR 0113 A1 conflict
+  convention) -- rows appended after a partially failed earlier run are never
+  silently discarded.
 - Source tables are deleted only after the merged table was written and
   verified for that broker.  A verification failure raises and refuses to
-  delete the per-layer sources.
+  delete the per-layer sources.  A partial source deletion (boto3 per-key
+  ``Errors``: throttling, permission gaps) also raises, so the migration
+  cannot report success while per-layer tables remain on S3.
 - A genuinely absent per-layer table is skipped (exit 0).  An existing but
   unreadable table (auth/region/permission error) or an unexpected schema
   raises and exits non-zero, so a pre-deploy gate cannot mistake a real
@@ -72,7 +78,8 @@ S3_BUCKET or PIPELINE_DATA_DIR, etc.).
 Exit codes
 ----------
 0 -- merge/delete complete, or a dry-run, or an idempotent no-op.
-1 -- AWS request failure, destination schema conflict, or verification failure.
+1 -- AWS request failure, destination schema or row conflict, verification
+    failure, or partial source-table deletion failure.
 """
 
 from __future__ import annotations
@@ -197,6 +204,10 @@ def merge_broker(
     table was written and re-verified (or already existed as a valid
     ``RAW_SCHEMA`` table while all sources are gone).  ``--dry-run`` never
     writes.
+
+    Raises :class:`RuntimeError` when the destination already exists with a
+    valid ``RAW_SCHEMA`` but holds rows the source tables do not (never
+    clobbers -- ADR 0113 A1).
     """
     frames: list[pl.DataFrame] = []
     present: list[str] = []
@@ -213,24 +224,23 @@ def merge_broker(
         frames.append(pl.from_arrow(dt.to_pyarrow_table()))
         present.append(path)
 
-    # Destination conflict guard (ADR 0113 A1): a destination whose schema is
-    # NOT exactly RAW_SCHEMA (order-sensitive) raises rather than being
-    # clobbered -- including in a dry-run.
+    dest_table: Any | None = None
     if _path_exists(dest_path, storage_opts):
-        dest_schema = (
-            DeltaTable(dest_path, storage_options=storage_opts)
-            .to_pyarrow_table()
-            .schema
-        )
-        if not dest_schema.equals(RAW_SCHEMA):
+        dest_table = DeltaTable(
+            dest_path, storage_options=storage_opts
+        ).to_pyarrow_table()
+        # Destination conflict guard (ADR 0113 A1): a destination whose schema
+        # is NOT exactly RAW_SCHEMA (order-sensitive) raises rather than being
+        # clobbered -- including in a dry-run.
+        if not dest_table.schema.equals(RAW_SCHEMA):
             raise RuntimeError(
-                f"Conflict: {dest_path} already exists with schema {dest_schema}, "
+                f"Conflict: {dest_path} already exists with schema {dest_table.schema}, "
                 "expected RAW_SCHEMA. Refusing to overwrite; investigate before "
                 "re-running."
             )
 
     if not frames:
-        if _path_exists(dest_path, storage_opts):
+        if dest_table is not None:
             # Already migrated: sources gone, merged table present with the
             # exact schema.  Idempotent no-op.
             print(f"  Already migrated (merged table exists): {dest_path}")
@@ -239,6 +249,31 @@ def merge_broker(
         return MergeReport(broker=broker, dest_path=dest_path)
 
     merged = _dedup_merged(frames)
+
+    # Decision: docs/adr/0114-single-bronze-raw-table-per-broker.md
+    # Row conflict guard (never-clobber, ADR 0113 A1): a destination that
+    # already holds rows must be empty or a subset of the source tables
+    # (matched on the dedup key).  Overwriting otherwise would discard rows
+    # appended to raw/{broker} after an earlier run -- e.g. a fetch that wrote
+    # the renamed path while a partial source deletion left per-layer tables
+    # behind.  Refuse and let the operator reconcile.
+    if dest_table is not None:
+        dest_rows = pl.from_arrow(dest_table)
+        if dest_rows.height:
+            orphaned = dest_rows.select(list(_DEDUP_KEY)).join(
+                merged.select(list(_DEDUP_KEY)),
+                on=list(_DEDUP_KEY),
+                how="anti",
+            )
+            if orphaned.height:
+                raise RuntimeError(
+                    f"Conflict: {dest_path} already holds {dest_rows.height} "
+                    f"row(s), {orphaned.height} of which are not present in the "
+                    "per-layer source tables. Overwriting would lose rows "
+                    "appended after a previous run; investigate before "
+                    "re-running."
+                )
+
     display = _BROKER_DISPLAY.get(broker, broker)
     print(
         f"  Merging {display}: {len(frames)} source table(s) -> "
@@ -302,13 +337,32 @@ def list_objects(client: Any, bucket: str, prefix: str) -> list[str]:
 
 
 def _delete_objects(client: Any, bucket: str, keys: list[str]) -> None:
-    """Delete *keys* from *bucket* in bounded batches."""
+    """Delete *keys* from *bucket* in bounded batches.
+
+    Per-key failures surface in the response's ``Errors`` list (throttling,
+    permission gaps, missing keys).  Any failed key raises, so a partial
+    deletion cannot be reported as success while per-layer tables remain on
+    S3.  Keys in earlier batches are already gone; re-running the migration
+    completes the remainder (idempotent).
+    """
     for i in range(0, len(keys), _DELETE_CHUNK):
         chunk = keys[i : i + _DELETE_CHUNK]
-        client.delete_objects(
+        response = client.delete_objects(
             Bucket=bucket,
             Delete={"Objects": [{"Key": key} for key in chunk]},
         )
+        # Decision: docs/adr/0114-single-bronze-raw-table-per-broker.md
+        errors = response.get("Errors", [])
+        if errors:
+            failed = "; ".join(
+                f"{err.get('Key')} ({err.get('Code')}: "
+                f"{err.get('Message', '').strip()})"
+                for err in errors
+            )
+            raise RuntimeError(
+                f"delete_objects failed for {len(errors)} of {len(chunk)} "
+                f"object(s): {failed}"
+            )
 
 
 def delete_broker_sources(

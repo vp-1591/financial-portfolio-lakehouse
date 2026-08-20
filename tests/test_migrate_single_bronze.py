@@ -307,6 +307,123 @@ def test_merge_idempotent_rerun_reproduces_destination(tmp_path: Path) -> None:
     assert second.to_pydict() == first.to_pydict()
 
 
+def test_merge_refuses_to_overwrite_destination_with_extra_rows(
+    tmp_path: Path,
+) -> None:
+    snap, events, dest = _broker_paths(tmp_path, "ibkr")
+    _write(
+        Path(snap),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "IBKR",
+                    "source": "flex",
+                    "payload_hash": "h1",
+                    "source_file": "snap.xml",
+                }
+            ]
+        ),
+    )
+    _write(
+        Path(events),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(2),
+                    "broker": "IBKR",
+                    "source": "flex_events",
+                    "payload_hash": "h2",
+                    "source_file": "events.xml",
+                }
+            ]
+        ),
+    )
+    # The destination already holds a row the sources no longer have -- e.g. a
+    # fetch appended it after the renamed-path code deployed while a partial
+    # source deletion left the per-layer tables behind.
+    _write(
+        Path(dest),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "IBKR",
+                    "source": "flex",
+                    "payload_hash": "h1",
+                    "source_file": "snap.xml",
+                },
+                {
+                    "fetched_at": _t(5),
+                    "broker": "IBKR",
+                    "source": "flex",
+                    "payload_hash": "h3",
+                    "source_file": "new-fetch.xml",
+                },
+            ]
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Conflict"):
+        merge_broker("ibkr", (snap, events), dest, {})
+
+    # The destination was not clobbered: the appended row survived.
+    assert sorted(_read(dest).column("payload_hash").to_pylist()) == ["h1", "h3"]
+
+
+def test_merge_destination_subset_of_sources_reruns(tmp_path: Path) -> None:
+    snap, events, dest = _broker_paths(tmp_path, "trading212")
+    _write(
+        Path(snap),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "Trading 212",
+                    "source": "/equity/account/summary",
+                    "payload_hash": "h1",
+                    "source_file": "a.json",
+                }
+            ]
+        ),
+    )
+    _write(
+        Path(events),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(2),
+                    "broker": "Trading 212",
+                    "source": "/equity/history/orders",
+                    "payload_hash": "h2",
+                    "source_file": "b.json",
+                }
+            ]
+        ),
+    )
+    # An interrupted run left only part of the merged rows behind; the
+    # destination is a subset of the sources, so the re-run proceeds.
+    _write(
+        Path(dest),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "Trading 212",
+                    "source": "/equity/account/summary",
+                    "payload_hash": "h1",
+                    "source_file": "a.json",
+                }
+            ]
+        ),
+    )
+
+    report = merge_broker("trading212", (snap, events), dest, {})
+
+    assert report.verified is True
+    assert sorted(_read(dest).column("payload_hash").to_pylist()) == ["h1", "h2"]
+
+
 def test_merge_dry_run_does_not_write(tmp_path: Path) -> None:
     snap, events, dest = _broker_paths(tmp_path, "ibkr")
     _write(
@@ -444,8 +561,12 @@ def test_merge_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> No
 class FakeS3:
     """In-memory S3 double implementing only the methods the delete path uses."""
 
-    def __init__(self, objects: dict[str, bytes]) -> None:
+    def __init__(
+        self, objects: dict[str, bytes], fail_keys: set[str] | None = None
+    ) -> None:
         self.objects: dict[str, bytes] = objects
+        # Keys that delete_objects reports as failed (kept in objects).
+        self.fail_keys: set[str] = fail_keys or set()
 
     def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
         prefix = str(kwargs.get("Prefix", ""))
@@ -461,12 +582,22 @@ class FakeS3:
         assert isinstance(delete, dict)
         objects = delete["Objects"]
         assert isinstance(objects, list)
-        deleted = []
+        deleted: list[dict[str, str]] = []
+        errors: list[dict[str, str]] = []
         for item in objects:
             key = item["Key"]
+            if key in self.fail_keys:
+                errors.append(
+                    {
+                        "Key": key,
+                        "Code": "AccessDenied",
+                        "Message": "simulated failure",
+                    }
+                )
+                continue
             self.objects.pop(key, None)
             deleted.append({"Key": key})
-        return {"Deleted": deleted}
+        return {"Deleted": deleted, "Errors": errors}
 
 
 def _source_table_objects(broker: str) -> dict[str, bytes]:
@@ -520,6 +651,20 @@ def test_delete_dry_run_does_not_delete() -> None:
 
     assert report.deleted == 4
     assert client.objects == objects
+
+
+def test_delete_raises_on_partial_errors() -> None:
+    # One key fails (throttling/permission); the rest of the batch succeeds.
+    client = FakeS3(
+        _source_table_objects("ibkr"),
+        fail_keys={"raw/ibkr_snapshot/part-0.parquet"},
+    )
+
+    with pytest.raises(RuntimeError, match="delete_objects failed"):
+        delete_broker_sources(client, "test-bucket", "", "ibkr")
+
+    # Only the failed object remains; the rest of the batch stayed deleted.
+    assert client.objects == {"raw/ibkr_snapshot/part-0.parquet": b"ciphertext"}
 
 
 # ---------------------------------------------------------------------------
