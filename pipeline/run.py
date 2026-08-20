@@ -116,6 +116,14 @@ def fetch_connector(
 ) -> FetchResult:
     """Fetch data from a single connector and write to raw Delta tables.
 
+    Every connector writes to the single merged bronze table
+    ``raw/{connector.name}`` (AD-5). ``fetch_kwargs(args)`` returns one or
+    more kwarg batches (e.g. XTB returns one batch per ``--xtb-file``); each
+    batch is fetched and appended to the same ``raw/{name}``. The events fetch
+    (when the connector has one — IBKR ``flex_events``, Trading 212 history
+    endpoints) appends its rows to the SAME ``raw/{name}``; XTB has no events
+    fetch, the shared bronze row feeds both silver transforms (AD-6).
+
     Returns :class:`FetchResult`:
     - ``SUCCESS`` — data was fetched and written
     - ``SKIPPED`` — connector had no credentials or required input (e.g. XTB
@@ -126,74 +134,60 @@ def fetch_connector(
 
     error_occurred = False
 
-    # XTB handles multiple files — iterate over each one.
-    if connector.name == "xtb":
-        xtb_files = getattr(args, "xtb_file", None)
-        if not xtb_files:
-            return FetchResult.SKIPPED
-        for xtb_file in xtb_files if isinstance(xtb_files, list) else [xtb_files]:
-            try:
-                raw = connector.fetch_snapshot(file_path=xtb_file)
-                table_path = get_raw_path(connector.name, "snapshot")
-                get_storage().backend.ensure_parent(table_path)
-                count = ingest_raw(raw, table_path, fernet_key)
-                logger.debug(
-                    "%s snapshot: %d rows written", connector.display_name, count
-                )
-            except Exception as exc:
-                error_occurred = True
-                print(
-                    f"  Error fetching {connector.display_name} snapshot: {exc}",
-                    file=sys.stderr,
-                )
-        return FetchResult.ERROR if error_occurred else FetchResult.SUCCESS
-
-    # All other connectors use the fetch_kwargs protocol.
-    snapshot_kwargs = connector.fetch_kwargs(args)
-    if not snapshot_kwargs:
+    # Uniform contract: fetch_kwargs returns one or more kwarg batches.
+    snapshot_batches = connector.fetch_kwargs(args)
+    if not snapshot_batches:
         logger.debug(
             "Skipping %s: required secrets not configured", connector.display_name
         )
         return FetchResult.SKIPPED
 
-    events_kwargs = connector.fetch_events_kwargs()
-
-    try:
-        raw = connector.fetch_snapshot(**snapshot_kwargs)
-        table_path = get_raw_path(connector.name, "snapshot")
-        get_storage().backend.ensure_parent(table_path)
-        count = ingest_raw(raw, table_path, fernet_key)
-        logger.debug("%s snapshot: %d rows written", connector.display_name, count)
-    except NotImplementedError:
-        logger.debug("%s snapshot: not implemented", connector.display_name)
-    except Exception as exc:
-        error_occurred = True
-        print(
-            f"  Error fetching {connector.display_name} snapshot: {exc}",
-            file=sys.stderr,
-        )
-
-    # Try events
-    if not events_kwargs:
-        logger.debug(
-            "Skipping %s events: required secrets not configured",
-            connector.display_name,
-        )
-    else:
+    raw_path = get_raw_path(connector.name)
+    for snapshot_kwargs in snapshot_batches:
         try:
-            raw_events = connector.fetch_events(**events_kwargs)
-            events_path = get_raw_path(connector.name, "events")
-            get_storage().backend.ensure_parent(events_path)
-            count = ingest_raw(raw_events, events_path, fernet_key)
-            logger.debug("%s events: %d rows written", connector.display_name, count)
+            raw = connector.fetch_snapshot(**snapshot_kwargs)
+            get_storage().backend.ensure_parent(raw_path)
+            count = ingest_raw(raw, raw_path, fernet_key)
+            logger.debug("%s snapshot: %d rows written", connector.display_name, count)
         except NotImplementedError:
-            logger.debug("%s events: not implemented", connector.display_name)
+            logger.debug("%s snapshot: not implemented", connector.display_name)
         except Exception as exc:
             error_occurred = True
             print(
-                f"  Error fetching {connector.display_name} events: {exc}",
+                f"  Error fetching {connector.display_name} snapshot: {exc}",
                 file=sys.stderr,
             )
+
+    # Events fetch — connectors that declare one (IBKR flex_events; Trading
+    # 212 the three history endpoints) append to the same raw/{name}. XTB has
+    # no events fetch: the shared bronze row feeds both silvers (AD-6).
+    # Decision: docs/adr/0114-single-bronze-raw-table-per-broker.md
+    fetch_events_kwargs = getattr(connector, "fetch_events_kwargs", None)
+    if fetch_events_kwargs is None:
+        logger.debug("%s: no events fetch", connector.display_name)
+    else:
+        events_kwargs = fetch_events_kwargs()
+        if not events_kwargs:
+            logger.debug(
+                "Skipping %s events: required secrets not configured",
+                connector.display_name,
+            )
+        else:
+            try:
+                raw_events = connector.fetch_events(**events_kwargs)
+                get_storage().backend.ensure_parent(raw_path)
+                count = ingest_raw(raw_events, raw_path, fernet_key)
+                logger.debug(
+                    "%s events: %d rows written", connector.display_name, count
+                )
+            except NotImplementedError:
+                logger.debug("%s events: not implemented", connector.display_name)
+            except Exception as exc:
+                error_occurred = True
+                print(
+                    f"  Error fetching {connector.display_name} events: {exc}",
+                    file=sys.stderr,
+                )
 
     return FetchResult.ERROR if error_occurred else FetchResult.SUCCESS
 
@@ -209,12 +203,11 @@ def transform_connector(connector, fernet_key: bytes) -> int:
     storage_opts = get_storage().storage_options
 
     for layer in ("snapshot", "events"):
-        # D17: the events transform reads from the connector's events_raw_layer
-        # (default "events"; XTB overrides to "snapshot" for shared bronze). The
-        # snapshot layer always reads the snapshot raw. The normalized output
-        # is still written to ``normalized/{name}_{layer}`` below.
-        raw_layer = layer if layer == "snapshot" else connector.events_raw_layer
-        raw_path = get_raw_path(connector.name, raw_layer)
+        # Both transforms read the single merged bronze table raw/{name}; the
+        # ``source`` column discriminates snapshot vs events rows (AD-2). The
+        # normalized output is still written to
+        # ``normalized/{name}_{layer}`` — silver stays two tables per broker.
+        raw_path = get_raw_path(connector.name)
         try:
             dt = DeltaTable(raw_path, storage_options=storage_opts)
         except Exception:
@@ -378,14 +371,16 @@ def cmd_analytics(args: argparse.Namespace) -> int:
     return 0
 
 
-def get_raw_path(connector_name: str, layer: str) -> str:
-    """Get the raw data path for a connector and layer.
+def get_raw_path(connector_name: str) -> str:
+    """Get the raw data path for a connector: ``raw/{connector_name}``.
 
-    Returns a plain string — S3 URIs must not be wrapped in ``Path()``
-    because ``pathlib.Path`` collapses ``s3://`` to ``s3:/``.
+    One merged bronze table per broker holds snapshot and events rows
+    discriminated by ``source`` (AD-1). Returns a plain string — S3 URIs
+    must not be wrapped in ``Path()`` because ``pathlib.Path`` collapses
+    ``s3://`` to ``s3:/``.
     """
     config = get_storage()
-    return config.raw_path(f"{connector_name}_{layer}")
+    return config.raw_path(connector_name)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:

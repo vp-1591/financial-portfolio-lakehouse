@@ -12,10 +12,9 @@ class TestRegistry:
         class FakeConnector:
             name = "fake"
             display_name = "Fake"
-            events_raw_layer = "events"
 
             def fetch_kwargs(self, args):
-                return {}
+                return []
 
             def fetch_events_kwargs(self):
                 return {}

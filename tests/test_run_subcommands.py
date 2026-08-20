@@ -111,7 +111,7 @@ class TestFetchConnectorIsolation:
     def test_uses_fetch_kwargs(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
-        """fetch_connector calls connector.fetch_kwargs(args) and passes result to fetch_snapshot."""
+        """fetch_connector calls connector.fetch_kwargs(args) and passes each batch to fetch_snapshot."""
         connector = get("ibkr")
         args = argparse.Namespace()
 
@@ -119,11 +119,13 @@ class TestFetchConnectorIsolation:
             patch.object(
                 connector,
                 "fetch_kwargs",
-                return_value={
-                    "flex_token": "t",
-                    "flex_query_id": "q",
-                    "flex_base_url": "u",
-                },
+                return_value=[
+                    {
+                        "flex_token": "t",
+                        "flex_query_id": "q",
+                        "flex_base_url": "u",
+                    }
+                ],
             ) as mock_kwargs,
             patch.object(
                 connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
@@ -140,12 +142,12 @@ class TestFetchConnectorIsolation:
     def test_skips_connector_when_kwargs_empty(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
-        """fetch_connector returns SKIPPED and skips when fetch_kwargs returns {}."""
+        """fetch_connector returns SKIPPED and skips when fetch_kwargs returns []."""
         connector = get("ibkr")
         args = argparse.Namespace()
 
         with (
-            patch.object(connector, "fetch_kwargs", return_value={}),
+            patch.object(connector, "fetch_kwargs", return_value=[]),
             patch.object(connector, "fetch_snapshot") as mock_snapshot,
         ):
             fernet_key = generate_key()
@@ -165,11 +167,13 @@ class TestFetchConnectorIsolation:
             patch.object(
                 connector,
                 "fetch_kwargs",
-                return_value={
-                    "flex_token": "t",
-                    "flex_query_id": "q",
-                    "flex_base_url": "u",
-                },
+                return_value=[
+                    {
+                        "flex_token": "t",
+                        "flex_query_id": "q",
+                        "flex_base_url": "u",
+                    }
+                ],
             ),
             patch.object(
                 connector,

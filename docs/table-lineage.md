@@ -15,13 +15,10 @@ flowchart TD
   classDef norm fill:#e3f2fd,stroke:#64b5f6,color:#333
   classDef gold fill:#e8f5e9,stroke:#81c784,color:#333
 
-  %% Raw
-  r_ibkr_snap["ibkr_snapshot"]:::raw
-  r_ibkr_events["ibkr_events"]:::raw
-  r_t212_snap["trading212_snapshot"]:::raw
-  r_t212_events["trading212_events"]:::raw
-  r_xtb_snap["xtb_snapshot"]:::raw
-  r_xtb_events["xtb_events"]:::raw
+  %% Raw — one table per broker; `source` discriminates snapshot/events
+  r_ibkr["raw/ibkr"]:::raw
+  r_t212["raw/trading212"]:::raw
+  r_xtb["raw/xtb"]:::raw
 
   %% Normalized
   n_ibkr_snap["ibkr_snapshot"]:::norm
@@ -40,15 +37,16 @@ flowchart TD
   g_cashflow["cash_flow_summary"]:::gold
   g_quality["data_quality"]:::gold
 
-  %% Raw → Normalized
-  r_ibkr_snap -->|transform_snapshot| n_ibkr_snap
-  r_ibkr_events -->|transform_events| n_ibkr_events
+  %% Raw → Normalized (each broker's single raw table feeds both silvers;
+  %% transform_snapshot / transform_events route rows by `source`)
+  r_ibkr -->|transform_snapshot| n_ibkr_snap
+  r_ibkr -->|transform_events| n_ibkr_events
 
-  r_t212_snap -->|transform_snapshot| n_t212_snap
-  r_t212_events -->|transform_events| n_t212_events
+  r_t212 -->|transform_snapshot| n_t212_snap
+  r_t212 -->|transform_events| n_t212_events
 
-  r_xtb_snap -->|transform_snapshot| n_xtb_snap
-  r_xtb_events -->|transform_events| n_xtb_events
+  r_xtb -->|transform_snapshot| n_xtb_snap
+  r_xtb -->|transform_events| n_xtb_events
 
   %% Snapshot path
   n_ibkr_snap -->|extract_holdings| n_consolidated

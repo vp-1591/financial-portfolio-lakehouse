@@ -61,7 +61,7 @@ Functions orchestrator's `RunConnectors` Map with
 fetch+transform runs only on file arrival. `run-consolidate-analytics` still
 reads `xtb_snapshot`/`xtb_events` silver on every run whenever present, and
 `xtb_events` is not a required non-empty table. Multiple accounts accumulate
-across triggers into the shared `xtb_snapshot` raw table and are unioned
+across triggers into the shared `raw/xtb` table and are unioned
 per-account at transform time.
 
 ## Implementation

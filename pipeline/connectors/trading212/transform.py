@@ -47,9 +47,12 @@ def transform_snapshot(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     positions_data = None
 
     for row in rows:
-        if "/account/summary" in row.source:
+        # AD-2: prefix-anchored gates on the declared request paths
+        # (pagination-tolerant; never free substring — the legacy
+        # ``/equity/metadata/instruments`` fixture row must match no gate).
+        if row.source.startswith("/equity/account/summary"):
             summary_data = row.payload_parsed
-        elif "/positions" in row.source:
+        elif row.source.startswith("/equity/positions"):
             positions_data = row.payload_parsed
 
     if summary_data is None or positions_data is None:
@@ -266,11 +269,13 @@ def transform_events(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     dfs: list[pl.DataFrame] = []
 
     for fetched_at, source, events in decrypt_events_payloads(raw, fernet_key):
-        if "/orders" in source:
+        # AD-2: prefix-anchored gates on the declared request paths
+        # (pagination-tolerant — nextPagePath suffixes share the prefix).
+        if source.startswith("/equity/history/orders"):
             dfs.append(_transform_orders(events, fetched_at, source))
-        elif "/dividends" in source:
+        elif source.startswith("/equity/history/dividends"):
             dfs.append(_transform_dividends(events, fetched_at, source))
-        elif "/transactions" in source:
+        elif source.startswith("/equity/history/transactions"):
             dfs.append(_transform_transactions(events, fetched_at, source))
 
     if not dfs:

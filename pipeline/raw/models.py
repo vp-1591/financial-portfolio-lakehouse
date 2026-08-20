@@ -1,7 +1,9 @@
-"""PyArrow schemas for the 6 raw tables.
+"""PyArrow schema for the raw layer.
 
-All raw tables share the same schema shape: fetched_at, broker, source,
-payload (Fernet-encrypted), payload_hash, and source_file.
+One Delta table per broker (``raw/{broker}``) with a single shared schema:
+fetched_at, broker, source, payload (Fernet-encrypted), payload_hash, and
+source_file. The ``source`` column discriminates snapshot vs events rows
+(ADR 0047, AD-1).
 """
 
 from __future__ import annotations
@@ -19,11 +21,3 @@ RAW_SCHEMA = pa.schema(
         pa.field("source_file", pa.string()),
     ]
 )
-
-# Individual schema aliases for clarity when writing to specific table paths
-ibkr_snapshot_raw_schema = RAW_SCHEMA
-ibkr_events_raw_schema = RAW_SCHEMA
-trading212_snapshot_raw_schema = RAW_SCHEMA
-trading212_events_raw_schema = RAW_SCHEMA
-xtb_snapshot_raw_schema = RAW_SCHEMA
-xtb_events_raw_schema = RAW_SCHEMA

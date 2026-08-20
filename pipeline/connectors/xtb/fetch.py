@@ -1,10 +1,11 @@
 """XTB connector: fetch raw report data from XLS files.
 
 Stage 3 (D17 shared bronze): ``fetch_snapshot`` writes a single raw row with
-``source == "XTB_REPORT"`` carrying the full 3-sheet workbook. The separate
-``fetch_events`` path is removed — both snapshot and events silvers derive from the
-same ``xtb_snapshot`` raw table. ``fetch_kwargs``/``args.xtb_file`` loop
-support lives in :func:`pipeline.run.fetch_connector`, not here.
+``source == "XTB_REPORT"`` carrying the full 3-sheet workbook into ``raw/xtb``.
+Both snapshot and events silvers derive from that single row — there is no
+separate XTB events fetch. ``fetch_kwargs`` returns one batch per
+``--xtb-file`` and the generic path in :func:`pipeline.run.fetch_connector`
+iterates them.
 """
 
 from __future__ import annotations

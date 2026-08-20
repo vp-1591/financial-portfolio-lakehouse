@@ -7,7 +7,7 @@ AWS credentials must be configured via environment variables
 Tables are identified by **aliases** that follow the
 ``{name}_{layer}`` convention:
 
-- ``ibkr_snapshot_raw`` — raw layer
+- ``ibkr_raw`` — raw layer
 - ``ibkr_snapshot_normalized`` — normalized layer
 - ``portfolio_holdings_analytics`` — analytics layer
 
@@ -22,10 +22,10 @@ Usage::
     list_tables()
 
     # Query using native DuckDB API
-    db.sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5").pl()
+    db.sql("SELECT * FROM ibkr_raw LIMIT 5").pl()
 
     # Decrypt encrypted columns (auto-detects binary columns)
-    df = db.sql("SELECT * FROM ibkr_snapshot_raw").pl()
+    df = db.sql("SELECT * FROM ibkr_raw").pl()
     decrypt_df(df)
 
     # Refresh after writing new tables
@@ -146,7 +146,7 @@ def list_tables(*, refresh: bool = False) -> list[str]:
     """Discover Delta tables on disk/S3 and return layer-qualified aliases.
 
     Each returned alias follows the ``{name}_{layer}`` convention
-    (e.g. ``ibkr_snapshot_raw``, ``portfolio_holdings_analytics``).
+    (e.g. ``ibkr_raw``, ``portfolio_holdings_analytics``).
 
     Results are cached in memory for the lifetime of the process.
     Pass ``refresh=True`` to force re-discovery.
@@ -160,7 +160,7 @@ def list_tables(*, refresh: bool = False) -> list[str]:
     -------
     >>> list_tables()
     ['consolidated_holdings_normalized', 'ibkr_snapshot_normalized',
-     'ibkr_snapshot_raw', 'portfolio_holdings_analytics']
+     'ibkr_raw', 'portfolio_holdings_analytics']
     """
     global _TABLE_CACHE
     if _TABLE_CACHE is not None and not refresh:
@@ -201,7 +201,7 @@ def parse_alias(alias: str) -> tuple[str, str] | None:
     Parameters
     ----------
     alias:
-        A layer-qualified alias such as ``ibkr_snapshot_raw``.
+        A layer-qualified alias such as ``ibkr_raw``.
 
     Returns
     -------
@@ -211,8 +211,8 @@ def parse_alias(alias: str) -> tuple[str, str] | None:
 
     Example
     -------
-    >>> parse_alias("ibkr_snapshot_raw")
-    ('ibkr_snapshot', 'raw')
+    >>> parse_alias("ibkr_raw")
+    ('ibkr', 'raw')
     >>> parse_alias("portfolio_holdings_analytics")
     ('portfolio_holdings', 'analytics')
     >>> parse_alias("some_random_string")
@@ -246,7 +246,7 @@ def get_connection() -> duckdb.DuckDBPyConnection:
     Example
     -------
     >>> db = get_connection()
-    >>> db.sql("SELECT * FROM ibkr_snapshot_raw LIMIT 5").pl()
+    >>> db.sql("SELECT * FROM ibkr_raw LIMIT 5").pl()
     """
     global _connection
     if _connection is None:
@@ -390,7 +390,7 @@ def decrypt_df(
     Example
     -------
     >>> db = get_connection()
-    >>> df = db.sql("SELECT * FROM ibkr_snapshot_raw").pl()
+    >>> df = db.sql("SELECT * FROM ibkr_raw").pl()
     >>> decrypt_df(df)  # auto-detects and decrypts the 'payload' column
 
     >>> df = db.sql("SELECT * FROM ibkr_snapshot_normalized").pl()

@@ -4,9 +4,13 @@ Provides factory functions that return realistic ``pa.Table`` objects
 matching the actual schemas used by the Trading 212 connector.
 
 The default payloads mirror the real demo API shapes (queried from
-``trading212_snapshot_raw`` / ``trading212_snapshot_normalized`` in the
-staging environment) so that ``transform_snapshot`` exercised on the raw
-fixture reproduces the normalized fixture exactly (round-trip).
+``trading212_raw`` / ``trading212_snapshot_normalized`` in the staging
+environment) so that ``transform_snapshot`` exercised on the raw fixture
+reproduces the normalized fixture exactly (round-trip). Since the single-bronze
+convention (AD-1), all of a broker's raw rows — snapshot and events alike —
+live in one ``raw/{broker}`` table (alias ``{broker}_raw``) discriminated by
+``source``; the snapshot fixture is ``RAW_SCHEMA``-shaped and concatenates with
+an events fixture into ``t212_raw_merged`` for merged-table tests.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ def t212_raw_snapshot(
 ) -> pa.Table:
     """Build a raw Trading 212 snapshot table with encrypted payloads.
 
-    Default data mirrors the real demo ``trading212_snapshot_raw`` shape:
+    Default data mirrors the real demo ``trading212_raw`` shape:
       * ``summary`` is a nested dict with ``cash`` (dict with
         ``availableToTrade``), ``totalValue``, ``investments`` and ``currency``
         (the demo path staging deploys use, not the scalar-cash live path).
@@ -193,4 +197,104 @@ def t212_normalized_snapshot(
             "isin": ["IE00BK5BQT80", "US0378331005", ""],
         },
         schema=snapshot_normalized_schema,
+    )
+
+
+# One realistic historical-order event (nested order/fill per the T212 API
+# spec) mirroring the events fixture the transform tests build inline.
+_T212_ORDER_EVENT = {
+    "order": {
+        "id": 12345,
+        "ticker": "AAPL_US_EQ",
+        "side": "BUY",
+        "currency": "USD",
+        "createdAt": "2024-01-15T10:30:00Z",
+        "instrument": {
+            "ticker": "AAPL_US_EQ",
+            "isin": "US0378331007",
+            "name": "Apple Inc.",
+            "currency": "USD",
+        },
+        "filledQuantity": 10,
+        "value": 1500.0,
+        "filledValue": 1500.0,
+    },
+    "fill": {
+        "id": 67890,
+        "quantity": 10,
+        "price": 150.0,
+        "filledAt": "2024-01-15T10:30:01Z",
+        "walletImpact": {
+            "currency": "USD",
+            "fxRate": 1.0,
+            "netValue": 1500.0,
+            "realisedProfitLoss": 0,
+            "taxes": [],
+        },
+    },
+}
+
+
+def t212_raw_events(
+    events: list[dict[str, Any]] | None = None,
+    source: str = "/equity/history/orders",
+    fernet_key: bytes | None = None,
+    fetched_at: datetime | None = None,
+) -> pa.Table:
+    """Build a raw Trading 212 events table (one encrypted payload).
+
+    Default data is one realistic ``/equity/history/orders`` TRADE event
+    mirroring the T212 API spec. Under the single-bronze convention (AD-1)
+    events rows land in the SAME ``raw/trading212`` table as snapshot rows,
+    discriminated by ``source``.
+    """
+    if fernet_key is None:
+        fernet_key = generate_key()
+    now = fetched_at if fetched_at is not None else datetime.now(UTC)
+    if events is None:
+        events = [_T212_ORDER_EVENT]
+    payload = json.dumps(events).encode("utf-8")
+    return pa.table(
+        {
+            "fetched_at": [now],
+            "broker": [_T212_BROKER],
+            "source": [source],
+            "payload": [encrypt(payload, fernet_key)],
+            "payload_hash": [hashlib.sha256(payload).hexdigest()],
+            "source_file": [""],
+        },
+        schema=RAW_SCHEMA,
+    )
+
+
+def t212_raw_merged(
+    summary: dict[str, Any] | None = None,
+    positions: list[dict[str, Any]] | None = None,
+    instruments: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
+    fernet_key: bytes | None = None,
+    fetched_at: datetime | None = None,
+) -> pa.Table:
+    """Build a merged raw Trading 212 table holding both fetch kinds.
+
+    Concatenates the snapshot rows (:func:`t212_raw_snapshot`) with the events
+    rows (:func:`t212_raw_events`) into the single-bronze ``raw/trading212``
+    shape (AD-1/AC-6): one Delta table per broker discriminated by ``source``.
+    """
+    if fernet_key is None:
+        fernet_key = generate_key()
+    return pa.concat_tables(
+        [
+            t212_raw_snapshot(
+                summary=summary,
+                positions=positions,
+                instruments=instruments,
+                fernet_key=fernet_key,
+                fetched_at=fetched_at,
+            ),
+            t212_raw_events(
+                events=events, fernet_key=fernet_key, fetched_at=fetched_at
+            ),
+        ],
+        schema=RAW_SCHEMA,
     )

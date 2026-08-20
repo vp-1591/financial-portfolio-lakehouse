@@ -46,12 +46,9 @@ def _setup_storage(tmp_path: Path) -> None:
 
     data = tmp_path / "data"
     for subdir in [
-        "raw/ibkr_snapshot",
-        "raw/ibkr_events",
-        "raw/trading212_snapshot",
-        "raw/trading212_events",
-        "raw/xtb_snapshot",
-        "raw/xtb_events",
+        "raw/ibkr",
+        "raw/trading212",
+        "raw/xtb",
         "normalized/ibkr_snapshot",
         "normalized/ibkr_events",
         "normalized/trading212_snapshot",

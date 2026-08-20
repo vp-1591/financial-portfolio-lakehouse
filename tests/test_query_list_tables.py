@@ -64,7 +64,7 @@ class TestParseAlias:
         assert parse_alias("something_raw") == ("something", "raw")
 
     def test_s3_uri_not_an_alias(self):
-        assert parse_alias("s3://bucket/prefix/raw/ibkr_snapshot") is None
+        assert parse_alias("s3://bucket/prefix/raw/ibkr") is None
 
 
 # ---------------------------------------------------------------------------

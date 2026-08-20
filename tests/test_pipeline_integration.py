@@ -388,7 +388,7 @@ class TestCliDispatchIntegration:
 
         key = generate_key()
         data = tmp_path / "data"
-        for subdir in ("normalized/ibkr_snapshot", "raw/ibkr_snapshot"):
+        for subdir in ("normalized/ibkr_snapshot", "raw/ibkr"):
             (data / subdir).mkdir(parents=True, exist_ok=True)
         self._write_ibkr_normalized(data, key)
 
@@ -451,7 +451,7 @@ class TestCliDispatchIntegration:
 
         key = generate_key()
         data = tmp_path / "data"
-        for subdir in ("normalized/ibkr_snapshot", "raw/ibkr_snapshot"):
+        for subdir in ("normalized/ibkr_snapshot", "raw/ibkr"):
             (data / subdir).mkdir(parents=True, exist_ok=True)
         self._write_ibkr_normalized(data, key)
 

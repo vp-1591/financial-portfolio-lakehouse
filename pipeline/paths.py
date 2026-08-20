@@ -23,13 +23,6 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         "ANALYTICS_DIR": config.analytics_dir,
         "SECRETS_DIR": config.secrets_dir,
         "ENCRYPTION_KEY_FILE": config.encryption_key_file,
-        # Raw table paths
-        "RAW_IBKR_SNAPSHOT": config.raw_path("ibkr_snapshot"),
-        "RAW_IBKR_EVENTS": config.raw_path("ibkr_events"),
-        "RAW_TRADING212_SNAPSHOT": config.raw_path("trading212_snapshot"),
-        "RAW_TRADING212_EVENTS": config.raw_path("trading212_events"),
-        "RAW_XTB_SNAPSHOT": config.raw_path("xtb_snapshot"),
-        "RAW_XTB_EVENTS": config.raw_path("xtb_events"),
         # Normalized table paths
         "NORMALIZED_IBKR_SNAPSHOT": config.normalized_path("ibkr_snapshot"),
         "NORMALIZED_IBKR_EVENTS": config.normalized_path("ibkr_events"),
