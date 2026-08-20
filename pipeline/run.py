@@ -713,13 +713,11 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     analytics_rc = cmd_analytics(args)
     if analytics_rc:
         return analytics_rc
-    # Validate gold tables after analytics
+    # Validate gold tables after analytics (silver tables were already
+    # validated above — re-checking them here would be redundant reads).
     return run_validation(
         fernet_key=fernet_key,
         tables=[
-            "consolidated_holdings",
-            "events",
-            *[f"{connector}_events" for connector in connectors],
             "portfolio_holdings",
             "dividend_income",
             "interest_income",
