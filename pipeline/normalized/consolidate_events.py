@@ -5,8 +5,9 @@ into ``normalized/events``, producing a unified broker-neutral events
 table suitable for dashboard queries.
 
 Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
-Only enabled connectors are read. Missing or empty event tables are skipped
-and reported as warnings; the quality validation stage records the warnings.
+All registered connectors' event tables are read (candidate set from the
+connector registry, D15); missing or empty tables are skipped and reported
+as warnings; the quality validation stage records the warnings.
 D15: ``account_id`` is part of the consolidate dedup subset so multi-account
 brokers (XTB, D18) do not drop same-ID events across accounts.
 """
@@ -26,19 +27,29 @@ from pipeline.storage import get_storage
 logger = logging.getLogger(__name__)
 
 
-def consolidate_events(connectors: list[str]) -> pa.Table:
+def consolidate_events() -> pa.Table:
     """Merge broker events normalized tables into ``normalized/events``.
 
-    Reads ``normalized/{broker}_events`` for each enabled connector,
-    concatenates non-empty tables, and writes ``normalized/events`` using
-    overwrite mode.
+    Reads ``normalized/{broker}_events`` for each registered connector
+    (candidate set from the connector registry, D15), concatenates
+    non-empty tables, and writes ``normalized/events`` using overwrite mode.
+    Missing or empty tables are skipped and reported as warnings.
     """
+    # Import lazily inside the function to avoid an import cycle:
+    # ``connectors.base`` imports ``pipeline.normalized.consolidate`` (for
+    # ``Holding``), so ``consolidate_events`` -> ``connectors.registry`` could
+    # close a loop if imported at module level.
+    from pipeline.connectors.registry import all as all_connectors
+
     config = get_storage()
     storage_opts = config.storage_options
 
+    # Candidate brokers come from the registry (single source of truth, D15).
+    candidate_brokers = [c.name for c in all_connectors()]
+
     tables: list[pa.Table] = []
 
-    for broker in connectors:
+    for broker in candidate_brokers:
         events_path = config.normalized_path(f"{broker}_events")
         try:
             dt = DeltaTable(str(events_path), storage_options=storage_opts)

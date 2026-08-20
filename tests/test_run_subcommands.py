@@ -223,6 +223,7 @@ class TestCmdRunConnector:
         mock_validate.assert_called_once_with(
             fernet_key=b"test-key",
             tables=["ibkr_snapshot", "ibkr_events"],
+            connectors=["ibkr"],
         )
 
     @patch("pipeline.run.run_validation", return_value=0)
@@ -289,12 +290,9 @@ class TestCmdRunConnector:
     ) -> None:
         """XTB without --xtb-file skips gracefully (returns 0).
 
-        XTB is a required scheduled connector, so the daily run calls it with
-        no file; when no file-arrival upload exists it must skip (return 0)
-        rather than fail the run. The real fetch_connector returns SKIPPED for
-        xtb without --xtb-file (run.py:132-133) without touching storage, and
-        cmd_run_connector maps a SKIPPED fetch to exit 0. transform and
-        validation must not run on a skipped fetch.
+        XTB is file-arrival-driven: ``run-connector xtb`` without
+        ``--xtb-file`` returns SKIPPED -> exit 0, so transform and validation
+        are skipped.
         """
         args = argparse.Namespace(connector="xtb", xtb_file=None)
         rc = cmd_run_connector(args)
@@ -320,6 +318,7 @@ class TestCmdRunConnector:
         mock_validate.assert_called_once_with(
             fernet_key=b"test-key",
             tables=["xtb_snapshot", "xtb_events"],
+            connectors=["xtb"],
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()

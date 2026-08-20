@@ -599,15 +599,15 @@ def _ns_for(base: argparse.Namespace, connector: str) -> argparse.Namespace:
     return ns
 
 
-def _consolidate_events(connectors: list[str]) -> int:
+def _consolidate_events() -> int:
     """Consolidate broker events into a unified table.
 
-    Missing or empty enabled event tables are warnings and do not fail the run.
+    Missing or empty registered event tables are warnings and do not fail the run.
     """
     from pipeline.normalized.consolidate_events import consolidate_events
 
     try:
-        consolidate_events(connectors)
+        consolidate_events()
     except RuntimeError as exc:
         print(f"Error consolidating events: {exc}", file=sys.stderr)
         return 1
@@ -675,6 +675,7 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     return run_validation(
         fernet_key=fernet_key,
         tables=tables,
+        connectors=[connector.name],
     )
 
 
@@ -690,7 +691,7 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     rc = cmd_consolidate(args)
     if rc:
         return rc
-    events_rc = _consolidate_events(connectors)
+    events_rc = _consolidate_events()
     if events_rc:
         return events_rc
     # Normalize target currency columns in events
