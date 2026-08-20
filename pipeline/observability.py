@@ -63,6 +63,7 @@ class MemorySampler:
         self.phase = phase
         self._stop = threading.Event()
         self._block_peak_mb = 0.0
+        self._thread: threading.Thread | None = None
 
     def _sample(self) -> None:
         while not self._stop.wait(0.1):
@@ -75,11 +76,12 @@ class MemorySampler:
             _note_peak(mb)
 
     def __enter__(self) -> Self:
-        threading.Thread(
+        self._thread = threading.Thread(
             target=self._sample,
             name=f"rss-sampler-{self.phase}",
             daemon=True,
-        ).start()
+        )
+        self._thread.start()
         return self
 
     def __exit__(
@@ -89,7 +91,13 @@ class MemorySampler:
         tb: TracebackType | None,
     ) -> None:
         self._stop.set()
-        peak = _note_peak(self._block_peak_mb)
+        if self._thread is not None:
+            # Join so the final <=100 ms sample is counted before we read the
+            # block peak; without it the last sample races the print.
+            self._thread.join()
+        _note_peak(self._block_peak_mb)
         print(
-            f"[mem] phase={self.phase} peak_mb={peak:.1f}", file=sys.stderr, flush=True
+            f"[mem] phase={self.phase} peak_mb={self._block_peak_mb:.1f}",
+            file=sys.stderr,
+            flush=True,
         )

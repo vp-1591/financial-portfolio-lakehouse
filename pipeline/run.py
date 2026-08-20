@@ -432,6 +432,10 @@ def cmd_full(args: argparse.Namespace) -> int:
     mode = get_mode()
     if mode == "docker":
         inject_secrets()
+        # All connectors share one process (_run_connectors_parallel), so the
+        # connector:<name> [mem] lines below are process-wide RSS, not
+        # per-connector. Use `run-connector <name> --mode staging` for true
+        # per-broker attribution.
         log_memory("full:docker:post-secrets")
         rc = _run_connectors_parallel(args)
         log_memory("full:docker:post-connectors")
