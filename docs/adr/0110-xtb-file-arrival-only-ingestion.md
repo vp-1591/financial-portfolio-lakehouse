@@ -41,10 +41,12 @@ the connector registry (`all_connectors()`), not the scheduled-connectors
 list, so it reads XTB silver whenever present without re-parsing. Only a
 file-arrival run refreshes XTB silver.
 
-`xtb_cdc` is removed from `NON_EMPTY_REQUIRED`
-(`pipeline/analytics/quality.py`): XTB is fully optional until a file arrives
-and is not in any required gate. This completes the removal started by
-`fee7cde` (which dropped `xtb` from `_REQUIRED_CDC_BROKERS`).
+The `NON_EMPTY_REQUIRED` gate (`pipeline/analytics/quality.py`) is removed
+entirely: no broker's events table is required to be non-empty, and XTB is
+fully optional until a file arrives. Missing or empty event tables are
+warnings, keyed to the run's connector list (`enabled_event_tables`). This
+completes the removal started by `fee7cde` (which dropped `xtb` from
+`_REQUIRED_CDC_BROKERS`).
 
 `fetch_failure_details` (`pipeline/sfn.py`) now derives the connector list
 from the failed execution's own `input` (a JSON string with
@@ -61,9 +63,9 @@ gracefully when no file has arrived" — no longer true).
 
 - Keep XTB in the schedule and let it skip (status quo): launches a no-op ECS
   task every run and contradicts ADR 0091 #6.
-- Keep `xtb_cdc` in `NON_EMPTY_REQUIRED` as an explicit "ingested at least
-  once" check: a bare `pipeline validate` fails on missing/empty `xtb_cdc`
-  before any file has arrived — a dormant landmine.
+- Keep `xtb_cdc` in a required non-empty gate as an explicit "ingested at
+  least once" check: a bare `pipeline validate` fails on missing/empty
+  `xtb_cdc` before any file has arrived — a dormant landmine.
 
 ## Constraints
 
@@ -97,8 +99,8 @@ gracefully when no file has arrived" — no longer true).
 - `tests/test_sfn.py::TestFetchFailureDetails` — log groups derived from the
   execution input (incl. xtb for a file-arrival execution); new fallback test
   for unparseable input → `DEFAULT_CONNECTORS`.
-- `tests/test_quality.py::test_non_empty_required_registry` — asserts
-  `xtb_cdc` NOT in `NON_EMPTY_REQUIRED`.
+- `tests/test_quality.py::TestCheckNonEmpty::test_warn_on_zero_rows` — an
+  empty enabled event table is a WARN, not a FAIL (no broker is required).
 - `tests/test_run_subcommands.py::_stub_sfn` — no xtb ARN resolved.
 - Full suite: 794 tests pass; `ruff check --fix . && ruff format .` clean;
   `pyright pipeline/ tests/` 0 errors.

@@ -1,9 +1,9 @@
 """Tests for event consolidation.
 
 Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
-Events are mandatory for every registered broker (ibkr, trading212, xtb);
-consolidation raises RuntimeError when a required broker events table is
-missing or empty.
+All registered connectors are read (candidate set from the connector
+registry, D15); missing or empty event tables are skipped and recorded as
+quality warnings.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ class TestConsolidateEvents:
         )
 
     def test_consolidate_merges_all_brokers(self, fernet_key: bytes) -> None:
-        """Consolidation merges rows from required + optional broker events tables."""
+        """Consolidation merges rows from all registered broker events tables."""
 
         t212_table = self._make_events_table(
             "Trading 212",
@@ -193,10 +193,10 @@ class TestConsolidateEvents:
         assert "IBKR" in brokers
         assert "XTB" in brokers
 
-    def test_consolidate_raises_when_required_broker_missing(
+    def test_consolidate_skips_when_enabled_broker_missing(
         self, fernet_key: bytes
     ) -> None:
-        """Consolidation raises RuntimeError when a required broker events table is missing."""
+        """A missing registered broker's event table does not prevent partial consolidation."""
 
         t212_table = self._make_events_table(
             "Trading 212",
@@ -234,15 +234,13 @@ class TestConsolidateEvents:
             mock_storage.return_value.storage_options = {}
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
 
-            with pytest.raises(
-                RuntimeError, match="Required events table ibkr_events not found"
-            ):
-                consolidate_events()
+            result = consolidate_events()
+            assert result.num_rows == 1
 
-    def test_consolidate_raises_when_required_broker_empty(
+    def test_consolidate_skips_when_enabled_broker_empty(
         self, fernet_key: bytes
     ) -> None:
-        """Consolidation raises RuntimeError when a required broker events table is empty."""
+        """An empty registered broker's event table does not prevent partial consolidation."""
 
         t212_table = self._make_events_table(
             "Trading 212",
@@ -279,13 +277,11 @@ class TestConsolidateEvents:
             mock_storage.return_value.storage_options = {}
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
 
-            with pytest.raises(
-                RuntimeError, match="Required events table ibkr_events is empty"
-            ):
-                consolidate_events()
+            result = consolidate_events()
+            assert result.num_rows == 1
 
     def test_consolidate_skips_when_xtb_missing(self, fernet_key: bytes) -> None:
-        """XTB is not in the required gate: a missing xtb_events is skipped."""
+        """A missing xtb_events table is skipped (XTB is consolidated when present)."""
 
         t212_table = self._make_events_table(
             "Trading 212",
@@ -340,14 +336,14 @@ class TestConsolidateEvents:
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
             result = consolidate_events()
-            # XTB is skipped; the required brokers still consolidate.
+            # XTB is skipped; the remaining registered connectors consolidate.
             assert result.num_rows == 2
             brokers = result.column("broker").to_pylist()
             assert "IBKR" in brokers
             assert "Trading 212" in brokers
 
     def test_consolidate_skips_when_xtb_empty(self, fernet_key: bytes) -> None:
-        """XTB is not in the required gate: an empty xtb_events is skipped."""
+        """An empty xtb_events table is skipped (XTB is consolidated only when present)."""
 
         t212_table = self._make_events_table(
             "Trading 212",
@@ -403,7 +399,7 @@ class TestConsolidateEvents:
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
             result = consolidate_events()
-            # XTB is skipped; the required brokers still consolidate.
+            # XTB is skipped; the remaining registered connectors consolidate.
             assert result.num_rows == 2
             brokers = result.column("broker").to_pylist()
             assert "IBKR" in brokers
@@ -419,11 +415,15 @@ class TestConsolidateEvents:
         asserts the sentinel is GONE (overwrite) rather than retained
         alongside the new rows (append).  Catches the
         ``mode="overwrite" -> "append"`` mutation (A2 D2).
+
+        Also covers the PR #148 regression: consolidation reads the connector
+        registry, not the run's connector list, so a scheduled-style run
+        (which fetches only ibkr+trading212) still keeps the XTB rows here.
         """
 
         storage = self._real_storage(tmp_path)
 
-        # Write required broker events tables (real Delta).
+        # Write enabled broker event tables (real Delta).
         self._write_events_delta(
             "IBKR",
             [
@@ -518,11 +518,12 @@ class TestConsolidateEvents:
     ) -> None:
         """A non-empty XTB events table is included in the consolidation.
 
-        Writes a non-empty ``xtb_events`` Delta table alongside the other required
-        broker tables, runs the writer, and asserts the XTB rows appear in the
+        Writes a non-empty ``xtb_events`` Delta table alongside the other broker
+        tables, runs the writer, and asserts the XTB rows appear in the
         result.  Catches the ``if table.num_rows > 0 -> == 0`` inverted-condition
-        mutation (A2 D4).  XTB is not in the required gate, but a non-empty
-        ``xtb_events`` is still consolidated like any other broker.
+        mutation (A2 D4).  Also covers the PR #148 regression: consolidation
+        reads the registry, not the run's connector list, so a scheduled-style
+        run (which fetches only ibkr+trading212) keeps the XTB rows in ``events``.
 
         Note: this exercises the events *consolidation* path with an inline XTB
         events table (broker-neutral schema), NOT the XTB *connector* fixture

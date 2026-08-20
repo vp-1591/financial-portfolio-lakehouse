@@ -5,16 +5,9 @@ into ``normalized/events``, producing a unified broker-neutral events
 table suitable for dashboard queries.
 
 Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
-Events are mandatory for every registered broker (ibkr, trading212) — a
-missing or empty required broker events table raises RuntimeError (the
-required-non-empty gate, carried forward from ADR 0087 §Decision).  XTB is
-not a scheduled connector: fetch+transform runs only on the EventBridge S3
-file-arrival rule, and ``xtb_events`` is consolidated whenever present (a
-missing or empty table is skipped, not raised).
-
-D15: the candidate broker set is derived from the connector registry
-(``connectors.all()``), not a hardcoded ``_OPTIONAL_EVENTS_BROKERS`` list. Only
-``_REQUIRED_EVENTS_BROKERS`` is hardcoded (the ADR 0087 required-non-empty gate).
+All registered connectors' event tables are read (candidate set from the
+connector registry, D15); missing or empty tables are skipped and reported
+as warnings; the quality validation stage records the warnings.
 D15: ``account_id`` is part of the consolidate dedup subset so multi-account
 brokers (XTB, D18) do not drop same-ID events across accounts.
 """
@@ -33,25 +26,14 @@ from pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
-# Brokers whose events tables are required — must be present and non-empty.
-_REQUIRED_EVENTS_BROKERS = ["ibkr", "trading212"]
-
 
 def consolidate_events() -> pa.Table:
     """Merge broker events normalized tables into ``normalized/events``.
 
-    Reads ``normalized/{broker}_events`` for each registered broker, concatenates
-    the rows, and writes the result to ``normalized/events`` using
-    overwrite mode.
-
-    The candidate broker set is derived from the connector registry
-    (``connectors.all()``) — D15. Required brokers
-    (:data:`_REQUIRED_EVENTS_BROKERS`) must be present and non-empty (raise on
-    missing/empty).
-
-    Raises :class:`RuntimeError` if a required broker events table is missing
-    or empty.  Returns the concatenated table (guaranteed non-empty because
-    all required brokers contributed rows).
+    Reads ``normalized/{broker}_events`` for each registered connector
+    (candidate set from the connector registry, D15), concatenates
+    non-empty tables, and writes ``normalized/events`` using overwrite mode.
+    Missing or empty tables are skipped and reported as warnings.
     """
     # Import lazily inside the function to avoid an import cycle:
     # ``connectors.base`` imports ``pipeline.normalized.consolidate`` (for
@@ -72,25 +54,26 @@ def consolidate_events() -> pa.Table:
         try:
             dt = DeltaTable(str(events_path), storage_options=storage_opts)
             table = dt.to_pyarrow_table()
-        except Exception as exc:
-            if broker in _REQUIRED_EVENTS_BROKERS:
-                raise RuntimeError(
-                    f"Required events table {broker}_events not found at {events_path}"
-                ) from exc
-            logger.debug("events %s: no data, skipping (optional)", broker)
+        except Exception:
+            logger.warning("events %s: table not found, skipping", broker)
             continue
         if table.num_rows == 0:
-            if broker in _REQUIRED_EVENTS_BROKERS:
-                raise RuntimeError(
-                    f"Required events table {broker}_events is empty (0 rows)"
-                )
-            logger.debug("events %s: 0 rows, skipping (optional)", broker)
+            logger.warning("events %s: table is empty, skipping", broker)
             continue
         tables.append(table)
         logger.info("events %s: %d rows", broker, table.num_rows)
 
-    # tables is guaranteed non-empty because all required brokers contributed.
-    result = pa.concat_tables(tables, schema=events_normalized_schema)
+    result = (
+        pa.concat_tables(tables, schema=events_normalized_schema)
+        if tables
+        else pa.table(
+            {
+                field.name: pa.array([], type=field.type)
+                for field in events_normalized_schema
+            },
+            schema=events_normalized_schema,
+        )
+    )
 
     # Defense-in-depth: dedup across brokers on (broker, event_type, event_id,
     # account_id). D15: ``account_id`` is part of the subset so multi-account

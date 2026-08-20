@@ -194,20 +194,6 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
     ],
 }
 
-# Tables that must contain at least one row.  Events are mandatory: an empty
-# events table indicates misconfiguration or a fully-blank account, both of
-# which must fail the pipeline rather than silently produce no analytics.
-# XTB is fully optional until a file arrives (driven by the EventBridge
-# file-arrival trigger) and is not in any required gate: its events are
-# consolidated whenever present.
-# Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md
-NON_EMPTY_REQUIRED: set[str] = {
-    "events",
-    "ibkr_events",
-    "trading212_events",
-}
-
-
 # ---------------------------------------------------------------------------
 # Individual check functions
 # ---------------------------------------------------------------------------
@@ -278,10 +264,7 @@ def check_required_nulls(
 
 
 def check_non_empty(table_name: str, arrow_table: pa.Table) -> CheckResult:
-    """Return FAIL when a required-non-empty table has zero rows.
-
-    Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
-    """
+    """Return WARN when an enabled event table has zero rows."""
     if arrow_table.num_rows > 0:
         return CheckResult(
             status=PASS,
@@ -289,8 +272,8 @@ def check_non_empty(table_name: str, arrow_table: pa.Table) -> CheckResult:
             actual=str(arrow_table.num_rows),
         )
     return CheckResult(
-        status=FAIL,
-        details=f"{table_name}: required to be non-empty but has 0 rows",
+        status=WARN,
+        details=f"{table_name}: enabled event table is empty (0 rows)",
         actual="0",
     )
 
@@ -488,6 +471,7 @@ def run_validation(
     freshness_days: int = 7,
     fail_on_warn: bool = False,
     tables: list[str] | None = None,
+    connectors: list[str] | None = None,
 ) -> int:
     """Run quality checks and persist results.
 
@@ -503,6 +487,10 @@ def run_validation(
     tables:
         If provided, validate only the named tables.  Unknown names produce a
         WARN.  When ``None`` (default), validate all registered tables.
+    connectors:
+        Enabled connector names for this execution. When provided, only
+        their event tables are validated and missing or empty event tables
+        produce WARN results.
 
     Returns
     -------
@@ -554,6 +542,14 @@ def run_validation(
     else:
         validated_tables = all_tables
 
+    enabled_event_tables = {f"{connector}_events" for connector in (connectors or [])}
+    if connectors is not None:
+        validated_tables = {
+            name: path
+            for name, path in validated_tables.items()
+            if not name.endswith("_events") or name in enabled_event_tables
+        }
+
     # Load events for reconciliation (shared across checks)
     events_table: pa.Table | None = None
     try:
@@ -564,6 +560,8 @@ def run_validation(
         events_table = events_dt.to_pyarrow_table()
     except Exception:
         logger.warning("Events table not found, skipping reconciliation")
+
+    events_available = events_table is not None and events_table.num_rows > 0
 
     all_results: list[CheckResult] = []
     result_metadata: list[tuple[str, str]] = []  # (table_name, check_name)
@@ -583,13 +581,12 @@ def run_validation(
             dt = DeltaTable(table_path, storage_options=storage_options)
             arrow_table = dt.to_pyarrow_table()
         except Exception:
-            # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
-            missing_status = FAIL if table_name in NON_EMPTY_REQUIRED else WARN
+            missing_status = WARN
             logger.log(
                 logging.ERROR if missing_status == FAIL else logging.WARNING,
                 "Table %s not found%s",
                 table_name,
-                " (required)" if missing_status == FAIL else "",
+                " (enabled event table)" if table_name in enabled_event_tables else "",
             )
             result = CheckResult(
                 status=missing_status,
@@ -629,16 +626,19 @@ def run_validation(
             all_results.append(result)
             result_metadata.append((table_name, "freshness"))
 
-        # 5. Non-empty check (events tables and any NON_EMPTY_REQUIRED entry)
-        # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
-        if table_name in NON_EMPTY_REQUIRED:
+        # 5. Enabled event tables must be non-empty, but only as warnings.
+        if table_name in enabled_event_tables:
             result = check_non_empty(table_name, arrow_table)
             all_results.append(result)
             result_metadata.append((table_name, "non_empty"))
 
         # 6. Reconciliation (consolidated_holdings only)
         if table_name == "consolidated_holdings":
-            result = check_reconciliation(table_name, arrow_table, events_table)
+            result = check_reconciliation(
+                table_name,
+                arrow_table,
+                events_table if events_available else None,
+            )
             all_results.append(result)
             result_metadata.append((table_name, "reconciliation"))
 

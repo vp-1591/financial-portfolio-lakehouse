@@ -112,7 +112,9 @@ def build_connector_command(name: str, mode: str, target_currency: str) -> list[
     return ["run-connector", name, "--mode", mode, "--target-currency", target_currency]
 
 
-def build_consolidate_command(mode: str, target_currency: str) -> list[str]:
+def build_consolidate_command(
+    mode: str, target_currency: str, connectors: list[str]
+) -> list[str]:
     """Build the ``run-consolidate-analytics`` command for the SFN input."""
     return [
         "run-consolidate-analytics",
@@ -120,6 +122,8 @@ def build_consolidate_command(mode: str, target_currency: str) -> list[str]:
         mode,
         "--target-currency",
         target_currency,
+        "--connectors",
+        *connectors,
     ]
 
 
@@ -154,7 +158,9 @@ def build_execution_input(
             for name in connectors
         ],
         "consolidate_allocate_task_def_arn": consolidate_arn,
-        "consolidate_command": build_consolidate_command(mode, target_currency),
+        "consolidate_command": build_consolidate_command(
+            mode, target_currency, connectors
+        ),
     }
 
 
