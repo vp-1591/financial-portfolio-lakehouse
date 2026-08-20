@@ -542,9 +542,7 @@ def run_validation(
     else:
         validated_tables = all_tables
 
-    enabled_event_tables = {
-        f"{connector}_events" for connector in (connectors or [])
-    }
+    enabled_event_tables = {f"{connector}_events" for connector in (connectors or [])}
     if connectors is not None:
         validated_tables = {
             name: path

@@ -206,7 +206,7 @@ class TestCheckSchema:
         # Drop the 'ticker' column
         table = table.drop_columns(["ticker"])
         result = check_schema("portfolio_holdings", table, portfolio_holdings_schema)
-        assert result.status == WARN
+        assert result.status == FAIL
         assert "ticker" in result.details
 
     def test_fail_on_extra_column(self) -> None:
@@ -445,6 +445,7 @@ class TestCheckNonEmpty:
         result = check_non_empty("ibkr_events", table)
         assert result.status == WARN
         assert "0 rows" in result.details
+
 
 # ---------------------------------------------------------------------------
 # Reconciliation check tests

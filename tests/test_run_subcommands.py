@@ -378,15 +378,19 @@ class TestCmdRunConsolidateAnalytics:
         mock_validate.assert_any_call(
             fernet_key=b"test-key",
             tables=["consolidated_holdings", "events"],
+            connectors=[],
         )
         mock_validate.assert_any_call(
             fernet_key=b"test-key",
             tables=[
+                "consolidated_holdings",
+                "events",
                 "portfolio_holdings",
                 "dividend_income",
                 "interest_income",
                 "cash_flow_summary",
             ],
+            connectors=[],
         )
 
     @patch("pipeline.run._normalize_events", return_value=0)

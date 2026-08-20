@@ -25,6 +25,7 @@ from pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
+
 def consolidate_events(connectors: list[str]) -> pa.Table:
     """Merge broker events normalized tables into ``normalized/events``.
 
