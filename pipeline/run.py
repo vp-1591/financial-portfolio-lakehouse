@@ -564,10 +564,16 @@ def _run_connectors_parallel(args: argparse.Namespace) -> int:
         fx_rate=getattr(args, "fx_rate", []),
         xtb_file=getattr(args, "xtb_file", None),
         mode=get_mode(),
+        # All connectors share this one process; a single process-wide sampler
+        # replaces the per-connector ones (cmd_run_connector checks the flag).
+        sampler=False,
     )
 
     errors: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(connectors_list)) as pool:
+    with (
+        MemorySampler("docker:parallel:all-connectors"),
+        ThreadPoolExecutor(max_workers=len(connectors_list)) as pool,
+    ):
         future_to_name = {
             pool.submit(cmd_run_connector, _ns_for(base_ns, c.name)): c.name
             for c in connectors_list
@@ -658,7 +664,10 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     cold starts.
     """
     log_memory(f"connector:{args.connector}:start")
-    with MemorySampler(f"connector:{args.connector}:fetch-transform-validate"):
+    with MemorySampler(
+        f"connector:{args.connector}:fetch-transform-validate",
+        enabled=getattr(args, "sampler", True),
+    ):
         inject_secrets()
         connector = get(args.connector)
         log_memory(f"connector:{args.connector}:post-secrets")
