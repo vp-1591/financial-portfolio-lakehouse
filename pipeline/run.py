@@ -8,7 +8,7 @@ Usage::
     python -m pipeline.run query "SELECT * FROM portfolio_holdings_analytics" --mode docker
     python -m pipeline.run run-connector ibkr --mode docker
     python -m pipeline.run run-connector xtb --xtb-file report.xlsx --mode docker
-    python -m pipeline.run run-consolidate-analytics --mode docker
+    python -m pipeline.run run-consolidate-analytics --mode docker --connectors ibkr trading212
 
 The ``--mode`` flag (``docker|staging|prod``) is required for all commands
 except ``keygen``.  It determines storage backend and credential resolution:
@@ -347,9 +347,9 @@ def cmd_analytics(args: argparse.Namespace) -> int:
         logger.warning("portfolio_holdings failed: %s", exc)
         holdings_ok = False
 
-    # Build events analytics tables.  Events are mandatory — consolidation
-    # guarantees events exists (or fails).  The guard below is
-    # defense-in-depth and should rarely trigger.
+    # Build events analytics tables. Missing or empty event inputs are
+    # reported by the final quality validation without masking connector
+    # task failures.
     # Decision: ADR 0087 - make the events layer mandatory and fail on empty
     # silver events.
     from pipeline.analytics.events_tables import (
@@ -439,6 +439,7 @@ def cmd_full(args: argparse.Namespace) -> int:
         rc = _run_connectors_parallel(args)
         if rc:
             return rc
+        args.connectors = [connector.name for connector in all_connectors()]
         return cmd_run_consolidate_analytics(args)
 
     return _trigger_sfn_execution(args, mode)
@@ -598,16 +599,15 @@ def _ns_for(base: argparse.Namespace, connector: str) -> argparse.Namespace:
     return ns
 
 
-def _consolidate_events() -> int:
+def _consolidate_events(connectors: list[str]) -> int:
     """Consolidate broker events into a unified table.
 
-    Returns 0 on success, 1 if consolidation raised (e.g. a required
-    broker events table is missing or empty).
+    Missing or empty enabled event tables are warnings and do not fail the run.
     """
     from pipeline.normalized.consolidate_events import consolidate_events
 
     try:
-        consolidate_events()
+        consolidate_events(connectors)
     except RuntimeError as exc:
         print(f"Error consolidating events: {exc}", file=sys.stderr)
         return 1
@@ -686,10 +686,11 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     gold tables after analytics — a FAIL-level check causes a non-zero exit.
     """
     fernet_key = load_key()
+    connectors = list(getattr(args, "connectors", []))
     rc = cmd_consolidate(args)
     if rc:
         return rc
-    events_rc = _consolidate_events()
+    events_rc = _consolidate_events(connectors)
     if events_rc:
         return events_rc
     # Normalize target currency columns in events
@@ -699,7 +700,12 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     # Validate silver tables after consolidate + events
     silver_rc = run_validation(
         fernet_key=fernet_key,
-        tables=["consolidated_holdings", "events"],
+        tables=[
+            "consolidated_holdings",
+            "events",
+            *[f"{connector}_events" for connector in connectors],
+        ],
+        connectors=connectors,
     )
     if silver_rc:
         return silver_rc
@@ -710,11 +716,15 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     return run_validation(
         fernet_key=fernet_key,
         tables=[
+            "consolidated_holdings",
+            "events",
+            *[f"{connector}_events" for connector in connectors],
             "portfolio_holdings",
             "dividend_income",
             "interest_income",
             "cash_flow_summary",
         ],
+        connectors=connectors,
     )
 
 
@@ -940,6 +950,12 @@ def main() -> int:
         "run-consolidate-analytics",
         parents=[common_parser, mode_parser],
         help="Run consolidate then analytics (orchestrator task)",
+    )
+    run_consolidate_analytics_parser.add_argument(
+        "--connectors",
+        nargs="+",
+        required=True,
+        help="Enabled connector names for this execution",
     )
     run_consolidate_analytics_parser.add_argument(
         "--fx-rate",

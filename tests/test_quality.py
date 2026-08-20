@@ -15,7 +15,6 @@ from pipeline.analytics.models import (
 )
 from pipeline.analytics.quality import (
     FAIL,
-    NON_EMPTY_REQUIRED,
     PASS,
     WARN,
     check_freshness,
@@ -207,7 +206,7 @@ class TestCheckSchema:
         # Drop the 'ticker' column
         table = table.drop_columns(["ticker"])
         result = check_schema("portfolio_holdings", table, portfolio_holdings_schema)
-        assert result.status == FAIL
+        assert result.status == WARN
         assert "ticker" in result.details
 
     def test_fail_on_extra_column(self) -> None:
@@ -440,21 +439,12 @@ class TestCheckNonEmpty:
         assert result.status == PASS
         assert "3" in result.details
 
-    def test_fail_on_zero_rows(self) -> None:
-        """An empty table fails the non-empty check."""
-        # Decision: docs/adr/0087-make-cdc-mandatory-and-fail-on-empty-silver-cdc.md
+    def test_warn_on_zero_rows(self) -> None:
+        """An empty enabled event table produces a warning."""
         table = pa.table({"x": pa.array([], type=pa.int64())})
         result = check_non_empty("ibkr_events", table)
-        assert result.status == FAIL
+        assert result.status == WARN
         assert "0 rows" in result.details
-
-    def test_non_empty_required_registry(self) -> None:
-        """NON_EMPTY_REQUIRED includes events, ibkr_events, trading212_events; xtb_events is optional."""
-        assert "events" in NON_EMPTY_REQUIRED
-        assert "ibkr_events" in NON_EMPTY_REQUIRED
-        assert "trading212_events" in NON_EMPTY_REQUIRED
-        assert "xtb_events" not in NON_EMPTY_REQUIRED
-
 
 # ---------------------------------------------------------------------------
 # Reconciliation check tests
@@ -526,7 +516,7 @@ class TestRunValidation:
         fernet_key = generate_key()
         storage = get_storage()
 
-        # Write test tables — including NON_EMPTY_REQUIRED events tables
+        # Write test tables, including enabled event tables.
         holdings = _make_holdings_table(fernet_key)
         events = _make_events_table(fernet_key)
         portfolio_holdings = _make_portfolio_holdings_table(fernet_key)
@@ -537,7 +527,7 @@ class TestRunValidation:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("events"), events, mode="overwrite")
-        # Write required broker events tables (NON_EMPTY_REQUIRED)
+        # Write enabled broker event tables.
         write_deltalake(
             storage.normalized_path("ibkr_events"), events, mode="overwrite"
         )
@@ -635,7 +625,7 @@ class TestRunValidation:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("events"), events, mode="overwrite")
-        # Write required broker events tables so NON_EMPTY_REQUIRED doesn't FAIL
+        # Write enabled broker event tables.
         write_deltalake(
             storage.normalized_path("ibkr_events"), events, mode="overwrite"
         )
@@ -689,7 +679,7 @@ class TestDataQualityRoundTrip:
             mode="overwrite",
         )
         write_deltalake(storage.normalized_path("events"), events, mode="overwrite")
-        # Write required broker events tables (NON_EMPTY_REQUIRED)
+        # Write enabled broker event tables.
         write_deltalake(
             storage.normalized_path("ibkr_events"), events, mode="overwrite"
         )

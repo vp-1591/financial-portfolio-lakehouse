@@ -217,7 +217,7 @@ resource "aws_cloudwatch_event_target" "xtb_file_arrival" {
         }
       ])},
       "consolidate_allocate_task_def_arn": "${var.consolidate_allocate_task_def_arn}",
-      "consolidate_command": ["run-consolidate-analytics", "--mode", "${local.mode_flag}", "--target-currency", "EUR"]
+      "consolidate_command": ${jsonencode(concat(["run-consolidate-analytics", "--mode", local.mode_flag, "--target-currency", "EUR", "--connectors"], var.file_arrival_connectors))}
     }
     TEMPLATE
     , "__XTB_FILE__", "<xtb_file>")
@@ -260,9 +260,10 @@ resource "aws_cloudwatch_event_target" "daily_schedule" {
       }
     ]
     consolidate_allocate_task_def_arn = var.consolidate_allocate_task_def_arn
-    consolidate_command = [
-      "run-consolidate-analytics", "--mode", local.mode_flag, "--target-currency", "EUR"
-    ]
+    consolidate_command = concat(
+      ["run-consolidate-analytics", "--mode", local.mode_flag, "--target-currency", "EUR", "--connectors"],
+      var.schedule_connectors,
+    )
   })
 }
 

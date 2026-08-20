@@ -58,12 +58,15 @@ class TestCommandBuilders:
         ]
 
     def test_build_consolidate_command_includes_mode(self) -> None:
-        assert sfn.build_consolidate_command("prod", "EUR") == [
+        assert sfn.build_consolidate_command("prod", "EUR", ["ibkr", "xtb"]) == [
             "run-consolidate-analytics",
             "--mode",
             "prod",
             "--target-currency",
             "EUR",
+            "--connectors",
+            "ibkr",
+            "xtb",
         ]
 
 
@@ -84,6 +87,9 @@ class TestBuildExecutionInput:
             "staging",
             "--target-currency",
             "EUR",
+            "--connectors",
+            "ibkr",
+            "trading212",
         ]
         names = [c["name"] for c in inp["connectors"]]
         assert names == ["ibkr", "trading212"]

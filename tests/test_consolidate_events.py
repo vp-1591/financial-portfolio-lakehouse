@@ -1,9 +1,8 @@
 """Tests for event consolidation.
 
 Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
-Events are mandatory for every registered broker (ibkr, trading212, xtb);
-consolidation raises RuntimeError when a required broker events table is
-missing or empty.
+Only enabled connectors are read; missing or empty event tables are skipped
+and recorded as quality warnings.
 """
 
 from __future__ import annotations
@@ -184,7 +183,7 @@ class TestConsolidateEvents:
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
-            result = consolidate_events()
+            result = consolidate_events(["ibkr", "trading212", "xtb"])
 
         assert result is not None
         assert result.num_rows == 3
@@ -193,10 +192,10 @@ class TestConsolidateEvents:
         assert "IBKR" in brokers
         assert "XTB" in brokers
 
-    def test_consolidate_raises_when_required_broker_missing(
+    def test_consolidate_skips_when_enabled_broker_missing(
         self, fernet_key: bytes
     ) -> None:
-        """Consolidation raises RuntimeError when a required broker events table is missing."""
+        """A missing enabled event table does not prevent partial consolidation."""
 
         t212_table = self._make_events_table(
             "Trading 212",
@@ -234,15 +233,13 @@ class TestConsolidateEvents:
             mock_storage.return_value.storage_options = {}
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
 
-            with pytest.raises(
-                RuntimeError, match="Required events table ibkr_events not found"
-            ):
-                consolidate_events()
+            result = consolidate_events(["ibkr", "trading212"])
+            assert result.num_rows == 1
 
-    def test_consolidate_raises_when_required_broker_empty(
+    def test_consolidate_skips_when_enabled_broker_empty(
         self, fernet_key: bytes
     ) -> None:
-        """Consolidation raises RuntimeError when a required broker events table is empty."""
+        """An empty enabled event table does not prevent partial consolidation."""
 
         t212_table = self._make_events_table(
             "Trading 212",
@@ -279,10 +276,8 @@ class TestConsolidateEvents:
             mock_storage.return_value.storage_options = {}
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
 
-            with pytest.raises(
-                RuntimeError, match="Required events table ibkr_events is empty"
-            ):
-                consolidate_events()
+            result = consolidate_events(["ibkr", "trading212"])
+            assert result.num_rows == 1
 
     def test_consolidate_skips_when_xtb_missing(self, fernet_key: bytes) -> None:
         """XTB is not in the required gate: a missing xtb_events is skipped."""
@@ -339,8 +334,8 @@ class TestConsolidateEvents:
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
-            result = consolidate_events()
-            # XTB is skipped; the required brokers still consolidate.
+            result = consolidate_events(["ibkr", "trading212", "xtb"])
+            # XTB is skipped; the remaining enabled connectors consolidate.
             assert result.num_rows == 2
             brokers = result.column("broker").to_pylist()
             assert "IBKR" in brokers
@@ -402,8 +397,8 @@ class TestConsolidateEvents:
             mock_storage.return_value.normalized_path = lambda x: f"data/normalized/{x}"
             mock_storage.return_value.backend.ensure_parent = lambda x: None
 
-            result = consolidate_events()
-            # XTB is skipped; the required brokers still consolidate.
+            result = consolidate_events(["ibkr", "trading212", "xtb"])
+            # XTB is skipped; the remaining enabled connectors consolidate.
             assert result.num_rows == 2
             brokers = result.column("broker").to_pylist()
             assert "IBKR" in brokers
@@ -423,7 +418,7 @@ class TestConsolidateEvents:
 
         storage = self._real_storage(tmp_path)
 
-        # Write required broker events tables (real Delta).
+        # Write enabled broker event tables (real Delta).
         self._write_events_delta(
             "IBKR",
             [
@@ -499,7 +494,7 @@ class TestConsolidateEvents:
         )
 
         # Run the writer.
-        result = consolidate_events()
+        result = consolidate_events(["ibkr", "trading212", "xtb"])
         assert result.num_rows == 3
 
         # Re-open the persisted Delta table and verify overwrite semantics.
@@ -581,7 +576,7 @@ class TestConsolidateEvents:
             "xtb_events",
         )
 
-        result = consolidate_events()
+        result = consolidate_events(["ibkr", "trading212", "xtb"])
         brokers = result.column("broker").to_pylist()
         # The non-empty XTB table must be included (3 rows total).
         # Under the D4 mutation (num_rows > 0 -> == 0), the non-empty XTB
