@@ -350,8 +350,8 @@ def cmd_analytics(args: argparse.Namespace) -> int:
     # Build events analytics tables. Missing or empty event inputs are
     # reported by the final quality validation without masking connector
     # task failures.
-    # Decision: ADR 0087 - make the events layer mandatory and fail on empty
-    # silver events.
+    # Decision: docs/adr/0110-xtb-file-arrival-only-ingestion.md - no broker
+    # is a required non-empty gate; missing/empty silver tables warn.
     from pipeline.analytics.events_tables import (
         build_cash_flow_summary,
         build_dividend_income,
