@@ -2,6 +2,7 @@
 id: SPEC-single-bronze-per-broker
 companions:
   - architecture-diagrams.md   # before/after raw-layer shape and transform routing
+  - ARCHITECTURE-SPINE.md      # feature architecture spine: invariants, routing contract, migration gate
 sources: []        # input was GitHub issue vp-1591/financial-portfolio-lakehouse#144 (URL, not a file); traceability in .memlog.md entry 1
 ---
 
