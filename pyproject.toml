@@ -28,6 +28,9 @@ pipeline = [
     "boto3==1.37.0",
     # tenacity provides retry logic for transient network errors in FX rate requests
     "tenacity==9.0.0",
+    # psutil provides per-process RSS for phase-level memory observability
+    # (pipeline/observability.py) so OOM-killed containers leave a log trail.
+    "psutil==7.2.2",
 ]
 dev = [
     "ipykernel==7.3.0",

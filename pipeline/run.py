@@ -36,6 +36,7 @@ from pipeline.connectors.registry import all as all_connectors
 from pipeline.connectors.registry import get
 from pipeline.crypto import load_key
 from pipeline.keygen import main as keygen_main
+from pipeline.observability import MemorySampler, log_memory
 from pipeline.secrets import (
     get_mode,
     inject_secrets,
@@ -431,12 +432,21 @@ def cmd_full(args: argparse.Namespace) -> int:
     mode = get_mode()
     if mode == "docker":
         inject_secrets()
+        # All connectors share one process (_run_connectors_parallel), so the
+        # connector:<name> [mem] lines below are process-wide RSS, not
+        # per-connector. Use `run-connector <name> --mode staging` for true
+        # per-broker attribution.
+        log_memory("full:docker:post-secrets")
         rc = _run_connectors_parallel(args)
+        log_memory("full:docker:post-connectors")
         if rc:
             return rc
         args.connectors = [connector.name for connector in all_connectors()]
-        return cmd_run_consolidate_analytics(args)
+        rc = cmd_run_consolidate_analytics(args)
+        log_memory("full:docker:post-consolidate-analytics")
+        return rc
 
+    log_memory("full:sfn-trigger")
     return _trigger_sfn_execution(args, mode)
 
 
@@ -554,10 +564,16 @@ def _run_connectors_parallel(args: argparse.Namespace) -> int:
         fx_rate=getattr(args, "fx_rate", []),
         xtb_file=getattr(args, "xtb_file", None),
         mode=get_mode(),
+        # All connectors share this one process; a single process-wide sampler
+        # replaces the per-connector ones (cmd_run_connector checks the flag).
+        sampler=False,
     )
 
     errors: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(connectors_list)) as pool:
+    with (
+        MemorySampler("docker:parallel:all-connectors"),
+        ThreadPoolExecutor(max_workers=len(connectors_list)) as pool,
+    ):
         future_to_name = {
             pool.submit(cmd_run_connector, _ns_for(base_ns, c.name)): c.name
             for c in connectors_list
@@ -647,31 +663,43 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
     connector through fetch and transform in a single process, cutting
     cold starts.
     """
-    inject_secrets()
-    connector = get(args.connector)
+    log_memory(f"connector:{args.connector}:start")
+    with MemorySampler(
+        f"connector:{args.connector}:fetch-transform-validate",
+        enabled=getattr(args, "sampler", True),
+    ):
+        inject_secrets()
+        connector = get(args.connector)
+        log_memory(f"connector:{args.connector}:post-secrets")
 
-    fernet_key = load_key()
-    rc = fetch_connector(connector, args, fernet_key)
-    if rc == FetchResult.SKIPPED:
-        # Connector has no credentials or required input (e.g. XTB without
-        # --xtb-file) — skip transform and validation gracefully.
-        return 0
-    if rc == FetchResult.ERROR:
-        return 1
-    rc = transform_connector(connector, fernet_key)
-    if rc:
+        fernet_key = load_key()
+        log_memory(f"connector:{args.connector}:post-key")
+        rc = fetch_connector(connector, args, fernet_key)
+        log_memory(f"connector:{args.connector}:post-fetch")
+        if rc == FetchResult.SKIPPED:
+            # Connector has no credentials or required input (e.g. XTB without
+            # --xtb-file) — skip transform and validation gracefully.
+            return 0
+        if rc == FetchResult.ERROR:
+            return 1
+        rc = transform_connector(connector, fernet_key)
+        log_memory(f"connector:{args.connector}:post-transform")
+        if rc:
+            return rc
+        # Validate connector's normalized tables after transform.
+        # D14: validation is unconditional — events are mandatory for every
+        # connector now that XTB produces events via the shared bronze (D17). The
+        # ``events_supported`` flag is removed.
+        # Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
+        tables = [f"{connector.name}_snapshot", f"{connector.name}_events"]
+        log_memory(f"connector:{args.connector}:pre-validate")
+        rc = run_validation(
+            fernet_key=fernet_key,
+            tables=tables,
+            connectors=[connector.name],
+        )
+        log_memory(f"connector:{args.connector}:post-validate")
         return rc
-    # Validate connector's normalized tables after transform.
-    # D14: validation is unconditional — events are mandatory for every
-    # connector now that XTB produces events via the shared bronze (D17). The
-    # ``events_supported`` flag is removed.
-    # Decision: docs/adr/0108-xtb-new-format-connector-overhaul.md
-    tables = [f"{connector.name}_snapshot", f"{connector.name}_events"]
-    return run_validation(
-        fernet_key=fernet_key,
-        tables=tables,
-        connectors=[connector.name],
-    )
 
 
 def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
@@ -682,8 +710,10 @@ def cmd_run_consolidate_analytics(args: argparse.Namespace) -> int:
     gold tables after analytics — a FAIL-level check causes a non-zero exit.
     """
     fernet_key = load_key()
+    log_memory("consolidate-analytics:post-key")
     connectors = list(getattr(args, "connectors", []))
     rc = cmd_consolidate(args)
+    log_memory("consolidate-analytics:post-consolidate")
     if rc:
         return rc
     events_rc = _consolidate_events()
@@ -967,6 +997,7 @@ def main() -> int:
     if args.command != "keygen":
         # Set execution mode from --mode flag before storage resolution.
         set_mode(args.mode)
+        log_memory(f"main:baseline:{args.command}")
 
         # Resolve storage configuration before any path access — except for
         # the SFN-trigger path (full --mode staging|prod), which needs no S3
