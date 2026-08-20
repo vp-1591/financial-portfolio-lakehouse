@@ -20,20 +20,17 @@ logger = logging.getLogger(__name__)
 class XtbConnector:
     name = "xtb"
     display_name = "XTB"
-    # D17 shared bronze: events transform reads the snapshot raw table, not a
-    # separate events raw. ``run.transform_connector`` reads
-    # ``get_raw_path(name, events_raw_layer)`` for the events layer.
-    events_raw_layer = "snapshot"
 
-    def fetch_kwargs(self, args: argparse.Namespace) -> dict:
+    def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         xtb_file = getattr(args, "xtb_file", None)
         if not xtb_file:
             logger.debug("Skipping XTB: no --xtb-file provided")
-            return {}
-        # XTB supports multiple files — return kwargs for the first file.
-        # The caller (fetch_connector) iterates over all files for XTB.
-        file_path = xtb_file[0] if isinstance(xtb_file, list) else xtb_file
-        return {"file_path": file_path}
+            return []
+        # D17 shared bronze: one raw row per uploaded file, all rows landing in
+        # raw/xtb. Return one kwarg batch per --xtb-file so the generic fetch
+        # path iterates them and appends each XTB_REPORT row (AD-6).
+        files = xtb_file if isinstance(xtb_file, list) else [xtb_file]
+        return [{"file_path": file_path} for file_path in files]
 
     def required_secrets(self) -> list[str]:
         # XTB reads from an uploaded file, not from API secrets.
@@ -68,18 +65,11 @@ class XtbConnector:
     def fetch_snapshot(self, **kwargs: Any) -> pa.Table:
         return fetch.fetch_snapshot(**kwargs)
 
-    # D17 shared bronze: XTB has no dedicated events fetch. Events are derived from
-    # the snapshot raw via ``events_raw_layer = "snapshot"`` (transform_events reads
-    # ``xtb_snapshot`` raw). The ``fetch_connector`` XTB branch returns before
-    # reaching the generic ``fetch_events`` call site, so these stubs are never
-    # invoked at runtime; they exist solely to satisfy the BrokerConnector
-    # structural protocol (pyright requires the methods to be declared on the
-    # class, not just inherited from the Protocol's abstract bodies).
-    def fetch_events_kwargs(self) -> dict:
-        return {}
-
-    def fetch_events(self, **kwargs: Any) -> pa.Table:
-        raise NotImplementedError("XTB events are produced from the snapshot raw (D17)")
+    # D17 shared bronze: XTB has no dedicated events fetch — events are derived
+    # from the same ``XTB_REPORT`` raw row in ``raw/xtb`` (transform_events
+    # reads the shared bronze). ``run.fetch_connector`` gates the events fetch
+    # with ``getattr(connector, "fetch_events_kwargs", None)``, so its absence
+    # here is the entire contract (AD-6: no events stubs).
 
     def transform_snapshot(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:
         return transform.transform_snapshot(raw, fernet_key)

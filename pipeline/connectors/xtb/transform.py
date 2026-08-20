@@ -1,7 +1,7 @@
 """XTB connector: transform raw snapshot and events data into normalized schema.
 
 Stage 2 rewrite (overhaul plan D2, D4-D22). Both transforms read the shared
-bronze ``xtb_snapshot`` raw table (D17 — one raw row per uploaded file with
+bronze ``raw/xtb`` table (D17 — one raw row per uploaded file with
 ``source == "XTB_REPORT"`` carrying the full 3-sheet workbook). The parser
 (:func:`pipeline.connectors.xtb.parser.parse_report`) turns each raw payload
 into an :class:`XtbReport`; the transforms keep the latest ``fetched_at``
@@ -340,7 +340,7 @@ def _build_events_record(
 def transform_events(raw: pa.Table, fernet_key: bytes) -> pa.Table:
     """Transform raw XTB events data into the broker-neutral events schema.
 
-    Reads the shared bronze ``xtb_snapshot`` raw (D17 — same raw as snapshot),
+    Reads the shared bronze ``raw/xtb`` (D17 — same raw as snapshot),
     iterates all ``source == "XTB_REPORT"`` rows, parses each via
     :func:`parse_report`, keeps the latest ``fetched_at`` per ``account_id``
     (D9/D18 — same selection as snapshot, NOT a union of all uploads), and

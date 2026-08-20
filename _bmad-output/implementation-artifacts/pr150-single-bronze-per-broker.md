@@ -1,6 +1,6 @@
 # Story pr150: Single bronze (raw) table per broker
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -52,48 +52,48 @@ so that the raw layer loses its per-broker × per-layer multiplicity (`{broker}_
 
 ## Tasks / Subtasks
 
-- [ ] T1: Merge migration `pipeline/migrations/migrate_single_bronze.py` (AC-4, AD-7)
-  - [ ] T1.1 Read `pipeline/migrations/migrate_cdc_to_events.py` + `_storage_options.py` and copy the convention: argparse `--mode docker|staging|prod`, `--dry-run`, `pipeline.secrets.load_env()` + `set_mode`, `get_storage_options_with_credentials()`, exit 0 on absent/already-migrated, `RuntimeError`/`ClientError` → `SystemExit(1)`.
-  - [ ] T1.2 Merge each broker: read `raw/{broker}_snapshot` + `raw/{broker}_events` (deltalake `DeltaTable` with storage options), concat (polars), dedup on `(broker, source, payload_hash)` keeping latest `fetched_at` and preserving `source_file`, then `write_deltalake(raw/{broker}, merged, mode="overwrite", schema_mode="overwrite")` — `pl.DataFrame` accepted directly, do NOT convert to `pa.Table`.
-  - [ ] T1.3 Idempotent recovery: the merge is a deterministic overwrite of `raw/{broker}` — re-running against the still-present sources with the same dedup key reproduces the same destination, so an interrupted run re-succeeds (no partial state). If the destination already exists with a schema that does NOT equal `RAW_SCHEMA` (order-sensitive), raise rather than clobber (ADR 0113 A1 conflict convention).
-  - [ ] T1.4 Remove every per-layer raw path after the merged table is verified (`raw/{broker}_snapshot`, `raw/{broker}_events`, and the orphaned `raw/xtb_events`) via batched S3 delete (mirror `_delete_objects`, `_DELETE_CHUNK=1000`), refusing to delete if the merged `raw/{broker}` was not written/verified. `--dry-run` prints the plan and writes nothing.
-  - [ ] T1.5 Migration script name is exactly `migrate_single_bronze.py` and runs via `python -m pipeline.migrations.migrate_single_bronze`.
-  - [ ] T1.6 Tests: `tests/test_migrate_single_bronze.py` modeled on `tests/test_migrate_cdc_to_events.py` (FakeS3 / FakeBackend / `_fake_config` pattern): merges both sources into one table, dedup key, latest-`fetched_at` tie-break preserving `source_file`, source deletion, orphan `xtb_events` purge, idempotent no-op, absent source, dry-run does not write, conflict raises, verification-failure refuses delete.
+- [x] T1: Merge migration `pipeline/migrations/migrate_single_bronze.py` (AC-4, AD-7)
+  - [x] T1.1 Read `pipeline/migrations/migrate_cdc_to_events.py` + `_storage_options.py` and copy the convention: argparse `--mode docker|staging|prod`, `--dry-run`, `pipeline.secrets.load_env()` + `set_mode`, `get_storage_options_with_credentials()`, exit 0 on absent/already-migrated, `RuntimeError`/`ClientError` → `SystemExit(1)`.
+  - [x] T1.2 Merge each broker: read `raw/{broker}_snapshot` + `raw/{broker}_events` (deltalake `DeltaTable` with storage options), concat (polars), dedup on `(broker, source, payload_hash)` keeping latest `fetched_at` and preserving `source_file`, then `write_deltalake(raw/{broker}, merged, mode="overwrite", schema_mode="overwrite")` — `pl.DataFrame` accepted directly, do NOT convert to `pa.Table`.
+  - [x] T1.3 Idempotent recovery: the merge is a deterministic overwrite of `raw/{broker}` — re-running against the still-present sources with the same dedup key reproduces the same destination, so an interrupted run re-succeeds (no partial state). If the destination already exists with a schema that does NOT equal `RAW_SCHEMA` (order-sensitive), raise rather than clobber (ADR 0113 A1 conflict convention).
+  - [x] T1.4 Remove every per-layer raw path after the merged table is verified (`raw/{broker}_snapshot`, `raw/{broker}_events`, and the orphaned `raw/xtb_events`) via batched S3 delete (mirror `_delete_objects`, `_DELETE_CHUNK=1000`), refusing to delete if the merged `raw/{broker}` was not written/verified. `--dry-run` prints the plan and writes nothing.
+  - [x] T1.5 Migration script name is exactly `migrate_single_bronze.py` and runs via `python -m pipeline.migrations.migrate_single_bronze`.
+  - [x] T1.6 Tests: `tests/test_migrate_single_bronze.py` modeled on `tests/test_migrate_cdc_to_events.py` (FakeS3 / FakeBackend / `_fake_config` pattern): merges both sources into one table, dedup key, latest-`fetched_at` tie-break preserving `source_file`, source deletion, orphan `xtb_events` purge, idempotent no-op, absent source, dry-run does not write, conflict raises, verification-failure refuses delete.
 
-- [ ] T2: Raw-layer collapse (AC-1, AD-1)
-  - [ ] T2.1 `pipeline/raw/models.py`: keep the single `RAW_SCHEMA` (fields `fetched_at, broker, source, payload, payload_hash, source_file` — unchanged, ADR 0047), delete the six `*_raw_schema` aliases (`ibkr_snapshot_raw_schema`, `ibkr_events_raw_schema`, `trading212_snapshot_raw_schema`, `trading212_events_raw_schema`, `xtb_snapshot_raw_schema`, `xtb_events_raw_schema`) and their re-exports in `pipeline/raw/__init__.py`.
-  - [ ] T2.2 `pipeline/run.py` `get_raw_path` (run.py:381): collapse to `raw/{connector_name}` — `config.raw_path(connector_name)`. Update all four call sites (run.py:137, 163, 185, 217) to the new signature; delete the now-unused `layer` param and the events/snapshot layer distinction.
-  - [ ] T2.3 `pipeline/paths.py`: remove the six `RAW_*_SNAPSHOT`/`RAW_*_EVENTS` constants (mapping lines 27-32); update `tests/test_storage_config.py:570` which asserts `RAW_IBKR_SNAPSHOT` (either drop the assertion or point it at the collapsed path).
-  - [ ] T2.4 `pipeline/raw/ingest.py`: dedup key stays `(broker, source, payload_hash)` (already correct — ingest.py:46-52); no change needed unless the merge exposes a gap.
+- [x] T2: Raw-layer collapse (AC-1, AD-1)
+  - [x] T2.1 `pipeline/raw/models.py`: keep the single `RAW_SCHEMA` (fields `fetched_at, broker, source, payload, payload_hash, source_file` — unchanged, ADR 0047), delete the six `*_raw_schema` aliases (`ibkr_snapshot_raw_schema`, `ibkr_events_raw_schema`, `trading212_snapshot_raw_schema`, `trading212_events_raw_schema`, `xtb_snapshot_raw_schema`, `xtb_events_raw_schema`) and their re-exports in `pipeline/raw/__init__.py`.
+  - [x] T2.2 `pipeline/run.py` `get_raw_path` (run.py:381): collapse to `raw/{connector_name}` — `config.raw_path(connector_name)`. Update all four call sites (run.py:137, 163, 185, 217) to the new signature; delete the now-unused `layer` param and the events/snapshot layer distinction.
+  - [x] T2.3 `pipeline/paths.py`: remove the six `RAW_*_SNAPSHOT`/`RAW_*_EVENTS` constants (mapping lines 27-32); update `tests/test_storage_config.py:570` which asserts `RAW_IBKR_SNAPSHOT` (either drop the assertion or point it at the collapsed path).
+  - [x] T2.4 `pipeline/raw/ingest.py`: dedup key stays `(broker, source, payload_hash)` (already correct — ingest.py:46-52); no change needed unless the merge exposes a gap.
 
-- [ ] T3: Fetch path unifies — every connector writes `raw/{name}` (AC-2, AD-5, AD-6)
-  - [ ] T3.1 `pipeline/run.py` `fetch_connector` (lines 114-198): delete the `if connector.name == "xtb":` branch (lines 130-149). The generic path becomes the ONLY path: `fetch_kwargs(args)` returns one or more kwarg batches, each batch fetched and appended to `raw/{name}`; the events fetch (when the connector has one) appends its rows to the SAME `raw/{name}`.
-  - [ ] T3.2 XTB multi-file: `XtbConnector.fetch_kwargs` (xtb/connector.py:28-36) currently returns kwargs for only the FIRST `--xtb-file`. Under the uniform contract it returns one batch per file (list-iterate in the generic path), preserving `--xtb-file` append semantics — every uploaded file's single `XTB_REPORT` row lands in `raw/xtb`.
-  - [ ] T3.3 `BrokerConnector` (base.py): remove the `events_raw_layer` attribute (line 23) and its docstring (D17 override). Drop `fetch_events`/`fetch_events_kwargs` from the Protocol (AD-6 "no events stubs") and delete XTB's never-invoked stubs (xtb/connector.py:78-82). Gate the events fetch in `fetch_connector` with `getattr(connector, "fetch_events_kwargs", None)` — IBKR/T212 still fetch events (IBKR `flex_events`; T212 the three history endpoints), XTB simply has no events fetch (shared bronze feeds both silvers).
-  - [ ] T3.4 Per-endpoint write-what-succeeded `try/except` isolation stays; Trading 212 `fetch.py:120-124` all-events-endpoints-empty `RuntimeError` survives unchanged (write it to `raw/trading212` now).
-  - [ ] T3.5 IBKR `fetch_snapshot`/`fetch_events` keep returning `pa.Table` rows tagged `flex` / `flex_events`; T212 keeps its five endpoints with full captured request-path `source` values; XTB keeps `XTB_REPORT` with `source_file` — the source vocabulary (AD-2) is defined once per broker and does NOT change.
-  - [ ] T3.6 `pipeline/sfn.py` `DEFAULT_CONNECTORS` and `build_connector_command` unchanged (no raw names there — verify with grep).
+- [x] T3: Fetch path unifies — every connector writes `raw/{name}` (AC-2, AD-5, AD-6)
+  - [x] T3.1 `pipeline/run.py` `fetch_connector` (lines 114-198): delete the `if connector.name == "xtb":` branch (lines 130-149). The generic path becomes the ONLY path: `fetch_kwargs(args)` returns one or more kwarg batches, each batch fetched and appended to `raw/{name}`; the events fetch (when the connector has one) appends its rows to the SAME `raw/{name}`.
+  - [x] T3.2 XTB multi-file: `XtbConnector.fetch_kwargs` (xtb/connector.py:28-36) currently returns kwargs for only the FIRST `--xtb-file`. Under the uniform contract it returns one batch per file (list-iterate in the generic path), preserving `--xtb-file` append semantics — every uploaded file's single `XTB_REPORT` row lands in `raw/xtb`.
+  - [x] T3.3 `BrokerConnector` (base.py): remove the `events_raw_layer` attribute (line 23) and its docstring (D17 override). Drop `fetch_events`/`fetch_events_kwargs` from the Protocol (AD-6 "no events stubs") and delete XTB's never-invoked stubs (xtb/connector.py:78-82). Gate the events fetch in `fetch_connector` with `getattr(connector, "fetch_events_kwargs", None)` — IBKR/T212 still fetch events (IBKR `flex_events`; T212 the three history endpoints), XTB simply has no events fetch (shared bronze feeds both silvers).
+  - [x] T3.4 Per-endpoint write-what-succeeded `try/except` isolation stays; Trading 212 `fetch.py:120-124` all-events-endpoints-empty `RuntimeError` survives unchanged (write it to `raw/trading212` now).
+  - [x] T3.5 IBKR `fetch_snapshot`/`fetch_events` keep returning `pa.Table` rows tagged `flex` / `flex_events`; T212 keeps its five endpoints with full captured request-path `source` values; XTB keeps `XTB_REPORT` with `source_file` — the source vocabulary (AD-2) is defined once per broker and does NOT change.
+  - [x] T3.6 `pipeline/sfn.py` `DEFAULT_CONNECTORS` and `build_connector_command` unchanged (no raw names there — verify with grep).
 
-- [ ] T4: Transform routing — single raw read + exact source gates (AC-3, AD-2, AD-3, AD-4)
-  - [ ] T4.1 `pipeline/run.py` `transform_connector` (lines 201-265): delete the `raw_layer = layer if layer == "snapshot" else connector.events_raw_layer` override (line 216) — both loops read `get_raw_path(connector.name)` = `raw/{name}`. Normalized output paths (`config.normalized_path(f"{connector.name}_{layer}")`, line 245) unchanged — silver stays two tables per broker.
-  - [ ] T4.2 IBKR `transform.py`: keep the exact gates `source != "flex"` (line 84) and `source != "flex_events"` (line 267) — they now operate on the merged table; no change beyond the raw path. Add/keep a regression test that an `flex_events` row cannot leak into `transform_snapshot` and vice-versa when both live in the same raw table.
-  - [ ] T4.3 Trading 212 `transform.py`: tighten snapshot gates from substring (`"/account/summary" in source` line 50, `"/positions" in source` line 52) and events gates (lines 269-273) to prefix-anchored matching on the declared request paths (`source.startswith("/equity/account/summary")`, `/equity/positions`, `/equity/history/orders`, `/equity/history/dividends`, `/equity/history/transactions`) per AD-2 (pagination-tolerant; never free substring). The `/equity/metadata/instruments` fixture row (legacy) stays skipped.
-  - [ ] T4.4 XTB `transform.py`: `_latest_per_account` and both transforms keep exact `source == "XTB_REPORT"` gates and per-`account_id` latest logic (D18) — unchanged; they just read `raw/xtb` now.
-  - [ ] T4.5 `pipeline/connectors/transform_utils.py`: `filter_latest_snapshot` keeps per-`source` keying (line 93, `max().over("source")` — do NOT convert to a global max). Add the AD-4 regression guard: a test asserting dedup is per distinct `source` (two different `source` rows with different `fetched_at` both survive).
+- [x] T4: Transform routing — single raw read + exact source gates (AC-3, AD-2, AD-3, AD-4)
+  - [x] T4.1 `pipeline/run.py` `transform_connector` (lines 201-265): delete the `raw_layer = layer if layer == "snapshot" else connector.events_raw_layer` override (line 216) — both loops read `get_raw_path(connector.name)` = `raw/{name}`. Normalized output paths (`config.normalized_path(f"{connector.name}_{layer}")`, line 245) unchanged — silver stays two tables per broker.
+  - [x] T4.2 IBKR `transform.py`: keep the exact gates `source != "flex"` (line 84) and `source != "flex_events"` (line 267) — they now operate on the merged table; no change beyond the raw path. Add/keep a regression test that an `flex_events` row cannot leak into `transform_snapshot` and vice-versa when both live in the same raw table.
+  - [x] T4.3 Trading 212 `transform.py`: tighten snapshot gates from substring (`"/account/summary" in source` line 50, `"/positions" in source` line 52) and events gates (lines 269-273) to prefix-anchored matching on the declared request paths (`source.startswith("/equity/account/summary")`, `/equity/positions`, `/equity/history/orders`, `/equity/history/dividends`, `/equity/history/transactions`) per AD-2 (pagination-tolerant; never free substring). The `/equity/metadata/instruments` fixture row (legacy) stays skipped.
+  - [x] T4.4 XTB `transform.py`: `_latest_per_account` and both transforms keep exact `source == "XTB_REPORT"` gates and per-`account_id` latest logic (D18) — unchanged; they just read `raw/xtb` now.
+  - [x] T4.5 `pipeline/connectors/transform_utils.py`: `filter_latest_snapshot` keeps per-`source` keying (line 93, `max().over("source")` — do NOT convert to a global max). Add the AD-4 regression guard: a test asserting dedup is per distinct `source` (two different `source` rows with different `fetched_at` both survive).
 
-- [ ] T5: Query aliases, fixtures, docs, and the grep bar (AC-1, AC-5, AC-6)
-  - [ ] T5.1 `pipeline/query.py`: NO code change needed — aliases auto-discover `raw/{broker}` → `{broker}_raw` (parse_alias strips the `_raw` suffix). Update docstring examples (`ibkr_snapshot_raw` → `ibkr_raw` where they illustrate production naming) and verify `tests/test_query_list_tables.py` still passes (it tests the generic mechanism; `parse_alias("ibkr_snapshot_raw")` remains valid).
-  - [ ] T5.2 `tests/conftest.py` `tmp_data_dir` (lines 100-105): replace the six raw dirs with `raw/ibkr`, `raw/trading212`, `raw/xtb`. Update `tests/test_consolidate_pipeline.py:35-40` raw-dir writes likewise. Keep normalized dirs unchanged.
-  - [ ] T5.3 `tests/fixtures/`: fixtures are already RAW_SCHEMA-shaped per broker (`t212_raw_snapshot`, `xtb_raw_snapshot`, `ibkr_raw_snapshot` + `ibkr_raw_events`) — repurpose into the merged-table shape where a test needs both kinds in one table (e.g. IBKR: concat `ibkr_raw_snapshot` + `ibkr_raw_events` rows into one fixture). Update fixture docs/doctrings that reference `{broker}_snapshot` raw paths.
-  - [ ] T5.4 `tests/test_xtb_connector.py::test_shared_bronze_no_xtb_events_raw` (line 914) already encodes the end state (no `xtb_events` raw); keep it. Add the mirror assertions for ibkr/trading212 (no `*_events` raw table needed; both kinds in `raw/{broker}`).
-  - [ ] T5.5 Docs: `docs/table-lineage.md` — replace the six raw nodes (lines 19-24) with three (`raw/ibkr`, `raw/trading212`, `raw/xtb`), each feeding `transform_snapshot` → normalized snapshot AND `transform_events` → normalized events; delete the `xtb_events` raw node and its false edge (line 51). `docs/architecture.md` — raw layer table list (lines 27-41) becomes `raw/{broker}` "Encrypted API payloads, one table per broker, `source` discriminates snapshot/events"; alias table (lines 44-67) becomes `ibkr_raw`, `trading212_raw`, `xtb_raw`. Sweep `docs/brokers/{ibkr,trading212,xtb}.md`, `docs/configuration.md` for raw table names and update.
-  - [ ] T5.6 `tests/test_connector_registry.py:15` (`events_raw_layer = "events"`) — delete the attribute from the fake connector; `tests/test_connector_protocol.py` — update any `fetch_events_kwargs`/`fetch_events` protocol assertions (line 176-190) to the post-merge protocol.
+- [x] T5: Query aliases, fixtures, docs, and the grep bar (AC-1, AC-5, AC-6)
+  - [x] T5.1 `pipeline/query.py`: NO code change needed — aliases auto-discover `raw/{broker}` → `{broker}_raw` (parse_alias strips the `_raw` suffix). Update docstring examples (`ibkr_snapshot_raw` → `ibkr_raw` where they illustrate production naming) and verify `tests/test_query_list_tables.py` still passes (it tests the generic mechanism; `parse_alias("ibkr_snapshot_raw")` remains valid).
+  - [x] T5.2 `tests/conftest.py` `tmp_data_dir` (lines 100-105): replace the six raw dirs with `raw/ibkr`, `raw/trading212`, `raw/xtb`. Update `tests/test_consolidate_pipeline.py:35-40` raw-dir writes likewise. Keep normalized dirs unchanged.
+  - [x] T5.3 `tests/fixtures/`: fixtures are already RAW_SCHEMA-shaped per broker (`t212_raw_snapshot`, `xtb_raw_snapshot`, `ibkr_raw_snapshot` + `ibkr_raw_events`) — repurpose into the merged-table shape where a test needs both kinds in one table (e.g. IBKR: concat `ibkr_raw_snapshot` + `ibkr_raw_events` rows into one fixture). Update fixture docs/doctrings that reference `{broker}_snapshot` raw paths.
+  - [x] T5.4 `tests/test_xtb_connector.py::test_shared_bronze_no_xtb_events_raw` (line 914) already encodes the end state (no `xtb_events` raw); keep it. Add the mirror assertions for ibkr/trading212 (no `*_events` raw table needed; both kinds in `raw/{broker}`).
+  - [x] T5.5 Docs: `docs/table-lineage.md` — replace the six raw nodes (lines 19-24) with three (`raw/ibkr`, `raw/trading212`, `raw/xtb`), each feeding `transform_snapshot` → normalized snapshot AND `transform_events` → normalized events; delete the `xtb_events` raw node and its false edge (line 51). `docs/architecture.md` — raw layer table list (lines 27-41) becomes `raw/{broker}` "Encrypted API payloads, one table per broker, `source` discriminates snapshot/events"; alias table (lines 44-67) becomes `ibkr_raw`, `trading212_raw`, `xtb_raw`. Sweep `docs/brokers/{ibkr,trading212,xtb}.md`, `docs/configuration.md` for raw table names and update.
+  - [x] T5.6 `tests/test_connector_registry.py:15` (`events_raw_layer = "events"`) — delete the attribute from the fake connector; `tests/test_connector_protocol.py` — update any `fetch_events_kwargs`/`fetch_events` protocol assertions (line 176-190) to the post-merge protocol.
 
-- [ ] T6: CAP-3 regression guards (AC-3)
-  - [ ] T6.1 Regression: Trading 212 `/equity/positions` list payload never reaches the events silver — a merged `raw/trading212` holding a positions row produces NO rows in `transform_events` output.
-  - [ ] T6.2 Regression: IBKR `flex` and `flex_events` in the same merged `raw/ibkr` table route to the right silver (snapshot transform emits no event, events transform emits no snapshot).
-  - [ ] T6.3 Regression: per-`source` dedup keyedness (T4.5).
-  - [ ] T6.4 Regression: both silver tables per broker unchanged in schema and contents after the merge (run the existing snapshot/events transform tests against a merged raw table).
+- [x] T6: CAP-3 regression guards (AC-3)
+  - [x] T6.1 Regression: Trading 212 `/equity/positions` list payload never reaches the events silver — a merged `raw/trading212` holding a positions row produces NO rows in `transform_events` output.
+  - [x] T6.2 Regression: IBKR `flex` and `flex_events` in the same merged `raw/ibkr` table route to the right silver (snapshot transform emits no event, events transform emits no snapshot).
+  - [x] T6.3 Regression: per-`source` dedup keyedness (T4.5).
+  - [x] T6.4 Regression: both silver tables per broker unchanged in schema and contents after the merge (run the existing snapshot/events transform tests against a merged raw table).
 
 - [ ] T7: Full checks, deploy sequencing, ADR, one PR (AC-5, AC-6, NFR10)
   - [ ] T7.1 `ruff check --fix . && ruff format .`; then `pyright pipeline/ tests/`; then `pytest tests/ -q -rf`; tests re-run after lint.
@@ -200,16 +200,45 @@ pipeline/
 
 ### Agent Model Used
 
-(dev agent fills in)
+Orchestrated via Claude Code with staged fresh-context subagents (T1, T2–T4,
+T5–T6) + orchestrator T7. Environment: Windows, project venv (main repo
+`.venv\Scripts\python.exe`, Python 3.11; worktree has no local venv).
 
 ### Debug Log References
 
-(dev agent fills in)
+- T1 report: `$CLAUDE_JOB_DIR/tmp/t1-report.md`
+- T2–T4 report: `$CLAUDE_JOB_DIR/tmp/t2-report.md`
+- T5–T6 report: `$CLAUDE_JOB_DIR/tmp/t3-report.md`
 
 ### Completion Notes List
 
-(dev agent fills in)
+- T1 merge migration (`migrate_single_bronze.py`, 18 tests) delivered first
+  (file-disjoint); then T2–T4 code collapse (raw models/paths/run/connectors);
+  then T5–T6 fixtures/conftest/docs + 10 CAP-3 regression guards
+  (`tests/test_single_bronze_routing.py`).
+- Full suite 865 tests pass; `ruff check --fix . && ruff format .` clean
+  (tests re-run after lint); `pyright pipeline/ tests/` 0 errors.
+- Grep bar zero outside carve-outs: only the migration script + its test, the
+  historical `migrate_cdc_to_events.py` + its test, `docs/adr/`, and
+  legitimate silver `xtb_events` (`normalized/xtb_events`) references.
+- Deploy sequencing (AD-7 migration-first) documented in the migration script
+  docstring: per environment `--dry-run` → real run → count verification →
+  then deploy renamed-path code.
+- ADR 0114 recorded via manage-adr (single bronze raw table per broker).
+- Worktree venv note: all subagents used the main repo venv.
 
 ### File List
 
-(dev agent fills in)
+- New: `pipeline/migrations/migrate_single_bronze.py`,
+  `tests/test_migrate_single_bronze.py`,
+  `tests/test_single_bronze_routing.py`,
+  `docs/adr/0114-single-bronze-raw-table-per-broker.md`.
+- Modified: `pipeline/{run,paths,storage,query}.py`,
+  `pipeline/raw/{models,__init__}.py`,
+  `pipeline/connectors/{base.py, transform_utils.py}`,
+  `pipeline/connectors/{ibkr,trading212,xtb}/{connector,fetch,transform}.py`,
+  `pipeline/analytics/quality.py` (verify-only), `docs/{table-lineage,architecture}.md`,
+  `docs/brokers/xtb.md`, `docs/adr/README.md`, `tests/conftest.py`,
+  `tests/fixtures/{ibkr,trading212}.py`, and 13 test files (path/protocol
+  updates + regression guards), `_bmad-output/implementation-artifacts/
+  {pr150-single-bronze-per-broker.md, sprint-status.yaml}`.

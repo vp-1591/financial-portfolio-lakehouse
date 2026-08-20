@@ -17,25 +17,17 @@ class BrokerConnector(Protocol):
 
     name: str  # e.g. "ibkr", "trading212", "xtb"
     display_name: str  # e.g. "IBKR", "Trading 212", "XTB"
-    # D17: which raw layer the events transform reads from. Default "events"
-    # (a separate events raw fetch); XTB overrides to "snapshot" (shared bronze
-    # — one raw row carries all sheets and feeds both silvers).
-    events_raw_layer: str
 
-    def fetch_kwargs(self, args: argparse.Namespace) -> dict:
-        """Build connector-specific keyword arguments for ``fetch_snapshot``.
+    def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
+        """Build one or more keyword-argument batches for ``fetch_snapshot``.
 
-        Resolves secrets and config from environment variables and CLI args.
-        Returns an empty dict if required secrets are missing (the caller
-        should skip the connector in that case).
-        """
-        ...
-
-    def fetch_events_kwargs(self) -> dict:
-        """Build keyword arguments for ``fetch_events``.
-
-        Returns the snapshot kwargs for brokers that share the same credentials
-        for events (e.g. Trading 212), or an empty dict otherwise.
+        Every connector writes to the single merged bronze table
+        ``raw/{name}`` (AD-5); ``fetch_kwargs`` returns one batch per fetch
+        so the generic path in ``run.fetch_connector`` can iterate them
+        (e.g. XTB returns one batch per ``--xtb-file``). Resolves secrets and
+        config from environment variables and CLI args. Returns an empty list
+        if required secrets are missing (the caller should skip the connector
+        in that case).
         """
         ...
 
@@ -59,13 +51,6 @@ class BrokerConnector(Protocol):
 
     def fetch_snapshot(self, **kwargs: object) -> pa.Table:
         """Fetch a raw snapshot from the broker and return a raw-layer PyArrow table."""
-        ...
-
-    def fetch_events(self, **kwargs: object) -> pa.Table:
-        """Fetch events (change data capture) from the broker.
-
-        Brokers that do not yet support events should raise ``NotImplementedError``.
-        """
         ...
 
     def transform_snapshot(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:

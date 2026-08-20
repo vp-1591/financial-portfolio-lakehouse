@@ -24,25 +24,27 @@ _DEMO_BASE_URL = "https://demo.trading212.com/api/v0"
 class Trading212Connector:
     name = "trading212"
     display_name = "Trading 212"
-    events_raw_layer = "events"
 
-    def fetch_kwargs(self, args: argparse.Namespace) -> dict:
+    def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         api_key = resolve_secret("T212_API_KEY")
         if not api_key:
             logger.debug("Skipping Trading 212: T212_API_KEY not set")
-            return {}
+            return []
         api_secret = resolve_secret("T212_API_SECRET") or ""
         default_base = _DEMO_BASE_URL if is_staging() else _LIVE_BASE_URL
         base_url = get_env("T212_BASE_URL") or default_base
-        return {
-            "api_key": api_key,
-            "api_secret": api_secret,
-            "base_url": base_url,
-        }
+        return [
+            {
+                "api_key": api_key,
+                "api_secret": api_secret,
+                "base_url": base_url,
+            }
+        ]
 
     def fetch_events_kwargs(self) -> dict:
         """Trading 212 uses the same credentials for events as for snapshots."""
-        return self.fetch_kwargs(argparse.Namespace())
+        batches = self.fetch_kwargs(argparse.Namespace())
+        return batches[0] if batches else {}
 
     def required_secrets(self) -> list[str]:
         return ["T212_API_KEY", "T212_API_SECRET"]

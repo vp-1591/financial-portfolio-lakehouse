@@ -21,25 +21,26 @@ logger = logging.getLogger(__name__)
 class IbkrConnector:
     name = "ibkr"
     display_name = "IBKR"
-    events_raw_layer = "events"
 
-    def fetch_kwargs(self, args: argparse.Namespace) -> dict:
+    def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         flex_token = resolve_secret("IBKR_FLEX_TOKEN")
         if not flex_token:
             logger.debug("Skipping IBKR: IBKR_FLEX_TOKEN not set")
-            return {}
+            return []
         flex_query_id = resolve_secret("IBKR_FLEX_QUERY_ID")
         if not flex_query_id:
             logger.debug("Skipping IBKR: IBKR_FLEX_QUERY_ID not set")
-            return {}
-        return {
-            "flex_token": flex_token,
-            "flex_query_id": flex_query_id,
-            "flex_base_url": get_env(
-                "IBKR_FLEX_BASE_URL",
-                "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
-            ),
-        }
+            return []
+        return [
+            {
+                "flex_token": flex_token,
+                "flex_query_id": flex_query_id,
+                "flex_base_url": get_env(
+                    "IBKR_FLEX_BASE_URL",
+                    "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
+                ),
+            }
+        ]
 
     def fetch_events_kwargs(self) -> dict:
         flex_token = resolve_secret("IBKR_FLEX_TOKEN")

@@ -344,10 +344,7 @@ class TestS3Backend:
 
     def test_table_path(self):
         backend = S3Backend(bucket="my-bucket")
-        assert (
-            backend.table_path("raw", "ibkr_snapshot")
-            == "s3://my-bucket/raw/ibkr_snapshot"
-        )
+        assert backend.table_path("raw", "ibkr") == "s3://my-bucket/raw/ibkr"
         assert (
             backend.table_path("normalized", "consolidated_holdings")
             == "s3://my-bucket/normalized/consolidated_holdings"
@@ -355,10 +352,7 @@ class TestS3Backend:
 
     def test_table_path_strips_uri_scheme(self):
         backend = S3Backend(bucket="s3://my-bucket")
-        assert (
-            backend.table_path("raw", "ibkr_snapshot")
-            == "s3://my-bucket/raw/ibkr_snapshot"
-        )
+        assert backend.table_path("raw", "ibkr") == "s3://my-bucket/raw/ibkr"
 
     def test_ensure_parent_is_noop(self):
         backend = S3Backend(bucket="my-bucket")
@@ -367,7 +361,7 @@ class TestS3Backend:
         # here, not merely "not raise".
         bucket_before = backend.bucket
         # Should not raise -- S3 doesn't need parent dirs
-        backend.ensure_parent("s3://my-bucket/raw/ibkr_snapshot")
+        backend.ensure_parent("s3://my-bucket/raw/ibkr")
         assert backend.bucket == bucket_before
         assert backend.bucket == "my-bucket"
 
@@ -567,7 +561,8 @@ class TestPathsModule:
         )
         use_storage(config)
 
-        assert pipeline.paths.RAW_IBKR_SNAPSHOT == str(data / "raw" / "ibkr_snapshot")
+        # Single merged bronze table per broker (AD-1): no per-layer
+        # RAW_*_SNAPSHOT/RAW_*_EVENTS constants remain on pipeline.paths.
         assert pipeline.paths.NORMALIZED_CONSOLIDATED_HOLDINGS == str(
             data / "normalized" / "consolidated_holdings"
         )
@@ -599,7 +594,7 @@ class TestStorageConfigHelpers:
             encryption_key_file=str(secrets / "encryption.key"),
             backend=LocalBackend(data),
         )
-        assert config.raw_path("ibkr_snapshot") == str(data / "raw" / "ibkr_snapshot")
+        assert config.raw_path("ibkr") == str(data / "raw" / "ibkr")
 
     def test_normalized_path(self, tmp_path: Path):
 

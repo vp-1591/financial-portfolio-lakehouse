@@ -76,4 +76,4 @@ development_status:
   4-2-the-full-check-suite-is-green-before-the-pr-opens: backlog
   4-3-both-renames-ship-as-one-reviewed-pr-the-adr-is-recorded-and-prod-drift-is-flagged: backlog
   epic-4-retrospective: optional
-  pr150-single-bronze-per-broker: ready-for-dev
+  pr150-single-bronze-per-broker: review

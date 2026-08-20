@@ -21,8 +21,8 @@ Usage::
 
     set_mode("docker")
     config = get_storage()
-    raw_path = config.raw_path("ibkr_snapshot")
-    # e.g. "s3://my-bucket/raw/ibkr_snapshot"  (S3Backend)
+    raw_path = config.raw_path("ibkr")
+    # e.g. "s3://my-bucket/raw/ibkr"  (S3Backend)
 """
 
 from __future__ import annotations

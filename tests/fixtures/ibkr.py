@@ -234,3 +234,26 @@ def ibkr_raw_events(
         },
         schema=RAW_SCHEMA,
     )
+
+
+def ibkr_raw_merged(
+    account_id: str = "U123456",
+    fernet_key: bytes | None = None,
+) -> pa.Table:
+    """Build a merged raw IBKR table holding both fetch kinds in one table.
+
+    Single-bronze shape (AD-1/AC-6): one ``raw/ibkr`` table per broker where
+    ``source`` discriminates snapshot (``flex``) from events (``flex_events``).
+    Concatenates :func:`ibkr_raw_positions` and :func:`ibkr_raw_events` so a
+    merged-table test can assert ``transform_snapshot`` and ``transform_events``
+    route each row to the correct silver.
+    """
+    if fernet_key is None:
+        fernet_key = generate_key()
+    return pa.concat_tables(
+        [
+            ibkr_raw_positions(account_id=account_id, fernet_key=fernet_key),
+            ibkr_raw_events(account_id=account_id, fernet_key=fernet_key),
+        ],
+        schema=RAW_SCHEMA,
+    )

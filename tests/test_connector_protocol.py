@@ -1,8 +1,10 @@
 """Tests for the connector self-description protocol.
 
 Verifies that each connector correctly implements:
-- ``fetch_kwargs()`` — builds connector-specific snapshot kwargs
-- ``fetch_events_kwargs()`` — returns events kwargs (same as snapshot for T212, empty otherwise)
+- ``fetch_kwargs()`` — returns a LIST of snapshot kwarg batches (one per
+  endpoint/``--xtb-file``; the generic fetch path iterates them, AD-6)
+- ``fetch_events_kwargs()`` — concrete on IBKR/T212 only (not a Protocol
+  member); XTB has none (D17 shared bronze)
 - ``required_secrets()`` — lists expected secret env-var names
 - ``extract_holdings()`` — extracts Holding objects from a normalized DataFrame
 """
@@ -33,7 +35,11 @@ from tests.local_backend import LocalBackend
 
 
 class TestIbkrFetchKwargs:
-    """IBKR fetch_kwargs resolves Flex token, query ID, and base URL."""
+    """IBKR fetch_kwargs resolves Flex token, API query ID, and base URL.
+
+    Post-merge protocol (AD-6): ``fetch_kwargs`` returns a list of one kwarg
+    batch for the single Flex snapshot query.
+    """
 
     def test_returns_kwargs_when_secrets_set(self, monkeypatch) -> None:
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "test-token")
@@ -42,29 +48,31 @@ class TestIbkrFetchKwargs:
         connector = get("ibkr")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs == {
-            "flex_token": "test-token",
-            "flex_query_id": "42",
-            "flex_base_url": "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
-        }
+        assert kwargs == [
+            {
+                "flex_token": "test-token",
+                "flex_query_id": "42",
+                "flex_base_url": "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
+            }
+        ]
         reset_mode()
 
-    def test_returns_empty_dict_when_token_missing(self, monkeypatch) -> None:
+    def test_returns_empty_list_when_token_missing(self, monkeypatch) -> None:
         monkeypatch.delenv("IBKR_FLEX_TOKEN", raising=False)
         monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "42")
         set_mode("docker")
         connector = get("ibkr")
         args = argparse.Namespace()
-        assert connector.fetch_kwargs(args) == {}
+        assert connector.fetch_kwargs(args) == []
         reset_mode()
 
-    def test_returns_empty_dict_when_query_id_missing(self, monkeypatch) -> None:
+    def test_returns_empty_list_when_query_id_missing(self, monkeypatch) -> None:
         monkeypatch.setenv("IBKR_FLEX_TOKEN", "test-token")
         monkeypatch.delenv("IBKR_FLEX_QUERY_ID", raising=False)
         set_mode("docker")
         connector = get("ibkr")
         args = argparse.Namespace()
-        assert connector.fetch_kwargs(args) == {}
+        assert connector.fetch_kwargs(args) == []
         reset_mode()
 
     def test_custom_base_url(self, monkeypatch) -> None:
@@ -75,7 +83,7 @@ class TestIbkrFetchKwargs:
         connector = get("ibkr")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs["flex_base_url"] == "https://custom.example.com"
+        assert kwargs[0]["flex_base_url"] == "https://custom.example.com"
         reset_mode()
 
     def test_staging_mode_uses_base_secrets(self, monkeypatch) -> None:
@@ -85,13 +93,17 @@ class TestIbkrFetchKwargs:
         connector = get("ibkr")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs["flex_token"] == "staging-token"
-        assert kwargs["flex_query_id"] == "99"
+        assert kwargs[0]["flex_token"] == "staging-token"
+        assert kwargs[0]["flex_query_id"] == "99"
         reset_mode()
 
 
 class TestTrading212FetchKwargs:
-    """Trading 212 fetch_kwargs resolves API key, secret, and base URL."""
+    """Trading 212 fetch_kwargs resolves API key, secret, and base URL.
+
+    Post-merge protocol (AD-6): ``fetch_kwargs`` returns a list of one kwarg
+    batch for the snapshot fetch.
+    """
 
     def test_returns_kwargs_when_secrets_set(self, monkeypatch) -> None:
         monkeypatch.setenv("T212_API_KEY", "test-key")
@@ -101,19 +113,21 @@ class TestTrading212FetchKwargs:
         connector = get("trading212")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs == {
-            "api_key": "test-key",
-            "api_secret": "test-secret",
-            "base_url": "https://live.trading212.com/api/v0",
-        }
+        assert kwargs == [
+            {
+                "api_key": "test-key",
+                "api_secret": "test-secret",
+                "base_url": "https://live.trading212.com/api/v0",
+            }
+        ]
         reset_mode()
 
-    def test_returns_empty_dict_when_api_key_missing(self, monkeypatch) -> None:
+    def test_returns_empty_list_when_api_key_missing(self, monkeypatch) -> None:
         monkeypatch.delenv("T212_API_KEY", raising=False)
         set_mode("docker")
         connector = get("trading212")
         args = argparse.Namespace()
-        assert connector.fetch_kwargs(args) == {}
+        assert connector.fetch_kwargs(args) == []
         reset_mode()
 
     def test_staging_mode_selects_demo_base_url(self, monkeypatch) -> None:
@@ -124,7 +138,7 @@ class TestTrading212FetchKwargs:
         connector = get("trading212")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs["base_url"] == "https://demo.trading212.com/api/v0"
+        assert kwargs[0]["base_url"] == "https://demo.trading212.com/api/v0"
         reset_mode()
 
     def test_custom_base_url_overrides_default(self, monkeypatch) -> None:
@@ -135,34 +149,44 @@ class TestTrading212FetchKwargs:
         connector = get("trading212")
         args = argparse.Namespace()
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs["base_url"] == "https://custom.api.com"
+        assert kwargs[0]["base_url"] == "https://custom.api.com"
         reset_mode()
 
 
 class TestXtbFetchKwargs:
-    """XTB fetch_kwargs reads from args.xtb_file."""
+    """XTB fetch_kwargs reads from args.xtb_file (one batch per file, AD-6)."""
 
     def test_returns_kwargs_with_single_file(self) -> None:
         connector = get("xtb")
         args = argparse.Namespace(xtb_file=["/path/to/report.xlsx"])
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs == {"file_path": "/path/to/report.xlsx"}
+        assert kwargs == [{"file_path": "/path/to/report.xlsx"}]
 
     def test_returns_kwargs_with_string_file(self) -> None:
         connector = get("xtb")
         args = argparse.Namespace(xtb_file="/path/to/report.xlsx")
         kwargs = connector.fetch_kwargs(args)
-        assert kwargs == {"file_path": "/path/to/report.xlsx"}
+        assert kwargs == [{"file_path": "/path/to/report.xlsx"}]
 
-    def test_returns_empty_dict_when_no_file(self) -> None:
+    def test_returns_kwargs_one_batch_per_file(self) -> None:
+        connector = get("xtb")
+        args = argparse.Namespace(xtb_file=["a.xlsx", "b.xlsx", "c.xlsx"])
+        kwargs = connector.fetch_kwargs(args)
+        assert kwargs == [
+            {"file_path": "a.xlsx"},
+            {"file_path": "b.xlsx"},
+            {"file_path": "c.xlsx"},
+        ]
+
+    def test_returns_empty_list_when_no_file(self) -> None:
         connector = get("xtb")
         args = argparse.Namespace(xtb_file=None)
-        assert connector.fetch_kwargs(args) == {}
+        assert connector.fetch_kwargs(args) == []
 
-    def test_returns_empty_dict_when_no_attribute(self) -> None:
+    def test_returns_empty_list_when_no_attribute(self) -> None:
         connector = get("xtb")
         args = argparse.Namespace()
-        assert connector.fetch_kwargs(args) == {}
+        assert connector.fetch_kwargs(args) == []
 
 
 # ---------------------------------------------------------------------------
@@ -171,25 +195,29 @@ class TestXtbFetchKwargs:
 
 
 class TestFetchEventsKwargs:
-    """events kwargs: T212 returns snapshot kwargs, IBKR returns {}.
+    """events kwargs are concrete on IBKR/T212 only (AD-6), not Protocol members.
 
-    XTB no longer has ``fetch_events_kwargs`` (D17 shared bronze — Events are derived
-    from the snapshot raw, no separate events fetch)."""
+    T212's events fetch reuses the snapshot credentials; IBKR returns {} when
+    no Flex token is set. XTB has no ``fetch_events_kwargs`` at all — events
+    derive from the shared ``XTB_REPORT`` bronze (D17), so there is nothing to
+    test."""
 
     def test_ibkr_returns_empty(self) -> None:
         set_mode("docker")
         assert get("ibkr").fetch_events_kwargs() == {}
         reset_mode()
 
-    def test_t212_returns_snapshot_kwargs(self, monkeypatch) -> None:
+    def test_t212_events_kwargs_equal_first_snapshot_batch(self, monkeypatch) -> None:
         monkeypatch.setenv("T212_API_KEY", "test-key")
         monkeypatch.setenv("T212_API_SECRET", "test-secret")
         monkeypatch.delenv("T212_BASE_URL", raising=False)
         set_mode("docker")
         connector = get("trading212")
         events_kwargs = connector.fetch_events_kwargs()
-        snapshot_kwargs = connector.fetch_kwargs(argparse.Namespace())
-        assert events_kwargs == snapshot_kwargs
+        snapshot_batches = connector.fetch_kwargs(argparse.Namespace())
+        # fetch_kwargs returns a list of batches; fetch_events_kwargs returns
+        # the single snapshot batch (dict).
+        assert events_kwargs == snapshot_batches[0]
         reset_mode()
 
 
