@@ -30,6 +30,14 @@ The complete list of available fields per section is in
 >
 > **Recommended:** `Last365Days` or a specific date range covering your account history.
 >
+> **Period cap:** IBKR caps the Flex Query **Period** at 365 days, so a single fetch
+> can never return the full account history. Events older than the query window
+> survive only via the accumulated `raw/ibkr` table (single-bronze per broker,
+> ADR 0114): the normalized `ibkr_events` table is overwritten each run, so the
+> ibkr transform today reads the accumulated raw table rather than only the latest
+> fetch — otherwise out-of-window events would be dropped. ADR 0059 records a real
+> `LastBusinessDay` incident where the events sections came back empty.
+>
 > This does **not** affect the snapshot. The snapshot transform only reads
 > OpenPositions, AccountInformation, CashReport, and ConversionRates — these always
 > reflect current holdings regardless of the query period. The events transform reads
