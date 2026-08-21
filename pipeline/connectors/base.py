@@ -17,6 +17,13 @@ class BrokerConnector(Protocol):
 
     name: str  # e.g. "ibkr", "trading212", "xtb"
     display_name: str  # e.g. "IBKR", "Trading 212", "XTB"
+    # Declared per-connector capability: when True, fetch_connector hands the
+    # encrypted current-fetch tables straight to transform_connector in memory
+    # instead of the transform re-reading the accumulated raw table (issue
+    # #154). t212 declares it (its events endpoints return the complete history
+    # every run); ibkr/xtb keep the default because their transforms are
+    # designed around the accumulation (see ADR 0116).
+    handoff_supported: bool = False
 
     def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         """Build one or more keyword-argument batches for ``fetch_snapshot``.

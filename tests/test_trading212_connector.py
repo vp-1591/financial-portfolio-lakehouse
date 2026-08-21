@@ -788,13 +788,13 @@ class TestSnapshotFetch:
 class TestEventsFetch:
     """Tests for Trading 212 events fetch error handling."""
 
-    def test_fetch_events_logs_endpoint_failure(self, caplog) -> None:
-        """Failing events endpoints produce visible warnings, not silent skips.
+    def test_fetch_events_raises_on_single_endpoint_failure(self, caplog) -> None:
+        """A single failing events endpoint aborts the fetch (fail loud).
 
-        Actually invokes ``fetch_events`` with a mocked client whose events endpoint
-        methods raise, then asserts a WARNING is logged naming the failing
-        endpoint. Removing the ``logger.warning(...)`` call in ``fetch_events``
-        makes this test fail (no warning record captured).
+        The transform consumes only the current fetch as an in-memory handoff
+        (issue #154), so partial events data must never reach it — a RuntimeError
+        is raised even though the other endpoints succeeded. A WARNING naming the
+        failing endpoint is still logged first.
         """
 
         with (
@@ -807,37 +807,63 @@ class TestEventsFetch:
         ):
             instance = MockCls.return_value
             instance.orders.side_effect = Trading212Error("orders failed")
-            instance.dividends.side_effect = Trading212Error("dividends failed")
-            instance.transactions.side_effect = Trading212Error("transactions failed")
+            instance.dividends.return_value = []
+            instance.transactions.return_value = []
             instance.captured_responses = []
 
-            # All three endpoints fail → fetch_events raises RuntimeError,
-            # but only after logging a warning per failing endpoint.
-            with pytest.raises(RuntimeError, match="all endpoints"):
+            # Only orders fails; dividends/transactions succeed — fetch_events
+            # must still raise, naming the failing endpoint.
+            with pytest.raises(RuntimeError, match="orders"):
                 fetch_events(
                     api_key="test",
                     api_secret="test",
                     base_url="https://demo.trading212.com/api/v0",
                 )
 
-        # A warning must be logged for each failing events endpoint, naming it.
+        # A warning must be logged naming the failing endpoint before the raise.
         warning_messages = [
             record.message
             for record in caplog.records
             if record.levelno == logging.WARNING
         ]
-        endpoint_warnings = [
-            m for m in warning_messages if "events endpoint" in m and "failed" in m
-        ]
-        assert endpoint_warnings, (
-            "Expected at least one events endpoint failure warning, "
-            f"got: {warning_messages}"
+        assert any("events endpoint orders failed" in m for m in warning_messages), (
+            f"Warning did not name the failing endpoint: {warning_messages}"
         )
-        # The warning must name a failing endpoint (orders/dividends/transactions).
-        assert any(
-            "orders" in m or "dividends" in m or "transactions" in m
-            for m in endpoint_warnings
-        ), f"Warning did not name a failing endpoint: {endpoint_warnings}"
+
+    def test_fetch_events_fails_loud_even_with_partial_data(self) -> None:
+        """One endpoint failing aborts the run even when others returned data.
+
+        Matches the spec's PARTIAL_ENDPOINT matrix row: partial data must not
+        reach the transform — the fetch raises RuntimeError and the run aborts
+        before transform.
+        """
+
+        with mock.patch(
+            "pipeline.connectors.trading212.fetch.Trading212Client"
+        ) as MockCls:
+            instance = MockCls.return_value
+            instance.captured_responses = []
+
+            def _capture(path: str, raw: bytes):
+                def _fetch():
+                    instance.captured_responses.append((path, raw))
+
+                return _fetch
+
+            instance.orders.side_effect = Trading212Error("orders failed")
+            instance.dividends.side_effect = _capture(
+                "/equity/history/dividends", b'[{"id": 2}]'
+            )
+            instance.transactions.side_effect = _capture(
+                "/equity/history/transactions", b'[{"id": 3}]'
+            )
+
+            with pytest.raises(RuntimeError, match="orders"):
+                fetch_events(
+                    api_key="test",
+                    api_secret="test",
+                    base_url="https://demo.trading212.com/api/v0",
+                )
 
     def test_fetch_events_raises_when_all_endpoints_empty(self) -> None:
         """When all events endpoints return empty lists, fetch_events raises RuntimeError."""

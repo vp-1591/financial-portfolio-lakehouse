@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 class IbkrConnector:
     name = "ibkr"
     display_name = "IBKR"
+    # The flex-query Period is capped at 365 days, so one fetch never covers the
+    # full account history; events older than the window survive only via the
+    # accumulated raw table. The transform therefore keeps the table read — the
+    # in-memory handoff stays off for ibkr (see ADR 0116).
+    handoff_supported = False
 
     def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         flex_token = resolve_secret("IBKR_FLEX_TOKEN")

@@ -31,6 +31,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import IntEnum
 from pathlib import Path
 
+import pyarrow as pa
+
 from pipeline.analytics.quality import run_validation
 from pipeline.connectors.registry import all as all_connectors
 from pipeline.connectors.registry import get
@@ -46,6 +48,12 @@ from pipeline.secrets import (
 from pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)
+
+# The two transform layers, in processing order. Single source of truth for the
+# layer loop in transform_connector and for the handoff dictionary keys built in
+# fetch_connector (issue #154).
+TRANSFORM_LAYERS: tuple[str, str] = ("snapshot", "events")
+SNAPSHOT_LAYER, EVENTS_LAYER = TRANSFORM_LAYERS
 
 
 class FetchResult(IntEnum):
@@ -114,7 +122,7 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def fetch_connector(
     connector, args: argparse.Namespace, fernet_key: bytes
-) -> FetchResult:
+) -> tuple[FetchResult, dict[str, pa.Table] | None]:
     """Fetch data from a single connector and write to raw Delta tables.
 
     Every connector writes to the single merged bronze table
@@ -125,15 +133,30 @@ def fetch_connector(
     endpoints) appends its rows to the SAME ``raw/{name}``; XTB has no events
     fetch, the shared bronze row feeds both silver transforms (AD-6).
 
-    Returns :class:`FetchResult`:
+    Returns a ``(FetchResult, handoff)`` pair:
     - ``SUCCESS`` — data was fetched and written
     - ``SKIPPED`` — connector had no credentials or required input (e.g. XTB
       without ``--xtb-file``)
     - ``ERROR`` — fetch was attempted but failed
+
+    *handoff* is ``None`` unless the connector declares ``handoff_supported``
+    (a per-connector capability, default False), in which case it carries the
+    Fernet-encrypted PRE-DEDUP current fetch (``{"snapshot": ..., "events":
+    ...}``) so the transform never re-reads the accumulated raw table (issue
+    #154). The pre-dedup tables are what ``ingest_raw`` encrypts before its
+    dedup write — an unchanged endpoint deduped out of the write must still
+    reach the transform, exactly as it does today via the accumulated table.
+    Multi-batch fetches (``fetch_kwargs`` returning several batches) are
+    concatenated into the same layer key. On ``FetchResult.ERROR`` the handoff
+    may be only partially populated (the failing layer is absent); the caller
+    must discard it — ``cmd_run_connector`` exits 1 before transform.
     """
     from pipeline.raw.ingest import ingest_raw
 
     error_occurred = False
+    handoff: dict[str, pa.Table] | None = (
+        {} if getattr(connector, "handoff_supported", False) else None
+    )
 
     # Uniform contract: fetch_kwargs returns one or more kwarg batches.
     snapshot_batches = connector.fetch_kwargs(args)
@@ -141,15 +164,27 @@ def fetch_connector(
         logger.debug(
             "Skipping %s: required secrets not configured", connector.display_name
         )
-        return FetchResult.SKIPPED
+        return FetchResult.SKIPPED, None
 
     raw_path = get_raw_path(connector.name)
     for snapshot_kwargs in snapshot_batches:
         try:
             raw = connector.fetch_snapshot(**snapshot_kwargs)
             get_storage().backend.ensure_parent(raw_path)
-            count = ingest_raw(raw, raw_path, fernet_key)
-            logger.debug("%s snapshot: %d rows written", connector.display_name, count)
+            encrypted = ingest_raw(raw, raw_path, fernet_key)
+            if handoff is not None:
+                # Multiple batches (e.g. XTB's per-file fetches) must not
+                # overwrite earlier batches — concatenate into the layer key.
+                handoff[SNAPSHOT_LAYER] = (
+                    pa.concat_tables([handoff[SNAPSHOT_LAYER], encrypted])
+                    if SNAPSHOT_LAYER in handoff
+                    else encrypted
+                )
+            logger.debug(
+                "%s snapshot: %d rows in current fetch",
+                connector.display_name,
+                encrypted.num_rows,
+            )
         except NotImplementedError:
             logger.debug("%s snapshot: not implemented", connector.display_name)
         except Exception as exc:
@@ -159,7 +194,7 @@ def fetch_connector(
                 file=sys.stderr,
             )
 
-    # Events fetch — connectors that declare one (IBKR flex_events; Trading
+    # Events for a connector that declares one (IBKR flex_events; Trading
     # 212 the three history endpoints) append to the same raw/{name}. XTB has
     # no events fetch: the shared bronze row feeds both silvers (AD-6).
     # Decision: docs/adr/0114-single-bronze-raw-table-per-broker.md
@@ -177,9 +212,17 @@ def fetch_connector(
             try:
                 raw_events = connector.fetch_events(**events_kwargs)
                 get_storage().backend.ensure_parent(raw_path)
-                count = ingest_raw(raw_events, raw_path, fernet_key)
+                encrypted_events = ingest_raw(raw_events, raw_path, fernet_key)
+                if handoff is not None:
+                    handoff[EVENTS_LAYER] = (
+                        pa.concat_tables([handoff[EVENTS_LAYER], encrypted_events])
+                        if EVENTS_LAYER in handoff
+                        else encrypted_events
+                    )
                 logger.debug(
-                    "%s events: %d rows written", connector.display_name, count
+                    "%s events: %d rows in current fetch",
+                    connector.display_name,
+                    encrypted_events.num_rows,
                 )
             except NotImplementedError:
                 logger.debug("%s events: not implemented", connector.display_name)
@@ -190,42 +233,58 @@ def fetch_connector(
                     file=sys.stderr,
                 )
 
-    return FetchResult.ERROR if error_occurred else FetchResult.SUCCESS
+    return (FetchResult.ERROR if error_occurred else FetchResult.SUCCESS), handoff
 
 
-def transform_connector(connector, fernet_key: bytes) -> int:
+def transform_connector(
+    connector,
+    fernet_key: bytes,
+    raw_tables: dict[str, pa.Table] | None = None,
+) -> int:
     """Transform raw data for a single connector into normalized Delta tables.
 
     Returns 0 on success or when the connector is skipped (no raw data,
     not implemented).
+
+    *raw_tables* is the encrypted current-fetch handoff produced by
+    :func:`fetch_connector` for ``handoff_supported`` connectors (issue
+    #154). A layer present in the handoff is used directly; otherwise the
+    connector falls back to reading the accumulated raw Delta table — ibkr/
+    xtb always take this path because their transforms are designed around
+    the accumulation (see ADR 0116).
     """
     from deltalake import DeltaTable, write_deltalake
 
     storage_opts = get_storage().storage_options
 
-    for layer in ("snapshot", "events"):
+    for layer in TRANSFORM_LAYERS:
         # Both transforms read the single merged bronze table raw/{name}; the
         # ``source`` column discriminates snapshot vs events rows (AD-2). The
         # normalized output is still written to
         # ``normalized/{name}_{layer}`` — silver stays two tables per broker.
         raw_path = get_raw_path(connector.name)
-        try:
-            dt = DeltaTable(raw_path, storage_options=storage_opts)
-        except Exception:
-            logger.debug(
-                "%s %s: raw table not present at %s, skipping",
-                connector.display_name,
-                layer,
-                raw_path,
-            )
-            continue
-
-        raw_table = dt.to_pyarrow_table()
+        if raw_tables is not None and layer in raw_tables:
+            raw_table = raw_tables[layer]
+            source_noun = "current fetch"
+        else:
+            source_noun = "raw table"
+            try:
+                dt = DeltaTable(raw_path, storage_options=storage_opts)
+            except Exception:
+                logger.debug(
+                    "%s %s: raw table not present at %s, skipping",
+                    connector.display_name,
+                    layer,
+                    raw_path,
+                )
+                continue
+            raw_table = dt.to_pyarrow_table()
         if raw_table.num_rows == 0:
             logger.warning(
-                "%s %s: raw table is empty (0 rows); skipping transform",
+                "%s %s: %s is empty (0 rows); skipping transform",
                 connector.display_name,
                 layer,
+                source_noun,
             )
             continue
 
@@ -674,7 +733,7 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
 
         fernet_key = load_key()
         log_memory(f"connector:{args.connector}:post-key")
-        rc = fetch_connector(connector, args, fernet_key)
+        rc, handoff = fetch_connector(connector, args, fernet_key)
         log_memory(f"connector:{args.connector}:post-fetch")
         if rc == FetchResult.SKIPPED:
             # Connector has no credentials or required input (e.g. XTB without
@@ -682,8 +741,15 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
             return 0
         if rc == FetchResult.ERROR:
             return 1
-        rc = transform_connector(connector, fernet_key)
+        # For handoff_supported connectors the encrypted current fetch is
+        # passed in memory so the transform does not re-read the accumulated
+        # raw table (issue #154); ibkr/xtb receive None and read the table.
+        rc = transform_connector(connector, fernet_key, raw_tables=handoff)
         log_memory(f"connector:{args.connector}:post-transform")
+        # Release the encrypted current-fetch handoff now that the transform has
+        # consumed it — keeping it resident through validation would inflate the
+        # post-transform peak (issue #154).
+        del handoff
         if rc:
             return rc
         # Validate connector's normalized tables after transform.

@@ -95,6 +95,12 @@ def fetch_events(
     payload_hashes: list[str] = []
     source_files: list[str] = []
 
+    # Fail loud: ANY endpoint failure aborts the fetch. The transform consumes
+    # only the current fetch as an in-memory handoff (issue #154), so a silently
+    # skipped endpoint's events would be dropped from this run's normalized
+    # output instead of backfilled from the accumulated raw table — partial data
+    # must abort the run (see ADR 0116).
+    failed_endpoints: list[str] = []
     for endpoint_name, fetch_method in [
         ("orders", client.orders),
         ("dividends", client.dividends),
@@ -107,6 +113,7 @@ def fetch_events(
             logger.warning(
                 "Trading 212 events endpoint %s failed: %s", endpoint_name, exc
             )
+            failed_endpoints.append(endpoint_name)
             continue
 
         for path, raw_bytes in client.captured_responses:
@@ -116,6 +123,11 @@ def fetch_events(
             payloads.append(raw_bytes)
             payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
             source_files.append("")
+
+    if failed_endpoints:
+        raise RuntimeError(
+            "Trading 212 events: endpoint(s) failed: " + ", ".join(failed_endpoints)
+        )
 
     if not payloads:
         raise RuntimeError(
