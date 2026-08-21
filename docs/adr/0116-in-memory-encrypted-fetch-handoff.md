@@ -39,6 +39,7 @@ The raw table is still written with `mode="append"` (history/audit) and dedup st
 - **Negative (behavior change, ask-first):** trading212 normalized events now reflect the CURRENT history — an event deleted from T212's API (e.g. a cancelled order) disappears from the normalized events table instead of surviving in the accumulated history. This is arguably more correct but must be confirmed by the user before merge.
 - **Fallback risk:** if `transform_connector` is ever called without the handoff (no standalone transform subcommand exists today; `cmd_run_connector`/`cmd_full` always fetch first), it falls back to the table read — identical output, just slower.
 - **Follow-up:** if re-measurement still exceeds the task limit, the next lever is per-endpoint writes (issue item 10), deferred.
+- **Follow-up (protocol generalization, issue #155):** the binary `handoff_supported` flag cannot express the middle grounds ibkr/xtb need — per-layer handoff, per-layer filtered reads, and a bounded dedup key scan. That work is tracked in issue #155 and extends this ADR's capability design: it will amend/extend this ADR, not create a second one — this ADR remains the decision record for the handoff problem.
 
 ## Validation
 
