@@ -66,5 +66,8 @@ CloudWatch **Container Insights was considered and rejected**:
 2. Local run `pipeline.run run-connector trading212 --mode staging` with
    staging creds emits `[mem]` lines at every boundary; trading212 peak ~1 GB,
    ibkr peak ~275 MB — matching the deploy outcomes (OOM vs success).
-3. After deploy, an OOM-killed container's last CloudWatch `[mem]` line names
+3. Staging run #94 after the encrypted handoff completed successfully at
+   **207.8 MB peak RSS**, versus **at least 511.1 MB** before the fix: a
+   **303.3 MB (59.3%) reduction**, with 9 passes, 0 warnings, and 0 failures.
+4. After deploy, an OOM-killed container's last CloudWatch `[mem]` line names
    the phase it died in.
