@@ -12,8 +12,8 @@ What this script does
 ---------------------
 1. For each broker (``ibkr``, ``trading212``, ``xtb``), read
    ``raw/{broker}_snapshot`` and ``raw/{broker}_events`` (absent tables are
-   skipped), concat them with polars, and dedup on ``(broker, source,
-   payload_hash)`` keeping the latest ``fetched_at`` row -- and its
+   skipped), concat them with polars, and dedup on ``(source, payload_hash)``
+   keeping the latest ``fetched_at`` row -- and its
    ``source_file``, so XTB's ``account_id`` derivation (ADR 0108 D18)
    survives.  The deduped frame is written to ``raw/{broker}`` with
    ``write_deltalake(mode="overwrite", schema_mode="overwrite")``.  The
@@ -111,8 +111,8 @@ _BROKER_DISPLAY: dict[str, str] = {
 # covers the orphaned ``raw/xtb_events`` that was never written.
 _SOURCE_TABLE_SUFFIXES: tuple[str, ...] = ("_snapshot", "_events")
 
-# Dedup key of the raw layer (ADR 0047, ingest.py:46-52).
-_DEDUP_KEY: tuple[str, ...] = ("broker", "source", "payload_hash")
+# Dedup key of each broker-scoped raw table (ADR 0047, ingest.py:46-52).
+_DEDUP_KEY: tuple[str, ...] = ("source", "payload_hash")
 
 # boto3 delete_objects accepts at most this many keys per call.
 _DELETE_CHUNK = 1000
@@ -156,7 +156,7 @@ def _path_exists(table_path: str, storage_opts: dict[str, str]) -> bool:
 
 
 def _dedup_merged(frames: list[pl.DataFrame]) -> pl.DataFrame:
-    """Concat source frames and dedup on ``(broker, source, payload_hash)``.
+    """Concat source frames and dedup on ``(source, payload_hash)``.
 
     For each dedup key the row with the latest ``fetched_at`` wins (descending
     sort, then ``unique(keep="first")`` -- mirrors ``dedup_events`` ADR 0105),
@@ -475,7 +475,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Merge per-layer raw tables into one bronze table per "
         "broker (raw/{broker}_snapshot + raw/{broker}_events -> raw/{broker}, "
-        "deduped on (broker, source, payload_hash)) and remove every per-layer "
+        "deduped on (source, payload_hash)) and remove every per-layer "
         "raw path. Run BEFORE deploying the renamed-path code in each "
         "environment.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

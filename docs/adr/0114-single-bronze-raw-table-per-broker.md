@@ -56,7 +56,7 @@ Concretely:
   via 0108) — never a global max; XTB's per-`account_id` latest stays.
 - **Migration:** `pipeline/migrations/migrate_single_bronze.py` merges
   `raw/{broker}_snapshot` + `raw/{broker}_events` into `raw/{broker}` per broker,
-  dedup-keyed on `(broker, source, payload_hash)` keeping the latest
+  dedup-keyed on `(source, payload_hash)` within each broker-scoped table, keeping the latest
   `fetched_at` row and its `source_file` (so XTB's `account_id` derivation,
   ADR 0108 D18, survives), then removes every per-layer raw path — including the
   orphaned `raw/xtb_events` — via batched S3 delete, refusing to delete unless
