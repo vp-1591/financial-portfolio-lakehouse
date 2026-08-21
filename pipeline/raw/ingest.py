@@ -47,9 +47,7 @@ def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
     # column (Fernet-encrypted bytes) grows every run, and loading it into
     # memory just to compute a key set is the other peak-memory driver
     # (issue #154). The 2-key scan result is identical to a full read.
-    existing = existing_dt.to_pyarrow_table(
-        columns=["source", "payload_hash"]
-    )
+    existing = existing_dt.to_pyarrow_table(columns=["source", "payload_hash"])
     if existing.num_rows == 0:
         return table
 
