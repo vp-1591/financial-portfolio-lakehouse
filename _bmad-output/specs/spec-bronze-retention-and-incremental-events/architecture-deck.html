@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bounded Bronze, Durable Events — Architecture Deck</title>
+<style>
+  :root {
+    --bg: #0f1520; --panel: #171f2e; --panel2: #1d2738; --ink: #e8edf4;
+    --muted: #93a1b8; --line: #2c3a52; --accent: #4fd1c5; --accent2: #7c8cf8;
+    --bronze: #c88a5a; --silver: #9fb3c8; --gold: #e8c55a; --danger: #f28b8b;
+    --ok: #6fdc9e; --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+  header.hero { padding: 40px 32px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(160deg, #16203a, #101827 60%); margin-bottom: 28px; }
+  .kicker { color: var(--accent); text-transform: uppercase; letter-spacing: .14em; font-size: 12px; margin: 0 0 8px; }
+  h1 { margin: 0 0 6px; font-size: 30px; }
+  .sub { color: var(--muted); margin: 0 0 18px; font-size: 15px; max-width: 70ch; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; color: var(--muted); }
+  .chip b { color: var(--ink); font-weight: 600; }
+  nav.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 18px; }
+  nav.tabs button { background: var(--panel); color: var(--muted); border: 1px solid var(--line); padding: 8px 16px; border-radius: 999px; cursor: pointer; font-size: 13.5px; }
+  nav.tabs button.active { background: var(--accent); border-color: var(--accent); color: #0b1626; font-weight: 600; }
+  .panel { display: none; }
+  .panel.active { display: block; animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+  h2 { font-size: 20px; margin: 28px 0 12px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; }
+  .muted { color: var(--muted); }
+  .grid { display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+  .card.hoverable { cursor: pointer; transition: border-color .15s; }
+  .card.hoverable:hover { border-color: var(--accent); }
+  .card h4 { margin: 0 0 8px; font-size: 15.5px; display: flex; align-items: center; gap: 10px; }
+  .ad-id { color: var(--accent2); font-weight: 700; font-size: 13px; background: #202c46; border-radius: 6px; padding: 2px 8px; }
+  .card .f { margin: 6px 0; }
+  .f b { color: var(--accent); font-weight: 600; }
+  .collapse { max-height: 0; overflow: hidden; transition: max-height .25s ease; }
+  .card.open .collapse { max-height: 400px; }
+  .binds, .prevents { color: var(--muted); }
+  .rule { color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
+  th { color: var(--accent); font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; }
+  tr:hover td { background: rgba(79, 209, 197, .04); }
+  .warn { border: 1px solid #5c3f3f; background: #241a1a; border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; }
+  .warn b { color: var(--danger); }
+  .ok { border: 1px solid #2e5a46; background: #12261c; border-radius: var(--radius); padding: 14px 18px; margin: 14px 0; }
+  .ok b { color: var(--ok); }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+  .l-fetch::before { background: var(--accent2); } .l-bronze::before { background: var(--bronze); }
+  .l-silver::before { background: var(--silver); } .l-gold::before { background: var(--gold); } .l-dq::before { background: var(--danger); }
+  @media (max-width: 700px) { .wrap { padding: 16px; } h1 { font-size: 24px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <p class="kicker">Architecture Spine · epic altitude · build substrate + walkthrough</p>
+    <h1>Bounded Bronze, Incremental Events</h1>
+    <p class="sub">The raw layer becomes a <em>bounded cache</em> — one row per broker retention key, enforced at write time by a Delta MERGE — and silver events become the <em>durable history</em>, merged by event identity and never deleted. Freshness is a property of the run, not the stored bytes.</p>
+    <div class="chips">
+      <span class="chip">Inherits <b>single-bronze-per-broker</b> (final)</span>
+      <span class="chip">Spec: <b>SPEC-bronze-retention-and-incremental-events</b></span>
+      <span class="chip">deltalake <b>1.6.0</b></span>
+      <span class="chip">CAP-1 … CAP-5</span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="active" data-tab="flow">Flow</button>
+    <button data-tab="decisions">Decisions</button>
+    <button data-tab="retention">Retention policy</button>
+    <button data-tab="deploy">Deploy &amp; freshness</button>
+    <button data-tab="open">Deferred</button>
+  </nav>
+
+  <!-- ============================= FLOW ============================= -->
+  <section class="panel active" id="tab-flow" role="tabpanel">
+    <h2>One run, end to end</h2>
+    <svg viewBox="0 0 1100 470" style="width:100%; height:auto; background:var(--panel); border:1px solid var(--line); border-radius:14px; font:13px 'Segoe UI',system-ui,sans-serif;">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#7d93b8"/>
+        </marker>
+      </defs>
+
+      <!-- fetch -->
+      <rect x="24" y="60" width="170" height="120" rx="10" fill="#232f4a" stroke="#7c8cf8" stroke-width="1.5"/>
+      <text x="109" y="84" text-anchor="middle" fill="#7c8cf8" font-weight="700">fetch</text>
+      <text x="109" y="104" text-anchor="middle" fill="#dfe7f2">connector.fetch_kwargs</text>
+      <text x="109" y="122" text-anchor="middle" fill="#b9c4d8">per-broker rows</text>
+      <text x="109" y="152" text-anchor="middle" fill="#8fa0bd" font-size="12">XTB: account_id from</text>
+      <text x="109" y="167" text-anchor="middle" fill="#8fa0bd" font-size="12">report filename</text>
+
+      <!-- bronze merge -->
+      <rect x="258" y="40" width="230" height="100" rx="10" fill="#33291c" stroke="#c88a5a" stroke-width="1.5"/>
+      <text x="407" y="66" text-anchor="middle" fill="#c88a5a" font-weight="700">raw/{broker} — bronze cache</text>
+      <text x="407" y="88" text-anchor="middle" fill="#dfe7f2">Delta MERGE on retention key</text>
+      <text x="407" y="106" text-anchor="middle" fill="#b9c4d8">replace matched · insert new</text>
+      <text x="407" y="124" text-anchor="middle" fill="#b9c4d8">never delete unseen keys</text>
+      <text x="407" y="208" text-anchor="middle" fill="#c88a5a" font-size="12">one row per key · reads stay bounded</text>
+
+      <!-- vacuum -->
+      <rect x="360" y="235" width="96" height="34" rx="8" fill="#202a3c" stroke="#2c3a52"/>
+      <text x="408" y="257" text-anchor="middle" fill="#dfe7f2" font-size="12">VACUUM (7d)</text>
+
+      <!-- transform single read -->
+      <rect x="590" y="60" width="180" height="120" rx="10" fill="#232f4a" stroke="#4fd1c5" stroke-width="1.5"/>
+      <text x="680" y="84" text-anchor="middle" fill="#4fd1c5" font-weight="700">one bronze read</text>
+      <text x="680" y="106" text-anchor="middle" fill="#dfe7f2">transform_connector</text>
+      <text x="680" y="126" text-anchor="middle" fill="#b9c4d8">shared decoded result</text>
+      <text x="680" y="146" text-anchor="middle" fill="#8fa0c0" font-size="12">CAP-5 · no re-read / re-parse</text>
+
+      <!-- silver -->
+      <rect x="846" y="30" width="230" height="66" rx="10" fill="#1c2733" stroke="#9fb3c8" stroke-width="1.3"/>
+      <text x="941" y="54" text-anchor="middle" fill="#9fb3c8" font-weight="700">{broker}_snapshot</text>
+      <text x="941" y="74" text-anchor="middle" fill="#b9c4d8" font-size="12">per-source latest (parent AD-4)</text>
+      <rect x="846" y="112" width="230" height="66" rx="10" fill="#1c2733" stroke="#9fb3c8" stroke-width="1.3"/>
+      <text x="941" y="136" text-anchor="middle" fill="#9fb3c8" font-weight="700">{broker}_events</text>
+      <text x="941" y="156" text-anchor="middle" fill="#b9c4d8" font-size="12">MERGE on event_id · never delete</text>
+
+      <!-- gold -->
+      <rect x="1010" y="60" width="70" height="90" rx="10" fill="#2a2313" stroke="#e8c55a" stroke-width="1.5"/>
+      <text x="1045" y="102" text-anchor="middle" fill="#e8c55a" font-weight="700">gold</text>
+      <text x="1045" y="122" text-anchor="middle" fill="#b9c4d8" font-size="11">analytics</text>
+
+      <!-- freshness -->
+      <rect x="590" y="196" width="180" height="48" rx="10" fill="#1f2637" stroke="#f28b8b" stroke-width="1.3"/>
+      <text x="680" y="216" text-anchor="middle" fill="#f28b8b" font-size="12.5" font-weight="600">freshness — run-aware</text>
+      <text x="680" y="233" text-anchor="middle" fill="#8fa0c0" font-size="11.5">last successful fetch wins</text>
+
+      <!-- arrows -->
+      <line x1="194" y1="120" x2="300" y2="120" stroke="#7d93b8" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="506" y1="120" x2="580" y2="120" stroke="#7d93b8" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="770" y1="90" x2="836" y2="90" stroke="#7d93b8" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="770" y1="130" x2="836" y2="130" stroke="#7d93b8" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="941" y1="96" x2="941" y2="100" stroke="#7d93b8" stroke-width="1.8"/>
+      <line x1="1040" y1="105" x2="1000" y2="105" stroke="#7d93b8" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="1036" y1="140" x2="1000" y2="122" stroke="#7d93b8" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="408" y1="170" x2="408" y2="192" stroke="#7d93b8" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="700" y1="120" x2="700" y2="192" stroke="#7d93b8" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+    </svg>
+    <div class="legend">
+      <span class="l-fetch">fetch</span>
+      <span class="l-bronze">bronze — merge-on-key retention</span>
+      <span class="l-silver">silver — durable</span>
+      <span class="l-gold">gold</span>
+      <span class="l-dq">quality — run-aware freshness</span>
+    </div>
+
+    <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:18px;">
+      <div class="card">
+        <h4><span class="ad-id">AD-1</span> Retention = write-time merge-on-key</h4>
+        <p class="muted">The fetch itself is a Delta MERGE on the retention key. There is no accumulated table to scan for dedup, and no separate retention sweep — the retained set is the table.</p>
+      </div>
+      <div class="card">
+        <h4><span class="ad-id">AD-3</span> VACUUM per run, 7-day default</h4>
+        <p class="muted">Tombstones created by the merge are drained once per run with the Delta 7-day default. No low-retention override — logical, physical, and log retention stay distinct.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= DECISIONS ============================= -->
+  <section class="panel" id="tab-decisions" role="tabpanel">
+    <h2>The eight decisions</h2>
+    <p class="muted">Click a card to expand. Every decision carries Binds / Prevents / Rule.</p>
+
+    <div class="grid">
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-1</span> Retention is write-time merge-on-key</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-1, CAP-4, every fetch_*, raw/ingest.py, the removed dedup accumulation scan</p>
+          <p class="prevents"><b>Prevents:</b> “latest per key” computed two places; the accumulated read-back (the read/dedup work this epic kills, issue #154 memory driver); out-of-policy rows surviving forever.</p>
+          <p class="rule"><b>Rule:</b> raw write = DeltaTable.merge of the batch keyed on XTB account_id, T212/IBKR source. Matched rows replaced, unmatched inserted, unseen keys untouched. Batch pre-deduped on (source, payload_hash). Cross-run dedup_raw scan deleted.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-2</span> RAW_SCHEMA + nullable account_id, − source_file</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-1 · RAW_SCHEMA · XTB fetch + transform · migration</p>
+          <p class="prevents"><b>Prevents:</b> identity landing in two columns; null-account_id collapsing unrelated brokers into one merge key.</p>
+          <p class="rule"><b>Rule:</b> schema = fetched_at, broker, source, payload, payload_hash, account_id (nullable). XTB populates account_id from the report filename; IBKR/T212 store NULL and never merge on it; transform parses payload when null, ties on fetched_at+payload_hash. Supersedes ADR 0047's account_id clause (recorded, not silent).</p>
+        </div>
+      </div>
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-3</span> VACUUM per run, 7-day default</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-4 · every environment endpoint (docker/staging/prod)</p>
+          <p class="prevents"><b>Prevents:</b> relying on the 7-day default as if it were retention; and the inverse — an aggressive low-retention vacuum that risks live data.</p>
+          <p class="rule"><b>Rule:</b> vacuum(<b>dry_run=False</b>) with defaults (retention_hours omitted, enforce_retention_duration True) at end of run — dry_run defaults to True and would delete nothing. Per-connector task vacuums its own raw/{broker} (XTB's file-arrival task vacuums raw/xtb); silver events never vacuumed. Logical, physical and log retention stay three distinct mechanisms.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-4</span> Events are append-preserving MERGEs</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-2 · normalize.py events write · dedup_events</p>
+          <p class="prevents"><b>Prevents:</b> today's mode="overwrite" (normalize.py:218) wiping events absent from the latest response — the Flex-window loss CAP-2 kills; and delete-then-insert “simplifications”.</p>
+          <p class="rule"><b>Rule:</b> events = DeltaTable.merge on the per-broker event identity (subset containing event_id, ADR 0105). whenMatchedUpdate only when newer fetched_at; whenNotMatchedInsert. Nothing ever deleted by a merge. Idempotent; moving the Flex window cannot remove events.</p>
+        </div>
+      </div>
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-5</span> Freshness is run-aware</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-3 · quality.py freshness · run.py</p>
+          <p class="prevents"><b>Prevents:</b> issue #157 — a byte-identical re-fetch warns stale because stored max(fetched_at) is the first payload's timestamp.</p>
+          <p class="rule"><b>Rule:</b> the run passes per-broker last-successful-fetch times into the freshness pass; a table whose broker was fetched within the window passes even if nothing changed. Standalone DQ falls back to table max(fetched_at). No new table — the run is the marker.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-6</span> One bronze read feeds both outputs</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-5 · transform_connector · both transforms</p>
+          <p class="prevents"><b>Prevents:</b> each downstream table independently re-reading and re-parsing the same encrypted payload (doubled reads, divergent decodes).</p>
+          <p class="rule"><b>Rule:</b> transform_connector reads raw/{broker} once post-merge; the same decoded result routes to snapshot and events. No per-table raw re-reads. Removing the T212 handoff (AD-8) makes this the only path.</p>
+        </div>
+      </div>
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-7</span> Schema migration is the deploy gate</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-1 · migrations · deploy per environment</p>
+          <p class="prevents"><b>Prevents:</b> merge-on-account_id code deployed against pre-schema tables (NULL-keyed legacy rows → re-insert every run); dropping source_file before the backfill.</p>
+          <p class="rule"><b>Rule:</b> migration rewrites raw/{broker} to the new schema, backfills XTB account_id from source_file, then drops it. Idempotent, --dry-run, per-environment pre-deploy with connectors idle. Events tables need no migration (write-only change).</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:1fr">
+      <div class="card hoverable" onclick="toggleCard(this)">
+        <h4><span class="ad-id">AD-8</span> T212 handoff removed — measured, reversible</h4>
+        <div class="collapse">
+          <p class="binds"><b>Binds:</b> CAP-5 · trading212 connector · the ADR 0116 baseline</p>
+          <p class="prevents"><b>Prevents:</b> two implementers disagreeing on keep-vs-delete, and shipping without an empirical gate.</p>
+          <p class="rule"><b>Rule:</b> remove the handoff; measure memory peak + runtime against the baseline; restore on material regression. Either way, one shared bronze read (AD-6) stays.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= RETENTION POLICY ============================= -->
+  <section class="panel" id="tab-retention" role="tabpanel">
+    <h2>Retention policy per broker</h2>
+    <table>
+      <thead><tr><th>Broker</th><th>Merge / retention key</th><th>Kept in bronze</th><th>Main risk</th></tr></thead>
+      <tbody>
+        <tr><td>XTB</td><td><code>account_id</code> (nullable, from filename)</td><td>latest report per account</td><td>filename may not yield an account id → NULL-keyed row is appended, not merged</td></tr>
+        <tr><td>Trading 212</td><td><code>source</code> (endpoint)</td><td>latest response per endpoint</td><td>assumes endpoint completeness</td></tr>
+        <tr><td>IBKR</td><td><code>source</code> (flex / flex_events)</td><td>latest report per source</td><td>Flex query window moves — but events history is durable in silver</td></tr>
+      </tbody>
+    </table>
+
+    <div class="warn"><b>Surface, don't re-litigate:</b> this epic supersedes the parent spine's frozen <code>RAW_SCHEMA</code>, ADR 0047's “account_id is a silver concept” clause, and ADR 0116's append-only / no-merge raw-write clause. Recorded as decisions, not silent overrides — the migration (AD-7) is what keeps them from breaking pre-existing tables.</div>
+
+    <div class="ok"><b>Keys absent from the current fetch are never deleted.</b> A fetch merges only the keys it saw; a broker that stops reporting keeps its last row. The “replace with the current response” trap is what the events merge avoids and raw's merge-on-key inherits.</div>
+  </section>
+
+  <!-- ============================= DEPLOY & FRESHNESS ============================= -->
+  <section class="panel" id="tab-deploy" role="tabpanel">
+    <h2>Deploy ordering &amp; operations</h2>
+    <p class="muted">Migrate before deploy, per environment, connectors idle — the ADR 0112 A1 convention.</p>
+    <table>
+      <thead><tr><th>Step</th><th>What</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Run <code>pipeline/migrations/migrate_raw_account_id.py --mode &lt;env&gt; --dry-run</code>, then for real — backfills XTB account_id from source_file, drops source_file.</td></tr>
+        <tr><td>2</td><td>Deploy the new code (merge writes, run-aware freshness). Events tables need no migration — the CAP-2 change swaps the write mechanism, not the schema.</td></tr>
+        <tr><td>3</td><td>VACUUM runs at the end of every broker run with the 7-day default. Expected: <code>pipeline.run query "SELECT broker, COUNT(*) ... GROUP BY broker"</code> stays flat.</td></tr>
+        <tr><td>4</td><td>Measure the T212 run without the handoff (memory peak + runtime) against the ADR 0116 baseline; restore on material regression.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>How freshness stops false-stale (issue #157)</h3>
+    <p class="muted">Old: freshness = max(fetched_at) of stored rows → an identical re-fetch stores nothing new → warns stale even though the run succeeded.<br>
+    New: the run passes its own last-successful-fetch timestamps into the quality pass → a broker just contacted within the window passes regardless of payload change; standalone DQ falls back to the table scan.</p>
+  </section>
+
+  <!-- ============================= DEFERRED ============================= -->
+  <section class="panel" id="tab-open" role="tabpanel">
+    <h2>Deferred and non-goals</h2>
+    <table>
+      <thead><tr><th>Item</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Content-time keying for XTB (an older re-upload superseding a newer report)</td><td>Deferred — “latest fetched_at wins” stays (ADR 0108 D18)</td></tr>
+        <tr><td>Broker corrections / partial responses / truncation</td><td>Non-goal unless sources contract contradict the completeness assumption</td></tr>
+        <tr><td>A second observability / metadata table</td><td>Non-goal — run-aware freshness deliberately avoids one</td></tr>
+        <tr><td>Merge granularity (per-batch vs all-then-merge; streamed_exec)</td><td>Implementation detail under AD-1/AD-4</td></tr>
+        <tr><td>Delta transaction-log history</td><td>30-day default, not tuned here</td></tr>
+        <tr><td>Semantic canonicalization of payloads before hashing</td><td>Non-goal — hash the bytes as fetched</td></tr>
+        <tr><td>Replaying historical broker payloads after the retention window</td><td>Non-goal — normalized events are the durable history</td></tr>
+        <tr><td>Handoff-removal rollback</td><td>Gated by AD-8's measurement, not a spine revision</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+<script>
+  function toggleCard(el){ el.classList.toggle('open'); }
+  document.querySelectorAll('nav.tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('nav.tabs button').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+      document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
