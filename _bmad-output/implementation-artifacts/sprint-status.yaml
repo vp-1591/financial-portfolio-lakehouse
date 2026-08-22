@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-08-19
-last_updated: 2026-08-20
+last_updated: 2026-08-22
 project: financial-portfolio-lakehouse
 project_key: NOKEY
 tracking_system: file-system
@@ -77,3 +77,11 @@ development_status:
   4-3-both-renames-ship-as-one-reviewed-pr-the-adr-is-recorded-and-prod-drift-is-flagged: backlog
   epic-4-retrospective: optional
   pr150-single-bronze-per-broker: review
+  epic-5: in-progress
+  5-1-raw-schema-account-id-evolution: ready-for-dev
+  5-2-write-time-merge-retention-and-vacuum: ready-for-dev
+  5-3-incremental-events-merge-and-single-bronze-read: ready-for-dev
+  5-4-run-aware-freshness: ready-for-dev
+  5-5-raw-schema-migration: ready-for-dev
+  5-6-t212-handoff-removal-measurement: ready-for-dev
+  epic-5-retrospective: optional
