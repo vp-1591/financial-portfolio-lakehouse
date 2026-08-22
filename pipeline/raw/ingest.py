@@ -25,7 +25,7 @@ def encrypt_raw_payloads(table: pa.Table, fernet_key: bytes) -> pa.Table:
 
 
 def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
-    """Remove rows whose ``(broker, source, payload_hash)`` already exist.
+    """Remove rows whose ``(source, payload_hash)`` already exist.
 
     If *existing_path* is ``None`` or the path does not exist, no
     deduplication is performed and the table is returned as-is.
@@ -46,25 +46,21 @@ def dedup_raw(table: pa.Table, existing_path: str | None = None) -> pa.Table:
     # Project only the dedup-key columns: the accumulated table's payload
     # column (Fernet-encrypted bytes) grows every run, and loading it into
     # memory just to compute a key set is the other peak-memory driver
-    # (issue #154). The 3-key scan result is identical to a full read.
-    existing = existing_dt.to_pyarrow_table(
-        columns=["broker", "source", "payload_hash"]
-    )
+    # (issue #154). The 2-key scan result is identical to a full read.
+    existing = existing_dt.to_pyarrow_table(columns=["source", "payload_hash"])
     if existing.num_rows == 0:
         return table
 
     existing_keys = set(
         zip(
-            existing.column("broker").to_pylist(),
             existing.column("source").to_pylist(),
             existing.column("payload_hash").to_pylist(),
         )
     )
 
-    brokers = table.column("broker").to_pylist()
     sources = table.column("source").to_pylist()
     hashes = table.column("payload_hash").to_pylist()
-    mask = [(b, s, h) not in existing_keys for b, s, h in zip(brokers, sources, hashes)]
+    mask = [(s, h) not in existing_keys for s, h in zip(sources, hashes)]
 
     if all(mask):
         return table

@@ -431,7 +431,7 @@ class TestIngestRawReturnsPreDedupHandoff:
 
 
 class TestDedupRawProjected:
-    """dedup_raw's projected key read keeps dedup behavior identical."""
+    """dedup_raw's projected key read ignores the table's broker column."""
 
     @staticmethod
     def _raw_table(rows: list[tuple[str, str]], fernet_key: bytes) -> pa.Table:
@@ -466,7 +466,7 @@ class TestDedupRawProjected:
         )
         new = self._raw_table(
             [
-                ("B", "/equity/account/summary"),  # duplicate → dropped
+                ("C", "/equity/account/summary"),  # source/hash duplicate → dropped
                 ("B", "/equity/positions"),  # duplicate → dropped
                 ("B", "/equity/history/orders"),  # new → kept
             ],
