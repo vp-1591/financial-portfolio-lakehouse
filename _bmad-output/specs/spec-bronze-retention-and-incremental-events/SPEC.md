@@ -3,10 +3,11 @@ id: SPEC-bronze-retention-and-incremental-events
 companions:
   - retention-and-events-contract.md
   - handoff-decision-matrix.md
+  - ARCHITECTURE-SPINE.md
 sources: []
 ---
 
-> **Canonical contract.** This SPEC and `retention-and-events-contract.md` define the bounded-bronze and incremental-events change. Unresolved implementation choices remain listed as open questions in the companion.
+> **Canonical contract.** This SPEC, `retention-and-events-contract.md`, and `ARCHITECTURE-SPINE.md` (adopted from bmad-architecture, `status: final`) define the bounded-bronze and incremental-events change. The spine's AD-1..AD-8 resolve the implementation choices this SPEC previously left open; downstream skills cite those stable AD IDs.
 
 # Bounded Bronze Retention and Incremental Events
 
@@ -55,4 +56,8 @@ Each new fetch currently increases raw-table storage and the amount of data read
 
 One implementation PR demonstrates broker-specific bronze retention, shows bounded raw storage and materially reduced read/deduplication work across repeated fetches, proves one shared bronze read feeds both normalized outputs, measures the memory and runtime impact of removing the T212 handoff against the existing baseline, preserves normalized events across a moving Flex window, prevents repeated identical fetches from producing a false stale warning, and verifies configured Delta retention/VACUUM behavior. Focused tests, Ruff, Pyright, and the full test suite pass.
 
-## Open questions
+## Assumptions
+
+- Trading 212 endpoint responses are treated as complete per the current connector contract; XTB account identity is the retention boundary.
+- `VACUUM` uses the Delta 7-day default tombstone retention, run per broker run with `dry_run=False` (deltalake 1.6.0 defaults `dry_run=True`).
+- The architecture spine's AD-1..AD-8 are binding; they supersede ADR 0116's no-`DeltaTable.merge` constraint and ADR 0047's `account_id` exclusion, as surfaced in the spine's Conflicts section.
