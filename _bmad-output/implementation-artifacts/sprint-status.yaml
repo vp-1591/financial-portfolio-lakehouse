@@ -48,35 +48,35 @@ tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 
 development_status:
-  epic-1: backlog
-  1-1-connector-fetch-layer-reads-events: backlog
-  1-2-broker-transforms-dedup-and-raw-schemas-read-events: backlog
-  1-3-normalized-consolidation-produces-events-tables: backlog
-  1-4-analytics-tables-and-quality-checks-read-events: backlog
-  1-5-path-env-vars-and-run-py-cli-read-events: backlog
-  1-6-docs-renamed-and-the-repo-wide-sweep-proves-the-cap-1-bar: backlog
+  epic-1: done
+  1-1-connector-fetch-layer-reads-events: done
+  1-2-broker-transforms-dedup-and-raw-schemas-read-events: done
+  1-3-normalized-consolidation-produces-events-tables: done
+  1-4-analytics-tables-and-quality-checks-read-events: done
+  1-5-path-env-vars-and-run-py-cli-read-events: done
+  1-6-docs-renamed-and-the-repo-wide-sweep-proves-the-cap-1-bar: done
   epic-1-retrospective: optional
-  epic-2: backlog
-  2-1-the-staging-mode-predicate-reads-staging: backlog
-  2-2-env-label-state-machine-and-storage-prefix-read-staging: backlog
-  2-3-ibkr-reads-paper-not-demo: backlog
-  2-4-staging-terraform-reads-staging: backlog
-  2-5-terraform-modules-shared-config-and-the-prod-flip-read-staging: backlog
-  2-6-trading-212-s-demo-tier-is-verified-as-the-sole-surviving-demo: backlog
-  2-7-docs-renamed-and-the-repo-wide-sweep-proves-the-cap-2-bar: backlog
+  epic-2: done
+  2-1-the-staging-mode-predicate-reads-staging: done
+  2-2-env-label-state-machine-and-storage-prefix-read-staging: done
+  2-3-ibkr-reads-paper-not-demo: done
+  2-4-staging-terraform-reads-staging: done
+  2-5-terraform-modules-shared-config-and-the-prod-flip-read-staging: done
+  2-6-trading-212-s-demo-tier-is-verified-as-the-sole-surviving-demo: done
+  2-7-docs-renamed-and-the-repo-wide-sweep-proves-the-cap-2-bar: done
   epic-2-retrospective: optional
-  epic-3: backlog
-  3-1-migration-a1-renames-delta-tables-and-rewrites-the-flex-cdc-sentinel: backlog
-  3-2-migration-b1-copies-the-encrypted-bucket-to-the-staging-bucket: backlog
-  3-3-migration-b2-moves-ssm-secrets-to-staging-paths: backlog
-  3-4-migration-b3-moves-terraform-state-to-staging-names: backlog
+  epic-3: done
+  3-1-migration-a1-renames-delta-tables-and-rewrites-the-flex-cdc-sentinel: done
+  3-2-migration-b1-copies-the-encrypted-bucket-to-the-staging-bucket: done
+  3-3-migration-b2-moves-ssm-secrets-to-staging-paths: done
+  3-4-migration-b3-moves-terraform-state-to-staging-names: done
   epic-3-retrospective: optional
-  epic-4: backlog
-  4-1-the-historical-drop-gross-amount-migration-stays-runnable: backlog
-  4-2-the-full-check-suite-is-green-before-the-pr-opens: backlog
-  4-3-both-renames-ship-as-one-reviewed-pr-the-adr-is-recorded-and-prod-drift-is-flagged: backlog
+  epic-4: done
+  4-1-the-historical-drop-gross-amount-migration-stays-runnable: done
+  4-2-the-full-check-suite-is-green-before-the-pr-opens: done
+  4-3-both-renames-ship-as-one-reviewed-pr-the-adr-is-recorded-and-prod-drift-is-flagged: done
   epic-4-retrospective: optional
-  pr150-single-bronze-per-broker: review
+  pr150-single-bronze-per-broker: done
   epic-5: in-progress
   5-1-raw-schema-account-id-evolution: ready-for-dev
   5-2-write-time-merge-retention-and-vacuum: ready-for-dev
