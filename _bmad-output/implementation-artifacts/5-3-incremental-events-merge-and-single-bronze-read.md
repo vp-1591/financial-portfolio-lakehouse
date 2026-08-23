@@ -125,7 +125,7 @@ window-loss failure CAP-2 exists to kill.
 ```text
 pipeline/
   run.py                 # transform_connector: events write becomes DeltaTable.merge on the broker event identity (AD-4);
-                         #   single bronze read per broker run (AD-6); passes run fetch times to freshness (5-4)
+                         #   single bronze read per broker run (AD-6); per-account staleness lives in quality.py (5-4)
   connectors/
     transform_utils.py   # dedup_events stays (in-batch pre-dedup for AD-4)
 ```

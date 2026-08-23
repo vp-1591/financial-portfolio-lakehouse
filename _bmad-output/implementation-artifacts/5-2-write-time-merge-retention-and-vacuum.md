@@ -133,7 +133,7 @@ the merge *is* the bounded scan this epic exists to ship.
 - **Blocked by:** 5-1 (XTB merge key = `account_id` needs the raw `account_id` column).
 - **Blocks:** 5-6 (the bounded table is what makes the handoff removable).
 - **Parallel with:** 5-5 (migration — different files).
-- **Shared contract:** `run.py` `fetch_connector` return signature (5-4 adds fetch times, 5-6 removes the handoff — keep the current shape intact here).
+- **Shared contract:** `run.py` `fetch_connector` return signature (5-4 no longer adds fetch times — its run-aware plumbing was dropped as redundant; 5-6 removes the handoff — keep the current shape intact here).
 
 ## Project Structure Notes
 
