@@ -524,7 +524,7 @@ class TestFlexTransformSnapshot:
                 "source": ["flex"],
                 "payload": [encrypted_payload],
                 "payload_hash": [payload_hash],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )
@@ -810,7 +810,7 @@ class TestConnectorFlexDispatch:
                 "source": ["flex"],
                 "payload": [encrypted_payload],
                 "payload_hash": [hashlib.sha256(xml_bytes).hexdigest()],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )
@@ -1261,7 +1261,7 @@ class TestIbkrFeeConversion:
                 "source": ["flex_events"],
                 "payload": [encrypted_payload],
                 "payload_hash": [payload_hash],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )

@@ -35,7 +35,7 @@ def fetch_snapshot(
     sources: list[str] = []
     payloads: list[bytes] = []
     payload_hashes: list[str] = []
-    source_files: list[str] = []
+    account_ids: list[str | None] = []
 
     # Fetch account summary
     client.captured_responses.clear()
@@ -46,7 +46,7 @@ def fetch_snapshot(
         sources.append(path)
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        source_files.append("")
+        account_ids.append(None)
 
     # Fetch positions
     client.captured_responses.clear()
@@ -57,7 +57,7 @@ def fetch_snapshot(
         sources.append(path)
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        source_files.append("")
+        account_ids.append(None)
 
     return pa.table(
         {
@@ -66,7 +66,7 @@ def fetch_snapshot(
             "source": sources,
             "payload": payloads,
             "payload_hash": payload_hashes,
-            "source_file": source_files,
+            "account_id": account_ids,
         },
         schema=RAW_SCHEMA,
     )
@@ -93,7 +93,7 @@ def fetch_events(
     sources: list[str] = []
     payloads: list[bytes] = []
     payload_hashes: list[str] = []
-    source_files: list[str] = []
+    account_ids: list[str | None] = []
 
     # Fail loud: ANY endpoint failure aborts the fetch. The transform consumes
     # only the current fetch as an in-memory handoff (issue #154), so a silently
@@ -122,7 +122,7 @@ def fetch_events(
             sources.append(path)
             payloads.append(raw_bytes)
             payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-            source_files.append("")
+            account_ids.append(None)
 
     if failed_endpoints:
         raise RuntimeError(
@@ -142,7 +142,7 @@ def fetch_events(
             "source": sources,
             "payload": payloads,
             "payload_hash": payload_hashes,
-            "source_file": source_files,
+            "account_id": account_ids,
         },
         schema=RAW_SCHEMA,
     )

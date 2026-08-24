@@ -64,13 +64,30 @@ def _read_file_bytes(file_path: str | Path) -> tuple[bytes, str]:
     return path.read_bytes(), path.name
 
 
+def _account_id_from_filename(filename: str) -> str | None:
+    """Extract the account id from an XTB export filename.
+
+    New-format filenames follow ``{CCY}_{account_id}_{from}_{to}.xlsx`` (e.g.
+    ``PLN_12345678_2006-01-01_2026-08-03.xlsx`` -> ``12345678``). Returns
+    ``None`` when the filename does not match the pattern, so the raw
+    ``account_id`` is NULL and the transform falls back to parsing the
+    payload (R1 ``Account number``) for account discovery (AD-2).
+    """
+    parts = Path(filename).stem.split("_")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return parts[1]
+    return None
+
+
 def fetch_snapshot(file_path: str | Path) -> pa.Table:
     """Fetch an XTB report (full 3-sheet workbook) and return a raw-layer table.
 
     Stores the raw .xlsx file bytes as the payload with
     ``source == "XTB_REPORT"`` (D17 shared bronze). Both snapshot and events
     silvers derive from this single raw row; parsing is left to the
-    transform layer.
+    transform layer. The raw ``account_id`` is populated from the report
+    filename at fetch time (AD-2 — filename-first); an unparseable filename
+    yields NULL and the transform's payload-parse recovery is the fallback.
 
     Parameters
     ----------
@@ -87,7 +104,7 @@ def fetch_snapshot(file_path: str | Path) -> pa.Table:
             "source": ["XTB_REPORT"],
             "payload": [payload],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "source_file": [filename],
+            "account_id": [_account_id_from_filename(filename)],
         },
         schema=RAW_SCHEMA,
     )

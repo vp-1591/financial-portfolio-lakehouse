@@ -105,7 +105,7 @@ class TestIterRawPayloads:
 
     def _make_raw_table(
         self,
-        rows: list[tuple[datetime, str, bytes, str]],
+        rows: list[tuple[datetime, str, bytes, str | None]],
         fernet_key: bytes,
     ) -> pa.Table:
         """Build a raw table with encrypted payloads."""
@@ -114,15 +114,15 @@ class TestIterRawPayloads:
         sources = []
         payloads = []
         payload_hashes = []
-        source_files = []
+        account_ids = []
 
-        for fetched_at, source, payload, source_file in rows:
+        for fetched_at, source, payload, account_id in rows:
             fetched_ats.append(fetched_at)
             brokers.append("test_broker")
             sources.append(source)
             payloads.append(encrypt(payload, fernet_key))
             payload_hashes.append("hash_" + source)
-            source_files.append(source_file)
+            account_ids.append(account_id)
 
         return pa.table(
             {
@@ -131,7 +131,7 @@ class TestIterRawPayloads:
                 "source": sources,
                 "payload": payloads,
                 "payload_hash": payload_hashes,
-                "source_file": source_files,
+                "account_id": account_ids,
             },
             schema=RAW_SCHEMA,
         )
@@ -243,7 +243,7 @@ class TestIterRawPayloads:
                 "source": [],
                 "payload": [],
                 "payload_hash": [],
-                "source_file": [],
+                "account_id": [],
             },
             schema=RAW_SCHEMA,
         )
@@ -386,7 +386,7 @@ class TestFilterLatestSnapshot:
                 "source": ["flex", "flex", "flex"],
                 "payload": [b"a", b"b", b"c"],
                 "payload_hash": ["h1", "h2", "h3"],
-                "source_file": ["", "", ""],
+                "account_id": [None, None, None],
             },
             schema=RAW_SCHEMA,
         )
@@ -404,7 +404,7 @@ class TestFilterLatestSnapshot:
                 "source": ["flex", "flex", "flex", "flex"],
                 "payload": [b"a", b"b", b"c", b"d"],
                 "payload_hash": ["h1", "h2", "h3", "h4"],
-                "source_file": ["", "", "", ""],
+                "account_id": [None, None, None, None],
             },
             schema=RAW_SCHEMA,
         )
@@ -426,7 +426,7 @@ class TestFilterLatestSnapshot:
                 "source": [],
                 "payload": [],
                 "payload_hash": [],
-                "source_file": [],
+                "account_id": [],
             },
             schema=RAW_SCHEMA,
         )
@@ -444,7 +444,7 @@ class TestFilterLatestSnapshot:
                 "source": ["flex"],
                 "payload": [b"a"],
                 "payload_hash": ["h1"],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )
@@ -463,7 +463,7 @@ class TestFilterLatestSnapshot:
                 "source": ["flex", "flex"],
                 "payload": [b"a", b"b"],
                 "payload_hash": ["h1", "h2"],
-                "source_file": ["file1", "file2"],
+                "account_id": ["acc1", "acc2"],
             },
             schema=RAW_SCHEMA,
         )
@@ -471,7 +471,7 @@ class TestFilterLatestSnapshot:
         assert result.num_rows == 1
         assert result.column("broker")[0].as_py() == "T212"
         assert result.column("source")[0].as_py() == "flex"
-        assert result.column("source_file")[0].as_py() == "file2"
+        assert result.column("account_id")[0].as_py() == "acc2"
 
     def test_different_timestamps_per_source_keeps_latest_per_source(
         self,
@@ -490,7 +490,7 @@ class TestFilterLatestSnapshot:
                 ],
                 "payload": [b"summary_v1", b"positions_v1", b"positions_v2"],
                 "payload_hash": ["h1", "h2", "h3"],
-                "source_file": ["", "", ""],
+                "account_id": [None, None, None],
             },
             schema=RAW_SCHEMA,
         )

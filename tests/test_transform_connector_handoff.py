@@ -185,7 +185,7 @@ def _raw_one_row(fernet_key: bytes) -> pa.Table:
             "source": ["/equity/account/summary"],
             "payload": [encrypt(payload, fernet_key)],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "source_file": [""],
+            "account_id": [None],
         },
         schema=RAW_SCHEMA,
     )
@@ -408,7 +408,7 @@ class TestIngestRawReturnsPreDedupHandoff:
                 "source": ["/equity/account/summary", "/equity/positions"],
                 "payload": [encrypt(p, fernet_key) for p in payloads],
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in payloads],
-                "source_file": ["", ""],
+                "account_id": [None, None],
             },
             schema=RAW_SCHEMA,
         )
@@ -444,7 +444,7 @@ class TestDedupRawProjected:
                 "source": [source for _, source in rows],
                 "payload": [encrypt(p, fernet_key) for p in payloads],
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in payloads],
-                "source_file": [""] * len(rows),
+                "account_id": [None] * len(rows),
             },
             schema=RAW_SCHEMA,
         )

@@ -1590,7 +1590,7 @@ def _build_xtb_raw(fernet_key: bytes) -> pa.Table:
             "source": ["XTB_REPORT"],
             "payload": [encrypt(payload, fernet_key)],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "source_file": ["report.xlsx"],
+            "account_id": [None],
         },
         schema=RAW_SCHEMA,
     )

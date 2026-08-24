@@ -62,7 +62,7 @@ class TestEncryptRawPayloadsSetColumn:
                 "source": ["test_source"] * 3,
                 "payload": payloads,
                 "payload_hash": ["hash1", "hash2", "hash3"],
-                "source_file": [""] * 3,
+                "account_id": [None] * 3,
             },
             schema=RAW_SCHEMA,
         )
@@ -86,7 +86,7 @@ class TestEncryptRawPayloadsSetColumn:
                 "source": [],
                 "payload": [],
                 "payload_hash": [],
-                "source_file": [],
+                "account_id": [],
             },
             schema=RAW_SCHEMA,
         )
@@ -119,7 +119,7 @@ class TestT212EventsKwargsSeparation:
                 "source": ["test"],
                 "payload": [b"{}"],
                 "payload_hash": ["hash"],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )
@@ -131,7 +131,7 @@ class TestT212EventsKwargsSeparation:
                 "source": ["test_events"],
                 "payload": [b"[]"],
                 "payload_hash": ["hash_events"],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )
@@ -231,7 +231,7 @@ class TestTransformDecryptsPayloads:
                 "source": ["XTB_REPORT"],
                 "payload": [encrypted_payload],
                 "payload_hash": ["abc"],
-                "source_file": ["test.xlsx"],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )
@@ -273,7 +273,7 @@ class TestTransformDecryptsPayloads:
                 "source": ["/equity/account/summary", "/equity/positions"],
                 "payload": [encrypted_summary, encrypted_positions],
                 "payload_hash": ["hash1", "hash2"],
-                "source_file": ["", ""],
+                "account_id": [None, None],
             },
             schema=RAW_SCHEMA,
         )
@@ -307,7 +307,7 @@ class TestDirectoryCreation:
                 "source": ["test"],
                 "payload": [b"test_data"],
                 "payload_hash": ["abc123"],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )

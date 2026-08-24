@@ -189,7 +189,7 @@ class TestFilterLatestSnapshotPerSourceKeyedness:
                 "source": [source],
                 "payload": [encrypt(payload, fernet_key)],
                 "payload_hash": [hashlib.sha256(payload).hexdigest()],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )
