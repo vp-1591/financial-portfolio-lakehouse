@@ -236,6 +236,56 @@ def fetch_connector(
     return (FetchResult.ERROR if error_occurred else FetchResult.SUCCESS), handoff
 
 
+# Per-broker event identity subsets for the append-preserving events MERGE
+# (AD-4). The predicate MUST use the same subset as the broker's in-batch
+# dedup (ADR 0105) — never ``event_id`` alone — so same-ID events across XTB
+# accounts or across Trading 212 order/dividend/transaction ID spaces stay
+# distinct (adversarial review F8).
+EVENT_IDENTITY_SUBSETS: dict[str, tuple[str, ...]] = {
+    "ibkr": ("event_id",),
+    "trading212": ("event_type", "event_id"),
+    "xtb": ("event_type", "event_id", "account_id"),
+}
+
+
+def _merge_events(
+    norm_path: str,
+    normalized: pa.Table,
+    identity_subset: tuple[str, ...],
+    storage_opts: dict[str, str] | None = None,
+) -> None:
+    """Append-preserving events MERGE (AD-4): update-only-if-newer, insert, never delete.
+
+    Merges the normalized rows into the ``normalized/{broker}_events`` target
+    keyed on the broker's FULL event identity subset (AC-1). A matched
+    identity is updated only when the incoming ``fetched_at`` is strictly
+    newer (``>`` — pinned by review); a new identity is inserted; nothing is
+    ever deleted, so an event absent from the current broker response survives
+    (CAP-2). The first run has no target table yet — the overwrite write
+    creates it (merging against an absent table is impossible).
+    """
+    from deltalake import DeltaTable, write_deltalake
+
+    predicate = " AND ".join(f"s.{col} = t.{col}" for col in identity_subset)
+    updates = {col: f"s.{col}" for col in normalized.column_names}
+    try:
+        target = DeltaTable(norm_path, storage_options=storage_opts)
+    except Exception:
+        write_deltalake(
+            norm_path, normalized, mode="overwrite", storage_options=storage_opts
+        )
+        return
+    target.merge(
+        source=normalized,
+        predicate=predicate,
+        source_alias="s",
+        target_alias="t",
+    ).when_matched_update(
+        updates=updates,
+        predicate="s.fetched_at > t.fetched_at",
+    ).when_not_matched_insert_all().execute()
+
+
 def transform_connector(
     connector,
     fernet_key: bytes,
@@ -252,33 +302,53 @@ def transform_connector(
     connector falls back to reading the accumulated raw Delta table — ibkr/
     xtb always take this path because their transforms are designed around
     the accumulation (see ADR 0116).
+
+    The accumulated ``raw/{broker}`` table is read AT MOST ONCE per run and
+    the same decoded result is routed to both the snapshot and the events
+    transforms (AD-6); the events write is an append-preserving MERGE on the
+    broker's event identity (AD-4) instead of an overwrite.
     """
     from deltalake import DeltaTable, write_deltalake
 
     storage_opts = get_storage().storage_options
+
+    # Single bronze read per broker run (AD-6): ``raw/{broker}`` is opened at
+    # most once and the same table feeds both transforms. The handoff (issue
+    # #154) still takes precedence per layer; the table read is the fallback
+    # and is shared, never re-read per layer.
+    raw_path = get_raw_path(connector.name)
+    cached_raw: dict[str, pa.Table | None] = {}
+
+    def read_raw_table() -> pa.Table | None:
+        """Read ``raw/{broker}`` once; return None when the table is absent."""
+        if "table" in cached_raw:
+            return cached_raw["table"]
+        try:
+            dt = DeltaTable(raw_path, storage_options=storage_opts)
+        except Exception:
+            logger.debug(
+                "%s: raw table not present at %s, skipping",
+                connector.display_name,
+                raw_path,
+            )
+            cached_raw["table"] = None
+            return None
+        cached_raw["table"] = dt.to_pyarrow_table()
+        return cached_raw["table"]
 
     for layer in TRANSFORM_LAYERS:
         # Both transforms read the single merged bronze table raw/{name}; the
         # ``source`` column discriminates snapshot vs events rows (AD-2). The
         # normalized output is still written to
         # ``normalized/{name}_{layer}`` — silver stays two tables per broker.
-        raw_path = get_raw_path(connector.name)
         if raw_tables is not None and layer in raw_tables:
             raw_table = raw_tables[layer]
             source_noun = "current fetch"
         else:
             source_noun = "raw table"
-            try:
-                dt = DeltaTable(raw_path, storage_options=storage_opts)
-            except Exception:
-                logger.debug(
-                    "%s %s: raw table not present at %s, skipping",
-                    connector.display_name,
-                    layer,
-                    raw_path,
-                )
+            raw_table = read_raw_table()
+            if raw_table is None:
                 continue
-            raw_table = dt.to_pyarrow_table()
         if raw_table.num_rows == 0:
             logger.warning(
                 "%s %s: %s is empty (0 rows); skipping transform",
@@ -298,12 +368,25 @@ def transform_connector(
             norm_path = config.normalized_path(f"{connector.name}_{layer}")
             config.backend.ensure_parent(norm_path)
 
-            write_deltalake(
-                norm_path,
-                normalized,
-                mode="overwrite",
-                storage_options=storage_opts,
-            )
+            if layer == "snapshot":
+                # Snapshot stays a full overwrite — only the events write
+                # becomes incremental (AD-4).
+                write_deltalake(
+                    norm_path,
+                    normalized,
+                    mode="overwrite",
+                    storage_options=storage_opts,
+                )
+            else:
+                # Append-preserving MERGE on the broker's full event identity
+                # (AD-4): existing events update only when the incoming
+                # fetched_at is newer; absent events are never deleted.
+                _merge_events(
+                    norm_path,
+                    normalized,
+                    EVENT_IDENTITY_SUBSETS[connector.name],
+                    storage_opts,
+                )
             logger.debug(
                 "%s %s: %d rows transformed",
                 connector.display_name,

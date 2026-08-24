@@ -316,9 +316,11 @@ class TestTransformConnectorHandoff:
 
         transform_connector imports ``DeltaTable`` from ``deltalake`` at call
         time, so patching ``deltalake.DeltaTable`` intercepts the table-read
-        fallback. When both handoff layers are present, the constructor must
-        never be called — that is the whole point of the memory fix (issue
-        #154).
+        fallback. When both handoff layers are present, the accumulated
+        ``raw/trading212`` table must never be opened — that is the whole
+        point of the memory fix (issue #154). The events write now opens the
+        normalized events target for its MERGE (AD-4); that is a silver
+        write, not a bronze re-read, and is allowed.
         """
         fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
         snap = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
@@ -330,7 +332,10 @@ class TestTransformConnectorHandoff:
                 connector, fernet_key, raw_tables={"snapshot": snap, "events": evt}
             )
         assert rc == 0
-        mock_dt.assert_not_called()
+        raw_path = run_module.get_raw_path("trading212")
+        opened_paths = [call.args[0] for call in mock_dt.call_args_list]
+        assert opened_paths, "the events MERGE opens its normalized target"
+        assert all(path != raw_path for path in opened_paths)
 
     def test_real_ingest_raw_result_threaded_to_transform(
         self, tmp_path: Path, tmp_data_dir: Path, fernet_key: bytes
