@@ -85,6 +85,26 @@ class TestArgparseDispatch:
         assert rc == 99
         assert called.get("invoked") is True
 
+    def test_main_dispatches_purge_account(self, monkeypatch) -> None:
+        """main() parses 'purge-account' and dispatches to cmd_purge_account."""
+
+        called: dict[str, bool] = {}
+
+        def fake_purge_account(args: argparse.Namespace) -> int:
+            called["invoked"] = True
+            return 99
+
+        monkeypatch.setattr(run_module, "cmd_purge_account", fake_purge_account)
+        monkeypatch.setattr(storage_mod, "resolve_storage", lambda: None)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["pipeline.run", "purge-account", "xtb", "123", "--mode", "docker"],
+        )
+        rc = run_module.main()
+        assert rc == 99
+        assert called.get("invoked") is True
+
     def test_run_connector_ibkr_resolves(self) -> None:
         """run-connector ibkr resolves via get("ibkr")."""
         connector = get("ibkr")

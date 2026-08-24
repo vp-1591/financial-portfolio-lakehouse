@@ -945,6 +945,90 @@ def cmd_upload_xtb(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_purge_account(args: argparse.Namespace) -> int:
+    """Remove all records of one account from a broker's raw + silver tables.
+
+    The purge escape hatch (AC-4): deletes ``raw/{broker}`` rows on the
+    broker retention key, ``{broker}_snapshot`` rows on ``account_id``, and
+    ``{broker}_events`` rows on ``account_id``. Gold tables are NOT deleted —
+    they have no per-account key and self-heal on the next consolidate.
+    Requires ``--yes``; without it, prints the affected tables and predicates
+    and exits without deleting. XTB is the v1 scope: Trading 212's snapshot
+    ``account_id`` is ``""`` and its raw retention key is ``source``, so a
+    per-account purge is not meaningful there (RuntimeError).
+    """
+    from deltalake import DeltaTable
+
+    from pipeline.raw.retention import retention_key
+
+    broker = args.broker
+    account_id = args.account_id
+    key_col = retention_key(broker)
+    if key_col != "account_id":
+        raise RuntimeError(
+            f"purge-account is not supported for {broker}: its raw retention "
+            f"key is '{key_col}' and its snapshot account_id is not a "
+            "per-account identity, so there is no per-account key to purge. "
+            "XTB is the v1 scope."
+        )
+
+    storage = get_storage()
+    storage_opts = storage.storage_options
+    raw_path = get_raw_path(broker)
+    snapshot_path = storage.normalized_path(f"{broker}_snapshot")
+    events_path = storage.normalized_path(f"{broker}_events")
+
+    quoted = account_id.replace("'", "''")
+    predicates = [
+        (raw_path, f"{key_col} = '{quoted}'"),
+        (snapshot_path, f"account_id = '{quoted}'"),
+        (events_path, f"account_id = '{quoted}'"),
+    ]
+
+    if not args.yes:
+        print("Would delete (dry run; pass --yes to execute):")
+        for path, predicate in predicates:
+            print(f"  {path} WHERE {predicate}")
+        return 0
+
+    for path, predicate in predicates:
+        try:
+            target = DeltaTable(path, storage_options=storage_opts)
+        except Exception:
+            print(f"  {path}: table not found, skipping")
+            continue
+        metrics = target.delete(predicate)
+        deleted = metrics.get("num_deleted_rows", 0)
+        print(f"  {path}: deleted {deleted} row(s) WHERE {predicate}")
+
+    # AC-5 residue: NULL-keyed raw rows are not matched by the account_id
+    # predicate, but the XTB transform's fallback parses them to recover the
+    # account — warn when any remain for the target broker.
+    try:
+        raw_table = DeltaTable(
+            raw_path, storage_options=storage_opts
+        ).to_pyarrow_table()
+    except Exception:
+        raw_table = None
+    if (
+        raw_table is not None
+        and raw_table.num_rows > 0
+        and key_col in raw_table.column_names
+    ):
+        null_keyed = raw_table.column(key_col).null_count
+        if null_keyed > 0:
+            logger.warning(
+                "%d NULL-keyed raw row(s) remain for %s; a NULL-keyed row whose "
+                "payload parses to account %s would re-materialize it on the next "
+                "XTB transform (fully removing them requires decrypt+parse of raw "
+                "payloads - out of v1 scope)",
+                null_keyed,
+                broker,
+                account_id,
+            )
+    return 0
+
+
 def main() -> int:
     # Load .env file silently (no secret warnings).
     # Commands that need broker/S3 credentials call inject_secrets()
@@ -1150,6 +1234,29 @@ def main() -> int:
         help="Manual FX rate override as CURRENCY=RATE",
     )
 
+    # purge-account
+    purge_account_parser = subparsers.add_parser(
+        "purge-account",
+        parents=[mode_parser],
+        help="Remove all records of one account from a broker's raw + silver tables",
+    )
+    purge_account_parser.add_argument(
+        "broker",
+        type=str,
+        help="Connector name (v1 scope: xtb)",
+    )
+    purge_account_parser.add_argument(
+        "account_id",
+        type=str,
+        help="Account id to purge",
+    )
+    purge_account_parser.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Execute the deletion (without it, print what would be deleted and exit)",
+    )
+
     args = parser.parse_args()
 
     # keygen is a standalone utility that generates an encryption key without
@@ -1179,6 +1286,7 @@ def main() -> int:
         "upload-xtb": cmd_upload_xtb,
         "run-connector": cmd_run_connector,
         "run-consolidate-analytics": cmd_run_consolidate_analytics,
+        "purge-account": cmd_purge_account,
     }
 
     return commands[args.command](args)
