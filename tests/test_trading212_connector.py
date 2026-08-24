@@ -161,7 +161,7 @@ class TestTransformSnapshot:
                 "source": sources,
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "source_file": [""] * len(sources),
+                "account_id": [None] * len(sources),
             },
             schema=RAW_SCHEMA,
         )
@@ -480,7 +480,7 @@ class TestTransformSnapshot:
                 "source": sources,
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "source_file": [""] * 4,
+                "account_id": [None] * 4,
             },
             schema=RAW_SCHEMA,
         )
@@ -943,7 +943,7 @@ class TestEventsTransform:
                 "source": [source],
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )

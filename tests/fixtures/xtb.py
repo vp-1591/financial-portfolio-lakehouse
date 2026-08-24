@@ -587,7 +587,7 @@ def xtb_raw_snapshot(
             "source": ["XTB_REPORT"],
             "payload": [encrypted_payload],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "source_file": ["report.xlsx"],
+            "account_id": [DEFAULT_ACCOUNT_ID],
         },
         schema=RAW_SCHEMA,
     )

@@ -13,7 +13,11 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
-from pipeline.connectors.xtb.fetch import _read_file_bytes, fetch_snapshot
+from pipeline.connectors.xtb.fetch import (
+    _account_id_from_filename,
+    _read_file_bytes,
+    fetch_snapshot,
+)
 from pipeline.connectors.xtb.parser import (
     XtbCashOperation,
     XtbClosedPosition,
@@ -25,7 +29,6 @@ from pipeline.connectors.xtb.parser import (
     parse_report,
 )
 from pipeline.connectors.xtb.transform import (
-    _account_id_from_filename,
     transform_events,
     transform_snapshot,
 )
@@ -583,7 +586,7 @@ class TestTransformSnapshot:
         *,
         source: str = "XTB_REPORT",
         fetched_at: datetime | None = None,
-        source_file: str = "report.xlsx",
+        account_id: str | None = DEFAULT_ACCOUNT_ID,
     ) -> pa.Table:
         """Build a raw-layer table from .xlsx bytes (shared bronze, D17)."""
         encrypted_payload = encrypt(xlsx_bytes, fernet_key)
@@ -594,7 +597,7 @@ class TestTransformSnapshot:
                 "source": [source],
                 "payload": [encrypted_payload],
                 "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
-                "source_file": [source_file],
+                "account_id": [account_id],
             },
             schema=RAW_SCHEMA,
         )
@@ -698,18 +701,18 @@ class TestTransformSnapshot:
             build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
             fernet_key,
             fetched_at=t1,
-            source_file="a.xlsx",
+            account_id="111",
         )
         raw_b = self._build_raw(
             build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
             fernet_key,
             fetched_at=t2,
-            source_file="b.xlsx",
+            account_id="222",
         )
         combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
         result = transform_snapshot(combined, fernet_key)
 
-        account_ids = set(result.column("account_id").to_pylist())
+        account_ids = {r["account_id"] for r in result.to_pylist()}
         assert account_ids == {"111", "222"}
         # Each account has 2 EQUITY + 1 CASH = 3 rows.
         assert result.num_rows == 6
@@ -722,13 +725,13 @@ class TestTransformSnapshot:
             build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
             fernet_key,
             fetched_at=t_old,
-            source_file="old.xlsx",
+            account_id="111",
         )
         raw_new = self._build_raw(
             build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
             fernet_key,
             fetched_at=t_new,
-            source_file="new.xlsx",
+            account_id="111",
         )
         combined = pa.concat_tables([raw_old, raw_new], schema=RAW_SCHEMA)
         result = transform_snapshot(combined, fernet_key)
@@ -738,26 +741,25 @@ class TestTransformSnapshot:
         assert all(fa == t_new for fa in result.column("fetched_at").to_pylist())
 
     def test_guard9_tiebreaker_deterministic(self, fernet_key: bytes) -> None:
-        """Guard 9: same fetched_at + same account -> deterministic pick by source_file."""
+        """Guard 9: same fetched_at + same account -> deterministic pick by payload_hash."""
         t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-        raw_a = self._build_raw(
-            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
-            fernet_key,
-            fetched_at=t,
-            source_file="a.xlsx",
-        )
-        raw_b = self._build_raw(
-            build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
-            fernet_key,
-            fetched_at=t,
-            source_file="b.xlsx",
-        )
+        bytes_a = build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN")
+        bytes_b = build_new_format_xlsx_bytes(account_id="111", account_ccy="EUR")
+        raw_a = self._build_raw(bytes_a, fernet_key, fetched_at=t, account_id="111")
+        raw_b = self._build_raw(bytes_b, fernet_key, fetched_at=t, account_id="111")
         combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
         result = transform_snapshot(combined, fernet_key)
 
-        # Tie broken deterministically by max source_file ("b.xlsx" > "a.xlsx")
-        # -> only one payload survives -> 3 rows, not 6.
+        # Tie broken deterministically by max payload_hash: exactly one payload
+        # survives (3 rows, never 6) and its CASH label matches that payload.
+        winner = (
+            bytes_a
+            if hashlib.sha256(bytes_a).hexdigest() > hashlib.sha256(bytes_b).hexdigest()
+            else bytes_b
+        )
+        cash_label = "CASH PLN" if winner is bytes_a else "CASH EUR"
         assert result.num_rows == 3
+        assert cash_label in result.column("label").to_pylist()
 
     def test_legacy_source_rows_skipped(self, fernet_key: bytes) -> None:
         """D17: rows with source != 'XTB_REPORT' are skipped (legacy format)."""
@@ -784,7 +786,7 @@ class TestTransformEvents:
         *,
         source: str = "XTB_REPORT",
         fetched_at: datetime | None = None,
-        source_file: str = "report.xlsx",
+        account_id: str | None = DEFAULT_ACCOUNT_ID,
     ) -> pa.Table:
         """Build a raw-layer table from .xlsx bytes (shared bronze, D17)."""
         encrypted_payload = encrypt(xlsx_bytes, fernet_key)
@@ -795,7 +797,7 @@ class TestTransformEvents:
                 "source": [source],
                 "payload": [encrypted_payload],
                 "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
-                "source_file": [source_file],
+                "account_id": [account_id],
             },
             schema=RAW_SCHEMA,
         )
@@ -929,13 +931,13 @@ class TestTransformEvents:
             build_new_format_xlsx_bytes(),
             fernet_key,
             fetched_at=t_old,
-            source_file="old.xlsx",
+            account_id=DEFAULT_ACCOUNT_ID,
         )
         raw_new = self._build_raw(
             build_new_format_xlsx_bytes(),
             fernet_key,
             fetched_at=t_new,
-            source_file="new.xlsx",
+            account_id=DEFAULT_ACCOUNT_ID,
         )
         combined = pa.concat_tables([raw_old, raw_new], schema=RAW_SCHEMA)
         result = transform_events(combined, fernet_key)
@@ -951,13 +953,13 @@ class TestTransformEvents:
             build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
             fernet_key,
             fetched_at=t,
-            source_file="a.xlsx",
+            account_id="111",
         )
         raw_b = self._build_raw(
             build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
             fernet_key,
             fetched_at=t,
-            source_file="b.xlsx",
+            account_id="222",
         )
         combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
         result = transform_events(combined, fernet_key)
@@ -983,7 +985,8 @@ class TestFetchFromS3:
 
         table = fetch_snapshot("s3://bucket/pipeline/staging/xtb/report.xlsx")
         assert table.num_rows == 1
-        assert table.column("source_file")[0].as_py() == "report.xlsx"
+        # Filename "report.xlsx" does not match {CCY}_{id}_{from}_{to} -> NULL.
+        assert table.column("account_id")[0].as_py() is None
         assert table.column("broker")[0].as_py() == "XTB"
         assert table.column("source")[0].as_py() == "XTB_REPORT"  # D17
 
@@ -995,8 +998,23 @@ class TestFetchFromS3:
         table = fetch_snapshot(report)
 
         assert table.num_rows == 1
-        assert table.column("source_file")[0].as_py() == report.name
+        assert table.column("account_id")[0].as_py() is None
         assert table.column("source")[0].as_py() == "XTB_REPORT"
+
+    def test_fetch_snapshot_parses_account_id_from_filename(
+        self, xlsx_bytes: bytes, monkeypatch
+    ) -> None:
+        """AC-2: fetch-time account_id comes from the {CCY}_{id}_{from}_{to} filename."""
+
+        monkeypatch.setattr(
+            "pipeline.s3.read_s3_bytes",
+            lambda uri: (xlsx_bytes, "PLN_12345678_2006-01-01_2026-08-03.xlsx"),
+        )
+
+        table = fetch_snapshot(
+            "s3://bucket/pipeline/staging/xtb/PLN_12345678_2006-01-01_2026-08-03.xlsx"
+        )
+        assert table.column("account_id")[0].as_py() == "12345678"
 
     def test_read_file_bytes_s3_extracts_filename(
         self, xlsx_bytes: bytes, monkeypatch
@@ -1258,7 +1276,7 @@ def _build_raw_from_bytes(
     fernet_key: bytes,
     *,
     fetched_at: datetime,
-    source_file: str = "report.xlsx",
+    account_id: str | None = DEFAULT_ACCOUNT_ID,
 ) -> pa.Table:
     """Build a raw-layer table from .xlsx bytes (shared bronze, D17)."""
     return pa.table(
@@ -1268,7 +1286,7 @@ def _build_raw_from_bytes(
             "source": ["XTB_REPORT"],
             "payload": [encrypt(xlsx_bytes, fernet_key)],
             "payload_hash": [hashlib.sha256(xlsx_bytes).hexdigest()],
-            "source_file": [source_file],
+            "account_id": [account_id],
         },
         schema=RAW_SCHEMA,
     )
@@ -1415,10 +1433,13 @@ class TestXtbOpenClosedLifecycle:
         )
 
         raw_open = _build_raw_from_bytes(
-            workbook_open, fernet_key, fetched_at=t_open, source_file="open.xlsx"
+            workbook_open, fernet_key, fetched_at=t_open, account_id=DEFAULT_ACCOUNT_ID
         )
         raw_closed = _build_raw_from_bytes(
-            workbook_closed, fernet_key, fetched_at=t_closed, source_file="closed.xlsx"
+            workbook_closed,
+            fernet_key,
+            fetched_at=t_closed,
+            account_id=DEFAULT_ACCOUNT_ID,
         )
         combined = pa.concat_tables([raw_open, raw_closed], schema=RAW_SCHEMA)
 
@@ -1538,32 +1559,34 @@ class TestAccountIdFromFilename:
 
 
 class TestLatestPerAccountGuarded:
-    """Finding-1 fix: filename grouping + guarded parse with fallback.
+    """AD-2 grouping: raw account_id + guarded parse with fallback.
 
-    The account_id is read from the filename pattern
-    ``{CCY}_{account_id}_{from}_{to}.xlsx``; only the latest row per account is
-    parsed, and a malformed latest row falls back to the previous good row. A
-    fully-failing account is skipped (no crash) while other accounts survive.
+    The raw ``account_id`` column (populated by the fetch layer from the
+    ``{CCY}_{account_id}_{from}_{to}`` filename, NULL otherwise) is the
+    grouping key. Only the latest row per account is parsed, and a malformed
+    latest row falls back to the previous good row. A fully-failing account is
+    skipped (no crash) while other accounts survive. When the raw account_id
+    is NULL, the payload parse (R1 ``Account number``) recovers it (T5.3).
     """
 
     @pytest.fixture()
     def fernet_key(self) -> bytes:
         return generate_key()
 
-    def test_filename_grouping_two_accounts(self, fernet_key: bytes) -> None:
-        """Pattern filenames: two accounts both survive, only latest parsed."""
+    def test_raw_account_id_groups_two_accounts(self, fernet_key: bytes) -> None:
+        """Two raw account_ids both survive, only latest parsed."""
         t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
         raw_a = _build_raw_from_bytes(
             build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
             fernet_key,
             fetched_at=t,
-            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",
+            account_id="111",
         )
         raw_b = _build_raw_from_bytes(
             build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
             fernet_key,
             fetched_at=t,
-            source_file="EUR_222_2006-01-01_2026-08-03.xlsx",
+            account_id="222",
         )
         combined = pa.concat_tables([raw_a, raw_b], schema=RAW_SCHEMA)
         result = transform_snapshot(combined, fernet_key)
@@ -1571,6 +1594,48 @@ class TestLatestPerAccountGuarded:
         assert set(result.column("account_id").to_pylist()) == {"111", "222"}
         # 2 EQUITY + 1 CASH per account = 6 rows.
         assert result.num_rows == 6
+
+    def test_two_accounts_group_separately(self, fernet_key: bytes) -> None:
+        """T5.4: two XTB accounts with re-uploads group separately (per-account latest)."""
+        t1 = datetime(2026, 8, 1, 6, 0, tzinfo=UTC)
+        t2 = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        rows = [
+            (
+                build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+                t1,
+                "111",
+            ),
+            (
+                build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
+                t2,
+                "111",
+            ),
+            (
+                build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
+                t1,
+                "222",
+            ),
+            (
+                build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
+                t2,
+                "222",
+            ),
+        ]
+        raws = [
+            _build_raw_from_bytes(b, fernet_key, fetched_at=t, account_id=a)
+            for b, t, a in rows
+        ]
+        combined = pa.concat_tables(raws, schema=RAW_SCHEMA)
+        result = transform_snapshot(combined, fernet_key)
+
+        # Both accounts survive with only their LATEST payload (2 * 3 = 6 rows).
+        assert result.num_rows == 6
+        by_account: dict[str, list[datetime]] = {}
+        for r in result.to_pylist():
+            by_account.setdefault(r["account_id"], []).append(r["fetched_at"])
+        assert set(by_account) == {"111", "222"}
+        assert all(fa == t2 for fa in by_account["111"])
+        assert all(fa == t2 for fa in by_account["222"])
 
     def test_malformed_latest_falls_back_to_older_row(
         self, fernet_key: bytes, caplog
@@ -1582,13 +1647,13 @@ class TestLatestPerAccountGuarded:
             build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
             fernet_key,
             fetched_at=t_old,
-            source_file="PLN_111_2006-01-01_2026-08-01.xlsx",
+            account_id="111",
         )
         raw_new = _build_raw_from_bytes(
             _malformed_xlsx_bytes("111"),
             fernet_key,
             fetched_at=t_new,
-            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",
+            account_id="111",
         )
         combined = pa.concat_tables([raw_old, raw_new], schema=RAW_SCHEMA)
 
@@ -1610,19 +1675,19 @@ class TestLatestPerAccountGuarded:
             _malformed_xlsx_bytes("111"),
             fernet_key,
             fetched_at=t1,
-            source_file="PLN_111_2006-01-01_2026-08-02.xlsx",
+            account_id="111",
         )
         raw_bad2 = _build_raw_from_bytes(
             _malformed_xlsx_bytes("111"),
             fernet_key,
             fetched_at=t2,
-            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",
+            account_id="111",
         )
         raw_good = _build_raw_from_bytes(
             build_new_format_xlsx_bytes(account_id="222", account_ccy="EUR"),
             fernet_key,
             fetched_at=t2,
-            source_file="EUR_222_2006-01-01_2026-08-03.xlsx",
+            account_id="222",
         )
         combined = pa.concat_tables([raw_bad1, raw_bad2, raw_good], schema=RAW_SCHEMA)
 
@@ -1633,14 +1698,16 @@ class TestLatestPerAccountGuarded:
         assert set(result.column("account_id").to_pylist()) == {"222"}
         assert result.num_rows == 3
 
-    def test_filename_vs_r1_mismatch_r1_wins(self, fernet_key: bytes, caplog) -> None:
-        """Filename account_id != report R1 -> warning logged, R1 account_id emitted."""
+    def test_raw_account_id_vs_r1_mismatch_r1_wins(
+        self, fernet_key: bytes, caplog
+    ) -> None:
+        """Raw account_id != report R1 -> warning logged, R1 account_id emitted."""
         t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
         raw = _build_raw_from_bytes(
             build_new_format_xlsx_bytes(account_id="999", account_ccy="PLN"),
             fernet_key,
             fetched_at=t,
-            source_file="PLN_111_2006-01-01_2026-08-03.xlsx",  # filename says 111
+            account_id="111",  # raw says 111, workbook R1 says 999
         )
 
         caplog.set_level("WARNING", logger="pipeline.connectors.xtb.transform")
@@ -1650,18 +1717,20 @@ class TestLatestPerAccountGuarded:
         assert set(result.column("account_id").to_pylist()) == {"999"}
         assert any("!= report R1" in r.message for r in caplog.records)
 
-    def test_non_matching_filename_uses_fallback_parse(self, fernet_key: bytes) -> None:
-        """A non-pattern filename falls back to a guarded parse for account_id."""
+    def test_null_raw_account_id_payload_parse_recovery(
+        self, fernet_key: bytes
+    ) -> None:
+        """T5.3: NULL raw account_id -> silver rows via payload-parse (R1) recovery."""
         t = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
         raw = _build_raw_from_bytes(
             build_new_format_xlsx_bytes(account_id="111", account_ccy="PLN"),
             fernet_key,
             fetched_at=t,
-            source_file="report.xlsx",  # no underscore-digit pattern
+            account_id=None,  # e.g. non-pattern filename at fetch time
         )
         result = transform_snapshot(raw, fernet_key)
 
-        # Fallback parse discovered account_id 111 -> 3 rows.
+        # Payload parse (R1) recovered account_id 111 -> 3 rows, no crash.
         assert result.num_rows == 3
         assert set(result.column("account_id").to_pylist()) == {"111"}
 
@@ -1691,7 +1760,7 @@ class TestLatestPerAccountGuarded:
             build_xlsx_bytes_from_sheets(sheets),
             fernet_key,
             fetched_at=t,
-            source_file="PLN_12345678_2006-01-01_2026-08-03.xlsx",
+            account_id=DEFAULT_ACCOUNT_ID,
         )
 
         caplog.set_level("WARNING", logger="pipeline.connectors.xtb.transform")

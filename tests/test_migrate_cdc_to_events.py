@@ -212,7 +212,7 @@ def _raw_table(source_values: list[str]) -> pa.Table:
             "source": pa.array(source_values, type=pa.string()),
             "payload": pa.array([b"\x01"] * n, type=pa.binary()),
             "payload_hash": pa.array(["hash"] * n, type=pa.string()),
-            "source_file": pa.array(["report.xml"] * n, type=pa.string()),
+            "account_id": pa.array([None] * n, type=pa.string()),
         }
     ).cast(RAW_SCHEMA)
 
