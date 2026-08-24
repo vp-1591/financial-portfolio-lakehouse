@@ -539,12 +539,36 @@ def _get_previous_row_count(
 # ---------------------------------------------------------------------------
 
 
+def account_id_unparseable_check_result(
+    filename: str, table_name: str
+) -> tuple[tuple[str, str], CheckResult]:
+    """Synthetic dq WARN for a fetch-layer row dropped on unparseable account id.
+
+    The fetch layer raises :class:`pipeline.connectors.base.UnparseableAccountIdError`
+    instead of writing a NULL-keyed raw row; the caller feeds this record back
+    through :func:`run_validation` so it shares the run's single ``checked_at``.
+    """
+    return (
+        (table_name, "account_id_unparseable"),
+        CheckResult(
+            status=WARN,
+            details=(
+                f"Dropped file '{filename}': could not derive account_id "
+                "from the report filename; no raw row written"
+            ),
+            threshold="{CCY}_{account_id}_{from}_{to}.xlsx",
+            actual=filename,
+        ),
+    )
+
+
 def run_validation(
     fernet_key: bytes | None = None,
     freshness_days: int = 7,
     fail_on_warn: bool = False,
     tables: list[str] | None = None,
     connectors: list[str] | None = None,
+    extra_records: list[tuple[tuple[str, str], CheckResult]] | None = None,
 ) -> int:
     """Run quality checks and persist results.
 
@@ -564,6 +588,10 @@ def run_validation(
         Enabled connector names for this execution. When provided, only
         their event tables are validated and missing or empty event tables
         produce WARN results.
+    extra_records:
+        Caller-supplied synthetic records (e.g. fetch-layer drops) folded into
+        this run's results before the single overwrite write, so they share
+        this run's one ``checked_at``.
 
     Returns
     -------
@@ -726,6 +754,13 @@ def run_validation(
             result_metadata.append((table_name, "reconciliation"))
 
     # Persist results to data_quality table
+    # Fold caller-supplied synthetic records (e.g. fetch-layer drops) into the
+    # same overwrite write so they share this run's single checked_at.
+    if extra_records:
+        for metadata, result in extra_records:
+            result_metadata.append(metadata)
+            all_results.append(result)
+
     now = datetime.now(UTC)
     records = {
         "checked_at": [now] * len(all_results),

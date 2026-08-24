@@ -14,10 +14,12 @@ from unittest.mock import MagicMock, patch
 
 import boto3
 import pytest
+from deltalake import DeltaTable
 
 import pipeline.sfn as sfn_mod
 from pipeline import run as run_module
 from pipeline import storage as storage_mod
+from pipeline.analytics.quality import WARN
 from pipeline.connectors.registry import get
 from pipeline.crypto import generate_key
 from pipeline.run import (
@@ -248,6 +250,7 @@ class TestCmdRunConnector:
             fernet_key=b"test-key",
             tables=["ibkr_snapshot", "ibkr_events"],
             connectors=["ibkr"],
+            extra_records=[],
         )
 
     @patch("pipeline.run.run_validation", return_value=0)
@@ -343,6 +346,7 @@ class TestCmdRunConnector:
             fernet_key=b"test-key",
             tables=["xtb_snapshot", "xtb_events"],
             connectors=["xtb"],
+            extra_records=[],
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
@@ -363,6 +367,51 @@ class TestFetchConnectorXtbSkip:
         fernet_key = generate_key()
         rc = fetch_connector(connector, args, fernet_key)
         assert rc == FetchResult.SKIPPED
+
+
+class TestFetchConnectorDroppedFile:
+    """fetch_connector drops unparseable-account_id files and records a dq WARN."""
+
+    def test_dropped_unparseable_file_records_dq_and_continues(
+        self, tmp_path: Path, tmp_data_dir: Path
+    ) -> None:
+        """A file whose name has no account id is dropped, WARNed, not errored."""
+        connector = get("xtb")
+        bad_file = tmp_path / "report.xlsx"
+        bad_file.write_bytes(b"not a real xlsx")
+        args = argparse.Namespace(xtb_file=[str(bad_file)])
+        dq_records: list = []
+
+        with patch("pipeline.raw.ingest.ingest_raw") as mock_ingest:
+            rc = fetch_connector(connector, args, generate_key(), dq_records=dq_records)
+
+        assert rc == FetchResult.SUCCESS
+        mock_ingest.assert_not_called()
+        assert len(dq_records) == 1
+        metadata, result = dq_records[0]
+        assert metadata == ("raw/xtb", "account_id_unparseable")
+        assert result.status == WARN
+        assert result.actual == "report.xlsx"
+        assert result.threshold == "{CCY}_{account_id}_{from}_{to}.xlsx"
+        assert "report.xlsx" in result.details
+
+    def test_fetch_connector_success_with_real_ingest_and_valid_filename(
+        self, tmp_path: Path, tmp_data_dir: Path
+    ) -> None:
+        """Regression lock: a valid-pattern file reaches ingest and writes bronze."""
+        connector = get("xtb")
+        report = tmp_path / "PLN_12345678_2006-01-01_2026-08-03.xlsx"
+        report.write_bytes(b"not a real xlsx")
+        args = argparse.Namespace(xtb_file=[str(report)])
+        dq_records: list = []
+
+        rc = fetch_connector(connector, args, generate_key(), dq_records=dq_records)
+
+        assert rc == FetchResult.SUCCESS
+        assert dq_records == []
+        raw = DeltaTable(str(tmp_data_dir / "raw" / "xtb")).to_pyarrow_table()
+        assert raw.num_rows == 1
+        assert raw.column("account_id")[0].as_py() == "12345678"
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
+from pipeline.connectors.base import UnparseableAccountIdError
 from pipeline.connectors.xtb.fetch import (
     _account_id_from_filename,
     _read_file_bytes,
@@ -978,28 +979,37 @@ class TestFetchFromS3:
         return _build_xlsx_bytes()
 
     def test_fetch_snapshot_s3_uri(self, xlsx_bytes: bytes, monkeypatch) -> None:
+        """S3 URI fetch raises when the object key has no parseable account id."""
         monkeypatch.setattr(
             "pipeline.s3.read_s3_bytes",
             lambda uri: (xlsx_bytes, "report.xlsx"),
         )
 
-        table = fetch_snapshot("s3://bucket/pipeline/staging/xtb/report.xlsx")
-        assert table.num_rows == 1
-        # Filename "report.xlsx" does not match {CCY}_{id}_{from}_{to} -> NULL.
-        assert table.column("account_id")[0].as_py() is None
-        assert table.column("broker")[0].as_py() == "XTB"
-        assert table.column("source")[0].as_py() == "XTB_REPORT"  # D17
+        with pytest.raises(UnparseableAccountIdError) as excinfo:
+            fetch_snapshot("s3://bucket/pipeline/staging/xtb/report.xlsx")
+        # Filename "report.xlsx" does not match {CCY}_{id}_{from}_{to}.
+        assert excinfo.value.filename == "report.xlsx"
 
     def test_fetch_snapshot_local_path_still_works(self, tmp_path: Path) -> None:
         """Local file paths are not affected by S3 support."""
 
-        report = tmp_path / "xtb-test.xlsx"
+        report = tmp_path / "PLN_12345678_2006-01-01_2026-08-03.xlsx"
         write_xtb_workbook(report)
         table = fetch_snapshot(report)
 
         assert table.num_rows == 1
-        assert table.column("account_id")[0].as_py() is None
+        assert table.column("account_id")[0].as_py() == "12345678"
         assert table.column("source")[0].as_py() == "XTB_REPORT"
+
+    def test_fetch_snapshot_local_path_unparseable_raises(self, tmp_path: Path) -> None:
+        """A local file whose name has no account id is dropped, not written."""
+
+        report = tmp_path / "xtb-test.xlsx"
+        write_xtb_workbook(report)
+
+        with pytest.raises(UnparseableAccountIdError) as excinfo:
+            fetch_snapshot(report)
+        assert excinfo.value.filename == "xtb-test.xlsx"
 
     def test_fetch_snapshot_parses_account_id_from_filename(
         self, xlsx_bytes: bytes, monkeypatch
