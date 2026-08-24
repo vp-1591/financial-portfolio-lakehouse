@@ -127,7 +127,7 @@ class TestArgparseDispatch:
 class TestFetchConnectorIsolation:
     """fetch_connector uses connector.fetch_kwargs (no if/elif)."""
 
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=MagicMock(num_rows=1))
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
     def test_uses_fetch_kwargs(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
@@ -158,7 +158,7 @@ class TestFetchConnectorIsolation:
             mock_kwargs.assert_called_once_with(args)
             mock_snapshot.assert_called_once()
 
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
     def test_skips_connector_when_kwargs_empty(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
@@ -175,7 +175,7 @@ class TestFetchConnectorIsolation:
             assert rc == FetchResult.SKIPPED
             mock_snapshot.assert_not_called()
 
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
     def test_returns_nonzero_on_snapshot_error(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:

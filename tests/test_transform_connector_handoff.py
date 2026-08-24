@@ -35,23 +35,6 @@ from tests.fixtures.trading212 import (
 )
 
 
-def _raw_one_row(fernet_key: bytes) -> pa.Table:
-    """One RAW_SCHEMA row for mocked ingest_raw returns."""
-    now = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-    payload = b"{}"
-    return pa.table(
-        {
-            "fetched_at": [now],
-            "broker": ["Trading 212"],
-            "source": ["/equity/account/summary"],
-            "payload": [encrypt(payload, fernet_key)],
-            "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "account_id": [None],
-        },
-        schema=RAW_SCHEMA,
-    )
-
-
 def _plaintext_raw(table: pa.Table, fernet_key: bytes) -> pa.Table:
     """Return the raw table with payloads decrypted to plaintext (as fetched).
 
@@ -208,7 +191,7 @@ class TestFetchConnectorEventsBranch:
         with (
             patch(
                 "pipeline.raw.ingest.ingest_raw",
-                return_value=_raw_one_row(fernet_key),
+                return_value=None,
             ) as mock_ingest,
             patch.object(
                 connector,
@@ -229,6 +212,54 @@ class TestFetchConnectorEventsBranch:
         assert rc == FetchResult.SUCCESS
         # ingest_raw called once for the snapshot batch and once for events.
         assert mock_ingest.call_count == 2
+
+
+class TestFetchConnectorRealIngest:
+    """fetch_connector with the REAL ingest_raw (no mocked return value)."""
+
+    def test_snapshot_and_events_branches_succeed(
+        self, tmp_data_dir: Path, fernet_key: bytes
+    ) -> None:
+        """A real ingest_raw routed through fetch_connector returns SUCCESS.
+
+        Regression guard for the handoff removal (AD-8): ``ingest_raw``
+        returns None, so any caller still reading ``.num_rows`` off its
+        return value crashes every real run and flips it to ERROR. The
+        mocked fetch_connector tests cannot catch that; this one drives the
+        real ingest_raw through both the snapshot and events branches.
+        """
+        fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        connector = get("trading212")
+        with (
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value=[{"api_key": "k", "api_secret": "s", "base_url": "u"}],
+            ),
+            patch.object(
+                connector,
+                "fetch_snapshot",
+                return_value=_plaintext_raw(
+                    t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at),
+                    fernet_key,
+                ),
+            ),
+            patch.object(
+                connector,
+                "fetch_events_kwargs",
+                return_value={"api_key": "k", "api_secret": "s", "base_url": "u"},
+            ),
+            patch.object(
+                connector,
+                "fetch_events",
+                return_value=_plaintext_raw(
+                    t212_raw_events(fernet_key=fernet_key, fetched_at=fetched_at),
+                    fernet_key,
+                ),
+            ),
+        ):
+            rc = fetch_connector(connector, MagicMock(), fernet_key)
+        assert rc == FetchResult.SUCCESS
 
 
 class TestIngestRawReturnsNone:

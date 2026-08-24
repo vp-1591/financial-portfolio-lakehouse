@@ -161,11 +161,11 @@ def fetch_connector(
         try:
             raw = connector.fetch_snapshot(**snapshot_kwargs)
             get_storage().backend.ensure_parent(raw_path)
-            encrypted = ingest_raw(raw, raw_path, fernet_key, connector.name)
+            ingest_raw(raw, raw_path, fernet_key, connector.name)
             logger.debug(
                 "%s snapshot: %d rows in current fetch",
                 connector.display_name,
-                encrypted.num_rows,
+                raw.num_rows,
             )
         except NotImplementedError:
             logger.debug("%s snapshot: not implemented", connector.display_name)
@@ -194,13 +194,11 @@ def fetch_connector(
             try:
                 raw_events = connector.fetch_events(**events_kwargs)
                 get_storage().backend.ensure_parent(raw_path)
-                encrypted_events = ingest_raw(
-                    raw_events, raw_path, fernet_key, connector.name
-                )
+                ingest_raw(raw_events, raw_path, fernet_key, connector.name)
                 logger.debug(
                     "%s events: %d rows in current fetch",
                     connector.display_name,
-                    encrypted_events.num_rows,
+                    raw_events.num_rows,
                 )
             except NotImplementedError:
                 logger.debug("%s events: not implemented", connector.display_name)
