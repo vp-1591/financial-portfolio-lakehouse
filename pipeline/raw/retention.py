@@ -33,10 +33,11 @@ def strip_pagination_suffix(source: str) -> str:
     """Strip a Trading 212 pagination cursor suffix from an endpoint path.
 
     Paginated T212 responses capture one raw row per page, with page-2+
-    ``source`` values carrying the per-run ``?cursor=...`` token. The merge key
-    is the declared endpoint base, so the suffix is stripped before keying
-    (AC-4). The stored ``source`` column keeps the raw suffixed values — only
-    the key computation strips.
+    ``source`` values carrying the per-run ``?cursor=...`` token. The stored
+    ``source`` column is stripped at fetch time (``trading212/fetch.py``) so
+    ``SELECT DISTINCT source`` stays stable across runs (AC-7); the merge key
+    strips again defensively so a page still lands on its endpoint's row
+    (AC-4), including rows written before the fetch-time strip existed.
     """
     return source.split("?", 1)[0]
 

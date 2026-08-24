@@ -886,6 +886,51 @@ class TestEventsFetch:
                     base_url="https://demo.trading212.com/api/v0",
                 )
 
+    def test_fetch_events_strips_pagination_cursor_from_source(self) -> None:
+        """Stored source drops the ?cursor= token so distinct sources are stable.
+
+        The stored ``source`` column is the pagination-stripped endpoint base
+        (AC-7: ``SELECT DISTINCT source`` unchanged across runs) — the per-run
+        cursor token must not leak into the stored value.
+        """
+
+        with mock.patch(
+            "pipeline.connectors.trading212.fetch.Trading212Client"
+        ) as MockCls:
+            instance = MockCls.return_value
+            instance.captured_responses = []
+
+            def _capture(path: str, raw: bytes):
+                def _fetch():
+                    instance.captured_responses.append((path, raw))
+
+                return _fetch
+
+            instance.orders.side_effect = _capture(
+                "/equity/history/orders",
+                b'{"items": [{"id": 1}], "nextPagePath": null}',
+            )
+            instance.dividends.side_effect = _capture(
+                "/equity/history/dividends?cursor=abc",
+                b'{"items": [{"id": 2}], "nextPagePath": null}',
+            )
+            instance.transactions.side_effect = _capture(
+                "/equity/history/transactions?cursor=def",
+                b'{"items": [{"id": 3}], "nextPagePath": null}',
+            )
+
+            result = fetch_events(
+                api_key="test",
+                api_secret="test",
+                base_url="https://demo.trading212.com/api/v0",
+            )
+
+        assert result.column("source").to_pylist() == [
+            "/equity/history/orders",
+            "/equity/history/dividends",
+            "/equity/history/transactions",
+        ]
+
 
 class TestUnwrapEvents:
     """Tests for _unwrap_events helper (moved from transform_utils)."""

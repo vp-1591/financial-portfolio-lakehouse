@@ -10,6 +10,7 @@ import pyarrow as pa
 
 from pipeline.connectors.trading212.client import Trading212Client
 from pipeline.raw.models import RAW_SCHEMA
+from pipeline.raw.retention import strip_pagination_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def fetch_snapshot(
     for path, raw_bytes in client.captured_responses:
         fetched_ats.append(now)
         brokers.append("Trading 212")
-        sources.append(path)
+        sources.append(strip_pagination_suffix(path))
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
         account_ids.append(None)
@@ -54,7 +55,7 @@ def fetch_snapshot(
     for path, raw_bytes in client.captured_responses:
         fetched_ats.append(now)
         brokers.append("Trading 212")
-        sources.append(path)
+        sources.append(strip_pagination_suffix(path))
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
         account_ids.append(None)
@@ -78,7 +79,12 @@ def fetch_events(
     base_url: str = "https://live.trading212.com/api/v0",
     timeout: float = 20.0,
 ) -> pa.Table:
-    """Fetch Trading 212 events (orders, dividends, transactions)."""
+    """Fetch Trading 212 events (orders, dividends, transactions).
+
+    The stored ``source`` is the pagination-stripped endpoint base (AC-7) so
+    ``SELECT DISTINCT source`` is stable across runs — the per-run
+    ``?cursor=...`` token is dropped before the value is stored.
+    """
     client = Trading212Client(
         base_url,
         api_key=api_key,
@@ -118,7 +124,7 @@ def fetch_events(
         for path, raw_bytes in client.captured_responses:
             fetched_ats.append(now)
             brokers.append("Trading 212")
-            sources.append(path)
+            sources.append(strip_pagination_suffix(path))
             payloads.append(raw_bytes)
             payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
             account_ids.append(None)
