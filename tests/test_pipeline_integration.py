@@ -312,8 +312,7 @@ class TestDirectoryCreation:
             schema=RAW_SCHEMA,
         )
 
-        encrypted = ingest_raw(raw, table_path, key, "ibkr")
-        assert encrypted.num_rows == 1
+        ingest_raw(raw, table_path, key, "ibkr")
         assert Path(table_path).exists()
 
     def test_consolidate_creates_parent_dirs(

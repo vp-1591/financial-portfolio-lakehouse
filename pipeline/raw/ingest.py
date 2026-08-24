@@ -106,7 +106,7 @@ def ingest_raw(
     table_path: str,
     fernet_key: bytes,
     connector_name: str,
-) -> pa.Table:
+) -> None:
     """Encrypt, dedup in-batch, and MERGE a raw batch onto its Delta table.
 
     The raw write is a ``DeltaTable.merge`` on the broker retention key
@@ -119,12 +119,9 @@ def ingest_raw(
     payload_hash)`` and then on the retention key (latest ``fetched_at`` wins,
     tie -> last in batch order) before the merge (AC-2, F1.2).
 
-    Returns the Fernet-encrypted pre-dedup table (the current fetch) so the
-    caller can hand it to the transform in memory; ``fetch_connector`` uses
-    this as the handoff for ``handoff_supported`` connectors. It must be the
-    pre-dedup table — the transform sees the current fetch even when every
-    row was merged in place with no net table growth (5-6 removes this
-    return).
+    Returns nothing — the transform reads the merged table back (the single
+    bronze read, AD-6); the in-memory encrypted-fetch handoff is removed
+    (AD-8).
     """
     from pipeline.storage import get_storage
 
@@ -140,7 +137,7 @@ def ingest_raw(
             0,
             table.num_rows,
         )
-        return encrypted
+        return
 
     storage_opts = get_storage().storage_options
     get_storage().backend.ensure_parent(table_path)
@@ -171,7 +168,7 @@ def ingest_raw(
             storage_options=storage_opts,
         )
         logger.debug("%s: %d rows written (first run)", table_path, first_rows.num_rows)
-        return encrypted
+        return
 
     if merge_rows.num_rows:
         target.merge(
@@ -196,4 +193,3 @@ def ingest_raw(
         append_rows.num_rows,
         table.num_rows,
     )
-    return encrypted

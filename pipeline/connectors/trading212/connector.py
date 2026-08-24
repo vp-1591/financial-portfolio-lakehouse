@@ -24,11 +24,6 @@ _DEMO_BASE_URL = "https://demo.trading212.com/api/v0"
 class Trading212Connector:
     name = "trading212"
     display_name = "Trading 212"
-    # Decision: docs/adr/0116-in-memory-encrypted-fetch-handoff.md — T212's
-    # events endpoints return the complete history every run, so the transform
-    # needs only the current fetch; the handoff removes the accumulated raw
-    # table read (issue #154 peak-memory driver).
-    handoff_supported = True
 
     def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         api_key = resolve_secret("T212_API_KEY")

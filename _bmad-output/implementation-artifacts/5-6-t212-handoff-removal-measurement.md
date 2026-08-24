@@ -136,10 +136,75 @@ pipeline/
 
 ### Agent Model Used
 
-(To be filled by the implementing subagent.)
+deepseek-v4-flash:0731-cloud
 
 ### Debug Log References
 
+None — no live Trading 212 run was possible in the implementation sandbox
+(no T212_API_KEY / no network to the live API), so no memory/runtime
+measurement was captured. See Completion Notes for the measurement plan and
+decision rule.
+
 ### Completion Notes List
 
+- AC-1 (handoff removed): `handoff_supported` removed from the
+  `BrokerConnector` protocol (`pipeline/connectors/base.py`) and from the
+  Trading 212 connector (incl. the ADR 0116 comment); `fetch_connector`
+  returns `FetchResult` alone (no handoff dict, no tuple, no fetch_times —
+  per the orchestrator seam, story 5-4's run-aware fetch-times plumbing was
+  dropped as redundant); `transform_connector` no longer accepts `raw_tables`
+  (the single bronze read is the only path); `ingest_raw` returns `None`
+  (keeps the `connector_name` param and the merge/vacuum behavior from 5-2);
+  `cmd_run_connector` no longer threads the handoff.
+- AC-2 (single bronze read intact): `transform_connector` still opens
+  `raw/{broker}` at most once (`cached_raw`) and routes the same decoded
+  result to both snapshot and events transforms; the events MERGE (5-3) and
+  the raw merge + VACUUM (5-2) are untouched.
+- AC-3 (measurement): NOT EXECUTED in this sandbox — no live T212 fetch
+  possible. Measurement plan + decision rule documented below; no numbers
+  were fabricated.
+- AC-4 (tests): `tests/test_transform_connector_handoff.py` rewritten for the
+  post-removal contract (golden regression T5.3, empty-table skip, real
+  ingest_raw -> transform boundary, events-fetch branch, ingest_raw returns
+  None + no table growth); `tests/test_connector_protocol.py` and
+  `tests/test_connector_registry.py` no longer reference `handoff_supported`;
+  `tests/test_run_subcommands.py` and `tests/test_pipeline_integration.py`
+  updated for the new `fetch_connector`/`ingest_raw` contracts. Full suite:
+  911 passed.
+- Checks: `ruff check --fix .` + `ruff format .` clean; `pyright pipeline/
+  tests/` 0 errors; `pytest tests/ -q -rf` 911 passed (re-run after lint).
+
+### Measurement plan (T6, AC-3) — not executed in this sandbox
+
+Baseline (ADR 0116): 1039 MB transform-peak on the staging Fargate task
+(256 CPU / 512 MB), measured via phase-level RSS observability (ADR 0115).
+
+Plan: run `run-connector trading212 --mode staging` (or the docker-mode
+equivalent against a populated `raw/trading212`) with the handoff removed and
+capture the `[mem]` `post-transform` peak (the `MemorySampler`/`log_memory`
+lines in `cmd_run_connector`) plus wall-clock runtime. Compare against the
+ADR 0116 baseline.
+
+Decision rule (from `handoff-decision-matrix.md`): keep the removal if memory
+peak and runtime remain within the agreed budget; restore the handoff if
+either regresses materially. Either outcome must preserve the one-shared-
+bronze-read guarantee (AD-6). The removal is expected to be within budget:
+the transform now reads the bounded retained table (one row per endpoint,
+5-2) instead of holding the encrypted current fetch in memory, and the
+bounded-table read replaces the unbounded accumulated-table read that was the
+original 1039 MB driver.
+
 ### File List
+
+- `pipeline/connectors/base.py` — removed `handoff_supported` from the protocol
+- `pipeline/connectors/trading212/connector.py` — removed `handoff_supported = True` + ADR 0116 comment
+- `pipeline/connectors/ibkr/connector.py` — removed `handoff_supported = False`, reworded comment
+- `pipeline/connectors/xtb/connector.py` — removed `handoff_supported = False`, reworded comment
+- `pipeline/connectors/trading212/fetch.py` — fail-loud comment updated (RuntimeError unchanged)
+- `pipeline/raw/ingest.py` — `ingest_raw` returns `None` (no pre-dedup handoff)
+- `pipeline/run.py` — `fetch_connector` returns `FetchResult`; `transform_connector` drops `raw_tables`; `cmd_run_connector` drops handoff threading
+- `tests/test_transform_connector_handoff.py` — rewritten for the post-removal contract
+- `tests/test_run_subcommands.py` — updated for the new `fetch_connector` return shape
+- `tests/test_connector_registry.py` — removed `handoff_supported` from FakeConnector
+- `tests/test_pipeline_integration.py` — dropped the `ingest_raw` return-value assertion
+- `tests/test_trading212_connector.py` — updated stale handoff docstring
