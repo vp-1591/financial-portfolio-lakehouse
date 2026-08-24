@@ -12,7 +12,6 @@ class TestRegistry:
         class FakeConnector:
             name = "fake"
             display_name = "Fake"
-            handoff_supported = False
 
             def fetch_kwargs(self, args):
                 return []

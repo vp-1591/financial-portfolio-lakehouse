@@ -95,11 +95,10 @@ def fetch_events(
     payload_hashes: list[str] = []
     account_ids: list[str | None] = []
 
-    # Fail loud: ANY endpoint failure aborts the fetch. The transform consumes
-    # only the current fetch as an in-memory handoff (issue #154), so a silently
-    # skipped endpoint's events would be dropped from this run's normalized
-    # output instead of backfilled from the accumulated raw table — partial data
-    # must abort the run (see ADR 0116).
+    # Fail loud: ANY endpoint failure aborts the fetch. The transform
+    # normalizes the current fetch's events (the single bronze read, AD-6), so
+    # a silently skipped endpoint's events would be missing from this run's
+    # normalized output — partial data must abort the run (see ADR 0116).
     failed_endpoints: list[str] = []
     for endpoint_name, fetch_method in [
         ("orders", client.orders),

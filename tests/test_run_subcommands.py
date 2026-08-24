@@ -153,10 +153,8 @@ class TestFetchConnectorIsolation:
             patch.object(connector, "fetch_events_kwargs", return_value={}),
         ):
             fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, args, fernet_key)
+            rc = fetch_connector(connector, args, fernet_key)
             assert rc == FetchResult.SUCCESS
-            # ibkr does not declare handoff_supported → no handoff is built.
-            assert handoff is None
             mock_kwargs.assert_called_once_with(args)
             mock_snapshot.assert_called_once()
 
@@ -173,9 +171,8 @@ class TestFetchConnectorIsolation:
             patch.object(connector, "fetch_snapshot") as mock_snapshot,
         ):
             fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, args, fernet_key)
+            rc = fetch_connector(connector, args, fernet_key)
             assert rc == FetchResult.SKIPPED
-            assert handoff is None
             mock_snapshot.assert_not_called()
 
     @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
@@ -206,9 +203,8 @@ class TestFetchConnectorIsolation:
             patch.object(connector, "fetch_events_kwargs", return_value={}),
         ):
             fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, args, fernet_key)
+            rc = fetch_connector(connector, args, fernet_key)
             assert rc == FetchResult.ERROR
-            assert handoff is None
 
 
 class TestTransformConnectorIsolation:
@@ -234,7 +230,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SUCCESS, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_enabled_connector_calls_fetch_then_transform(
         self,
@@ -256,7 +252,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.ERROR, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.ERROR)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_fetch_failure_skips_transform(
         self,
@@ -274,7 +270,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation")
     @patch("pipeline.run.transform_connector")
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SKIPPED, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SKIPPED)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_skipped_connector_returns_zero(
         self,
@@ -293,7 +289,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=1)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SUCCESS, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_validation_failure_returns_nonzero(
         self,
@@ -330,7 +326,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SUCCESS, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_xtb_with_file_calls_fetch(
         self,
@@ -365,9 +361,8 @@ class TestFetchConnectorXtbSkip:
         connector = get("xtb")
         args = argparse.Namespace(xtb_file=None)
         fernet_key = generate_key()
-        rc, handoff = fetch_connector(connector, args, fernet_key)
+        rc = fetch_connector(connector, args, fernet_key)
         assert rc == FetchResult.SKIPPED
-        assert handoff is None
 
 
 # ---------------------------------------------------------------------------

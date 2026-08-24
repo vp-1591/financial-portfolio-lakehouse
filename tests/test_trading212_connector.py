@@ -791,8 +791,8 @@ class TestEventsFetch:
     def test_fetch_events_raises_on_single_endpoint_failure(self, caplog) -> None:
         """A single failing events endpoint aborts the fetch (fail loud).
 
-        The transform consumes only the current fetch as an in-memory handoff
-        (issue #154), so partial events data must never reach it — a RuntimeError
+        The transform normalizes the current fetch's events (the single bronze
+        read, AD-6), so partial events data must never reach it — a RuntimeError
         is raised even though the other endpoints succeeded. A WARNING naming the
         failing endpoint is still logged first.
         """
