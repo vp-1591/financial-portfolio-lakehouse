@@ -17,6 +17,7 @@ from urllib.parse import unquote
 
 import pyarrow as pa
 
+from pipeline.connectors.base import UnparseableAccountIdError
 from pipeline.raw.models import RAW_SCHEMA
 
 
@@ -86,8 +87,10 @@ def fetch_snapshot(file_path: str | Path) -> pa.Table:
     ``source == "XTB_REPORT"`` (D17 shared bronze). Both snapshot and events
     silvers derive from this single raw row; parsing is left to the
     transform layer. The raw ``account_id`` is populated from the report
-    filename at fetch time (AD-2 — filename-first); an unparseable filename
-    yields NULL and the transform's payload-parse recovery is the fallback.
+    filename at fetch time (AD-2 — filename-first); a filename that does not
+    match ``{CCY}_{account_id}_{from}_{to}.xlsx`` raises
+    :class:`UnparseableAccountIdError` so the caller can drop the row and
+    record a data_quality WARN instead of writing a NULL-keyed row.
 
     Parameters
     ----------
@@ -95,6 +98,9 @@ def fetch_snapshot(file_path: str | Path) -> pa.Table:
         Absolute path to the XTB .xlsx report, or an ``s3://`` URI.
     """
     payload, filename = _read_file_bytes(file_path)
+    account_id = _account_id_from_filename(filename)
+    if account_id is None:
+        raise UnparseableAccountIdError(filename)
     now = datetime.now(UTC)
 
     return pa.table(
@@ -104,7 +110,7 @@ def fetch_snapshot(file_path: str | Path) -> pa.Table:
             "source": ["XTB_REPORT"],
             "payload": [payload],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "account_id": [_account_id_from_filename(filename)],
+            "account_id": [account_id],
         },
         schema=RAW_SCHEMA,
     )

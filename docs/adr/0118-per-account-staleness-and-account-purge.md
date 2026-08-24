@@ -1,5 +1,10 @@
 # 0118: Per-Account Staleness Flag and Account Purge Escape Hatch
 
+> **Superseded by [ADR 0120](./0120-drop-unparseable-account-id-at-fetch.md)** —
+> the NULL-keyed-row purge residual now concerns legacy rows only (new fetches
+> cannot produce them); per-account staleness check and purge mechanics carry
+> forward unchanged, see 0120 §Decision.
+
 ## Context
 
 The data-quality freshness check (ADR 0072) is table-level: it flags a whole

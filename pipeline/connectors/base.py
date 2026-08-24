@@ -11,6 +11,19 @@ import pyarrow as pa
 from pipeline.normalized.consolidate import Holding
 
 
+class UnparseableAccountIdError(Exception):
+    """Raised by ``fetch_snapshot`` when the broker account id cannot be
+    derived from the fetched artifact (e.g. an XTB report filename that does
+    not match ``{CCY}_{account_id}_{from}_{to}.xlsx``). The row is dropped at
+    fetch time; the caller records a data_quality WARN and continues the run."""
+
+    def __init__(self, filename: str) -> None:
+        super().__init__(
+            f"could not derive account id from fetched artifact: {filename!r}"
+        )
+        self.filename = filename
+
+
 @runtime_checkable
 class BrokerConnector(Protocol):
     """Protocol that every broker connector must implement."""
@@ -50,7 +63,11 @@ class BrokerConnector(Protocol):
         ...
 
     def fetch_snapshot(self, **kwargs: object) -> pa.Table:
-        """Fetch a raw snapshot from the broker and return a raw-layer PyArrow table."""
+        """Fetch a raw snapshot from the broker and return a raw-layer PyArrow table.
+
+        May raise :class:`UnparseableAccountIdError` when the account id
+        cannot be derived from the artifact.
+        """
         ...
 
     def transform_snapshot(self, raw: pa.Table, fernet_key: bytes) -> pa.Table:

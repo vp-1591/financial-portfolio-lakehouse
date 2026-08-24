@@ -33,7 +33,11 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from pipeline.analytics.quality import run_validation
+from pipeline.analytics.quality import (
+    account_id_unparseable_check_result,
+    run_validation,
+)
+from pipeline.connectors.base import UnparseableAccountIdError
 from pipeline.connectors.registry import all as all_connectors
 from pipeline.connectors.registry import get
 from pipeline.crypto import load_key
@@ -120,7 +124,10 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 
 def fetch_connector(
-    connector, args: argparse.Namespace, fernet_key: bytes
+    connector,
+    args: argparse.Namespace,
+    fernet_key: bytes,
+    dq_records: list | None = None,
 ) -> FetchResult:
     """Fetch data from a single connector and write to raw Delta tables.
 
@@ -139,6 +146,13 @@ def fetch_connector(
     - ``SKIPPED`` — connector had no credentials or required input (e.g. XTB
       without ``--xtb-file``)
     - ``ERROR`` — fetch was attempted but failed
+
+    ``dq_records``, when provided, is a mutable list of
+    ``((table_name, check_name), CheckResult)`` tuples. A row dropped for an
+    unparseable account id appends its synthetic data_quality WARN here
+    instead of failing the fetch; ``cmd_run_connector`` threads the list into
+    ``run_validation(extra_records=...)`` so the run's overwrite write
+    surfaces it.
 
     The transform reads the merged table back (the single bronze read, AD-6);
     the in-memory encrypted-fetch handoff is removed (AD-8).
@@ -169,6 +183,23 @@ def fetch_connector(
             )
         except NotImplementedError:
             logger.debug("%s snapshot: not implemented", connector.display_name)
+        except UnparseableAccountIdError as exc:
+            # Decision: docs/adr/0120-drop-unparseable-account-id-at-fetch.md
+            # An unparseable XTB filename is dropped at fetch time — no
+            # NULL-keyed raw row is written — and surfaced as a data_quality
+            # WARN instead. The run continues (rc SUCCESS).
+            logger.warning(
+                "Dropping %s report %r: could not derive account_id from the "
+                "filename; no raw row written",
+                connector.display_name,
+                exc.filename,
+            )
+            if dq_records is not None:
+                dq_records.append(
+                    account_id_unparseable_check_result(
+                        exc.filename, f"raw/{connector.name}"
+                    )
+                )
         except Exception as exc:
             error_occurred = True
             print(
@@ -785,7 +816,8 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
 
         fernet_key = load_key()
         log_memory(f"connector:{args.connector}:post-key")
-        rc = fetch_connector(connector, args, fernet_key)
+        dq_records: list = []
+        rc = fetch_connector(connector, args, fernet_key, dq_records=dq_records)
         log_memory(f"connector:{args.connector}:post-fetch")
         if rc == FetchResult.SKIPPED:
             # Connector has no credentials or required input (e.g. XTB without
@@ -810,6 +842,7 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
             fernet_key=fernet_key,
             tables=tables,
             connectors=[connector.name],
+            extra_records=dq_records,
         )
         log_memory(f"connector:{args.connector}:post-validate")
         return rc

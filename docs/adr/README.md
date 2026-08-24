@@ -127,9 +127,10 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0114 | Single Bronze (Raw) Table Per Broker | 2026-08-20 | active | — |
 | 0115 | Phase-Level RSS Memory Observability in Pipeline Runs | 2026-08-20 | active | — |
 | 0116 | In-Memory Encrypted Fetch Handoff for Trading212 | 2026-08-21 | superseded | 0119 |
-| 0117 | Bounded Bronze Retention and Incremental Events | 2026-08-24 | active | — |
-| 0118 | Per-Account Staleness Flag and Account Purge Escape Hatch | 2026-08-24 | active | — |
+| 0117 | Bounded Bronze Retention and Incremental Events | 2026-08-24 | superseded | 0120 |
+| 0118 | Per-Account Staleness Flag and Account Purge Escape Hatch | 2026-08-24 | superseded | 0120 |
 | 0119 | Remove the T212 In-Memory Fetch Handoff | 2026-08-24 | active | — |
+| 0120 | Drop Unparseable Account-id Rows at Fetch Time | 2026-08-24 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

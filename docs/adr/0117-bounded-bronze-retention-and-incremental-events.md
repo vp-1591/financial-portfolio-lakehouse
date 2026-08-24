@@ -1,5 +1,11 @@
 # 0117: Bounded Bronze Retention and Incremental Events
 
+> **Superseded by [ADR 0120](./0120-drop-unparseable-account-id-at-fetch.md)** —
+> the AC-3 NULL-keyed-row boundary for new XTB fetches is replaced by a
+> fetch-time drop + data_quality WARN; merge-on-key retention, per-run VACUUM,
+> append-preserving events MERGE, single bronze read, and the AD-7 migration
+> gate carry forward unchanged, see 0120 §Decision.
+
 ## Context
 
 Raw (bronze) tables were append-only. Trading 212's events endpoints return the
