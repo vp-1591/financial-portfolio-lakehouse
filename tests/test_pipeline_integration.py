@@ -312,7 +312,7 @@ class TestDirectoryCreation:
             schema=RAW_SCHEMA,
         )
 
-        encrypted = ingest_raw(raw, table_path, key)
+        encrypted = ingest_raw(raw, table_path, key, "ibkr")
         assert encrypted.num_rows == 1
         assert Path(table_path).exists()
 

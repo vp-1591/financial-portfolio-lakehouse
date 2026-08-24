@@ -7,7 +7,7 @@ transform never re-reads the accumulated raw table, and falls back to the
 Delta read otherwise. Covers: the declared capability, output-identical
 handoff vs table-read (golden), unchanged-endpoint pre-dedup semantics,
 empty-fetch skip, missing-layer fallback, ``cmd_run_connector`` threading,
-and the ``ingest_raw``/``dedup_raw`` contract changes.
+and the ``ingest_raw`` merge-on-key contract change.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pipeline import run as run_module
 from pipeline.connectors.registry import get
 from pipeline.connectors.transform_utils import empty_arrow_table
 from pipeline.crypto import decrypt, encrypt, generate_key
-from pipeline.raw.ingest import dedup_raw, ingest_raw
+from pipeline.raw.ingest import ingest_raw
 from pipeline.raw.models import RAW_SCHEMA
 from pipeline.run import (
     FetchResult,
@@ -351,8 +351,8 @@ class TestTransformConnectorHandoff:
         # through the fetch→transform boundary, as cmd_run_connector does.
         raw_path = run_module.get_raw_path("trading212")
         handoff = {
-            "snapshot": ingest_raw(snap, raw_path, fernet_key),
-            "events": ingest_raw(evt, raw_path, fernet_key),
+            "snapshot": ingest_raw(snap, raw_path, fernet_key, "trading212"),
+            "events": ingest_raw(evt, raw_path, fernet_key, "trading212"),
         }
         connector = get("trading212")
         rc = transform_connector(connector, fernet_key, raw_tables=handoff)
@@ -423,60 +423,14 @@ class TestIngestRawReturnsPreDedupHandoff:
     ) -> None:
         table_path = str(tmp_path / "raw" / "trading212")
         raw = self._raw_table(fernet_key)
-        first = ingest_raw(raw, table_path, fernet_key)
+        first = ingest_raw(raw, table_path, fernet_key, "trading212")
         assert first.num_rows == 2
 
-        # Identical re-fetch: all rows are deduped out of the write, but the
-        # returned pre-dedup handoff still carries the current fetch — an
-        # unchanged endpoint (deduped away) must still reach the transform.
-        second = ingest_raw(raw, table_path, fernet_key)
+        # Identical re-fetch: the merge matches both rows in place (no net
+        # growth), but the returned pre-dedup handoff still carries the
+        # current fetch — an unchanged endpoint must still reach the
+        # transform.
+        second = ingest_raw(raw, table_path, fernet_key, "trading212")
         assert second.num_rows == 2
         dt = DeltaTable(table_path, storage_options=get_storage().storage_options)
-        assert dt.to_pyarrow_table().num_rows == 2  # only the first run's rows
-
-
-class TestDedupRawProjected:
-    """dedup_raw's projected key read ignores the table's broker column."""
-
-    @staticmethod
-    def _raw_table(rows: list[tuple[str, str]], fernet_key: bytes) -> pa.Table:
-        now = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-        payloads = [b"{}" for _ in rows]
-        return pa.table(
-            {
-                "fetched_at": [now] * len(rows),
-                "broker": [broker for broker, _ in rows],
-                "source": [source for _, source in rows],
-                "payload": [encrypt(p, fernet_key) for p in payloads],
-                "payload_hash": [hashlib.sha256(p).hexdigest() for p in payloads],
-                "account_id": [None] * len(rows),
-            },
-            schema=RAW_SCHEMA,
-        )
-
-    def test_projected_read_dedups_identically(
-        self, tmp_path: Path, tmp_data_dir: Path, fernet_key: bytes
-    ) -> None:
-        table_path = str(tmp_path / "raw" / "dedup_broker")
-        existing = self._raw_table(
-            [("B", "/equity/account/summary"), ("B", "/equity/positions")],
-            fernet_key,
-        )
-        get_storage().backend.ensure_parent(table_path)
-        write_deltalake(
-            table_path,
-            existing,
-            mode="append",
-            storage_options=get_storage().storage_options,
-        )
-        new = self._raw_table(
-            [
-                ("C", "/equity/account/summary"),  # source/hash duplicate → dropped
-                ("B", "/equity/positions"),  # duplicate → dropped
-                ("B", "/equity/history/orders"),  # new → kept
-            ],
-            fernet_key,
-        )
-        deduped = dedup_raw(new, table_path)
-        assert deduped.num_rows == 1
-        assert deduped.column("source").to_pylist() == ["/equity/history/orders"]
+        assert dt.to_pyarrow_table().num_rows == 2  # merged in place, no growth

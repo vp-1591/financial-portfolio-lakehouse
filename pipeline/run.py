@@ -125,13 +125,15 @@ def fetch_connector(
 ) -> tuple[FetchResult, dict[str, pa.Table] | None]:
     """Fetch data from a single connector and write to raw Delta tables.
 
-    Every connector writes to the single merged bronze table
+    Every connector group writes to the single merged bronze table
     ``raw/{connector.name}`` (AD-5). ``fetch_kwargs(args)`` returns one or
-    more kwarg batches (e.g. XTB returns one batch per ``--xtb-file``); each
-    batch is fetched and appended to the same ``raw/{name}``. The events fetch
+    more kwarg batches (e.g. XTB returns one entry per ``--xtb-file``); each
+    batch is merged onto the same ``raw/{name}`` on the broker retention key
+    (AD-1; XTB ``account_id``, Trading 212/IBKR ``source``). The events fetch
     (when the connector has one — IBKR ``flex_events``, Trading 212 history
-    endpoints) appends its rows to the SAME ``raw/{name}``; XTB has no events
-    fetch, the shared bronze row feeds both silver transforms (AD-6).
+    endpoints) merges its rows into the SAME ``raw/{name}``; XTB has no
+    events fetch, the shared bronze row feeds both silver transforms
+    (AD-6). Every run ends with a per-broker VACUUM (AD-3).
 
     Returns a ``(FetchResult, handoff)`` pair:
     - ``SUCCESS`` — data was fetched and written
@@ -144,14 +146,15 @@ def fetch_connector(
     Fernet-encrypted PRE-DEDUP current fetch (``{"snapshot": ..., "events":
     ...}``) so the transform never re-reads the accumulated raw table (issue
     #154). The pre-dedup tables are what ``ingest_raw`` encrypts before its
-    dedup write — an unchanged endpoint deduped out of the write must still
-    reach the transform, exactly as it does today via the accumulated table.
+    merge write — the transform sees the current fetch even when every row
+    was merged in place with no net table growth.
     Multi-batch fetches (``fetch_kwargs`` returning several batches) are
     concatenated into the same layer key. On ``FetchResult.ERROR`` the handoff
     may be only partially populated (the failing layer is absent); the caller
     must discard it — ``cmd_run_connector`` exits 1 before transform.
     """
     from pipeline.raw.ingest import ingest_raw
+    from pipeline.raw.retention import vacuum_raw
 
     error_occurred = False
     handoff: dict[str, pa.Table] | None = (
@@ -171,7 +174,7 @@ def fetch_connector(
         try:
             raw = connector.fetch_snapshot(**snapshot_kwargs)
             get_storage().backend.ensure_parent(raw_path)
-            encrypted = ingest_raw(raw, raw_path, fernet_key)
+            encrypted = ingest_raw(raw, raw_path, fernet_key, connector.name)
             if handoff is not None:
                 # Multiple batches (e.g. XTB's per-file fetches) must not
                 # overwrite earlier batches — concatenate into the layer key.
@@ -212,7 +215,9 @@ def fetch_connector(
             try:
                 raw_events = connector.fetch_events(**events_kwargs)
                 get_storage().backend.ensure_parent(raw_path)
-                encrypted_events = ingest_raw(raw_events, raw_path, fernet_key)
+                encrypted_events = ingest_raw(
+                    raw_events, raw_path, fernet_key, connector.name
+                )
                 if handoff is not None:
                     handoff[EVENTS_LAYER] = (
                         pa.concat_tables([handoff[EVENTS_LAYER], encrypted_events])
@@ -232,6 +237,13 @@ def fetch_connector(
                     f"  Error fetching {connector.display_name} events: {exc}",
                     file=sys.stderr,
                 )
+
+    # AD-3: each broker run vacuums its own raw table (7-day default,
+    # dry_run=False is mandatory — deltalake 1.6.0 vacuums no-op by default).
+    # The XTB EventBridge file-arrival task runs ``run-connector xtb``, so
+    # the vacuum comes along via this call (ADR 0110). Silver tables are never
+    # vacuumed here — only raw/{connector.name}.
+    vacuum_raw(raw_path, storage_options=get_storage().storage_options)
 
     return (FetchResult.ERROR if error_occurred else FetchResult.SUCCESS), handoff
 
