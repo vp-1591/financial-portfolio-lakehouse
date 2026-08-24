@@ -111,7 +111,7 @@ _BROKER_DISPLAY: dict[str, str] = {
 # covers the orphaned ``raw/xtb_events`` that was never written.
 _SOURCE_TABLE_SUFFIXES: tuple[str, ...] = ("_snapshot", "_events")
 
-# Dedup key of each broker-scoped raw table (ADR 0047, ingest.py:46-52).
+# Dedup key of each broker-scoped raw table (ADR 0117, ingest.py:46-52).
 _DEDUP_KEY: tuple[str, ...] = ("source", "payload_hash")
 
 # boto3 delete_objects accepts at most this many keys per call.

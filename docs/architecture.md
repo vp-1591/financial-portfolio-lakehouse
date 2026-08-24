@@ -12,6 +12,10 @@ Broker data flows through three layers:
 1. **Raw** — Encrypted broker payloads stored as-is, with fetch metadata.
    Each connector writes snapshot and events (change data capture) payloads
    into one table per broker (`raw/{broker}`); `source` discriminates them.
+   Writes are merge-on-key (AD-1): a re-fetched payload for the same broker
+   retention key (`account_id` for XTB, pagination-stripped `source` for
+   Trading 212/IBKR) replaces the stored row in place, and each run VACUUMs
+   the table (AD-3) so bronze stays bounded.
 2. **Normalized** — Structured positions, cash, and events parsed from
    raw payloads. Financial values remain Fernet-encrypted. Cross-broker
    holdings are consolidated into `consolidated_holdings`; events are
@@ -37,7 +41,7 @@ chart connection, see [Table Lineage](table-lineage.md).
 | 🔵 Analytics | `analytics/dividend_income` | Dividends by period, broker, and security |
 | 🔵 Analytics | `analytics/interest_income` | Interest by period and broker |
 | 🔵 Analytics | `analytics/cash_flow_summary` | All events aggregated by period and type |
-| 🔵 Analytics | `analytics/data_quality` | Freshness and row-count validation badges |
+| 🔵 Analytics | `analytics/data_quality` | Freshness, per-account staleness, and row-count validation badges |
 
 ### Table naming convention
 

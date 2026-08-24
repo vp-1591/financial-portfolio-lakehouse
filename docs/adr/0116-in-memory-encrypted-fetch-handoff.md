@@ -1,5 +1,7 @@
 # 0116: In-Memory Encrypted Fetch Handoff for Trading212
 
+> **Superseded by [ADR 0119](./0119-remove-t212-in-memory-handoff.md)** — merge-on-key retention (ADR 0117) removed the accumulated-table growth the handoff addressed; the handoff is removed. Single bronze raw table per broker (ADR 0114) and phase-level RSS observability (ADR 0115) carry forward unchanged.
+
 ## Context
 
 After the single-bronze consolidation (ADR 0114), the trading212 connector on the staging Fargate task (256 CPU / 512 MB) was OOM-killed three times. Phase-level RSS observability (ADR 0115) measured a 1039 MB transform peak. Root cause: `transform_connector` re-reads the whole accumulated `raw/trading212` Delta table every run (which grows every run — the T212 events endpoints return the complete history each run, so the accumulated table is N copies of that history) and decrypts rows only to discard them.

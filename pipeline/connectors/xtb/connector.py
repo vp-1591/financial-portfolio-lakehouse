@@ -23,7 +23,7 @@ class XtbConnector:
 
     # transform_events applies _latest_per_account over the WHOLE raw table to
     # retain last-known reports for accounts not re-uploaded this run (see
-    # ADR 0116).
+    # ADR 0119).
     def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         xtb_file = getattr(args, "xtb_file", None)
         if not xtb_file:

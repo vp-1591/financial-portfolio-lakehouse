@@ -107,8 +107,10 @@ flowchart TD
 ## Notes
 
 * **Snapshot vs events tracks never merge.** `consolidated_holdings` is built from broker position snapshots, while `events` is built from transaction history.
+* **Raw writes are merge-on-key (AD-1).** A re-fetched payload for the same broker retention key (`account_id` for XTB, pagination-stripped `source` for Trading 212/IBKR) replaces the stored row in place; each run VACUUMs the table (AD-3), so bronze stays bounded. The raw schema carries a nullable `account_id` column (AD-2); `source_file` was dropped.
+* **Events writes are append-preserving MERGEs (AD-4).** `transform_events` merges on the full per-broker event identity so re-fetched events update in place without duplicating history.
 * **`normalize_currency()` enriches `events` in place**, adding `target_fx_rate`, `target_value`, and `target_ccy`.
 * **Gold value columns are Fernet-encrypted.** Monetary values (`security_value`, `target_value`, `cash_amount`) are stored as `pa.binary()`. Metadata columns remain plaintext.
 * **Allocation charts** use the plaintext `percentage` column and therefore do not require decryption.
-* **Data quality** is a validation stage that scans every normalized and gold table before producing the `data_quality` report. It is included in the storage lineage as a gold table, but its validation edges (reading all tables) are omitted for clarity.
+* **Data quality** is a validation stage that scans every normalized and gold table before producing the `data_quality` report. It is included in the storage lineage as a gold table, but its validation edges (reading all tables) are omitted for clarity. For registered tables it also flags per-account staleness (AD-5): a WARN lists accounts whose latest `fetched_at` is older than the freshness window.
 

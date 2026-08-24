@@ -25,7 +25,7 @@ class IbkrConnector:
     # The flex-query Period is capped at 365 days, so one fetch never covers the
     # full account history; events older than the window survive only via the
     # accumulated raw table. The transform therefore reads the whole raw table
-    # (see ADR 0116).
+    # (see ADR 0119).
     def fetch_kwargs(self, args: argparse.Namespace) -> list[dict]:
         flex_token = resolve_secret("IBKR_FLEX_TOKEN")
         if not flex_token:

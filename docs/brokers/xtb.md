@@ -107,15 +107,19 @@ Key behaviors of the new-format parser/transform:
   `settle_date = Close time`. The
   opening (`Stock purchase`) row gets no fee.
 - **Multi-account.** Snapshot and events both keep the latest payload per
-  `account_id`. Rows are grouped by `account_id` derived from `source_file`
-  (filename pattern `{CCY}_{account_id}_{from}_{to}.xlsx`) without parsing, and
-  only the latest row per account (`fetched_at`, with a `source_file`
-  tiebreaker) is parsed — not `filter_latest_snapshot` (which keys on `source`
-  alone and would collapse distinct accounts). Each parse is guarded: a
-  malformed latest row falls back to the previous good row for that account,
-  and if all rows for an account fail the account is skipped with a warning
-  (one bad historical row can no longer kill the connector). The report's R1
-  `account_id` is authoritative on a filename mismatch (logged). Rows whose
-  filename doesn't match the pattern fall back to a guarded parse for
-  account-id discovery. events dedups on `(event_type, event_id, account_id)` so
-  same-ID events from different accounts coexist.
+  `account_id`. Rows are grouped by the raw `account_id` column (AD-2 — the
+  raw-schema migration backfills it from the legacy `source_file` filename
+  pattern `{CCY}_{account_id}_{from}_{to}.xlsx`), and only the latest row per
+  account is parsed — not `filter_latest_snapshot` (which keys on `source`
+  alone and would collapse distinct accounts). The sort key is
+  `(fetched_at, payload_hash)` descending, so ties on `fetched_at` break
+  deterministically (AD-2). Each parse is guarded: a malformed latest row
+  falls back to the previous good row for that account, and if all rows for
+  an account fail the account is skipped with a warning (one bad historical
+  row can no longer kill the connector). The report's R1 `account_id` is
+  authoritative on a raw/R1 mismatch (logged). Rows whose raw `account_id` is
+  NULL fall back to a guarded parse for account-id discovery. Raw retention
+  is merge-on-key (AD-1): a re-fetched report for the same `account_id`
+  replaces the stored row in place instead of accumulating duplicates. events
+  dedups on `(event_type, event_id, account_id)` so same-ID events from
+  different accounts coexist.

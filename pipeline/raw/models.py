@@ -3,7 +3,7 @@
 One Delta table per broker (``raw/{broker}``) with a single shared schema:
 fetched_at, broker, source, payload (Fernet-encrypted), payload_hash, and a
 nullable account_id. The ``source`` column discriminates snapshot vs events
-rows (ADR 0047, AD-1); XTB's ``account_id`` is populated from the report
+rows (ADR 0117, AD-1); XTB's ``account_id`` is populated from the report
 filename at fetch time (AD-2) and stays NULL for IBKR and Trading 212.
 """
 

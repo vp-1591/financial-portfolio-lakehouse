@@ -119,7 +119,7 @@ _BROKER_DISPLAY: dict[str, str] = {
 }
 
 # The pre-5-1 raw schema, identical to RAW_SCHEMA except the trailing
-# ``account_id`` field is the retained ``source_file`` filename (ADR 0047).
+# ``account_id`` field is the retained ``source_file`` filename (ADR 0117).
 _OLD_RAW_SCHEMA = pa.schema(
     [
         *[field for field in RAW_SCHEMA if field.name != "account_id"],

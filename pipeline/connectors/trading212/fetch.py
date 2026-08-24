@@ -98,7 +98,7 @@ def fetch_events(
     # Fail loud: ANY endpoint failure aborts the fetch. The transform
     # normalizes the current fetch's events (the single bronze read, AD-6), so
     # a silently skipped endpoint's events would be missing from this run's
-    # normalized output — partial data must abort the run (see ADR 0116).
+    # normalized output — partial data must abort the run (see ADR 0119).
     failed_endpoints: list[str] = []
     for endpoint_name, fetch_method in [
         ("orders", client.orders),

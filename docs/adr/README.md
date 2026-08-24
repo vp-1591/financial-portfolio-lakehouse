@@ -57,7 +57,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0044 | S3_BUCKET_DEMO Standalone — Demo Cloud Storage Without S3_BUCKET | 2026-07-02 | superseded | 0092 |
 | 0045 | Replace List-Append Pattern with Polars build_normalized_table | 2026-07-02 | active | — |
 | 0046 | Fix Consolidated Holdings Currency Column | 2026-07-03 | active | — |
-| 0047 | Move XLSX Parsing to Silver Layer and Remove account_id from Raw Schema | 2026-07-03 | active | — |
+| 0047 | Move XLSX Parsing to Silver Layer and Remove account_id from Raw Schema | 2026-07-03 | superseded | 0117 |
 | 0048 | XTB Cloud Upload — S3 Staging + EventBridge | 2026-07-06 | superseded | 0108 |
 | 0049 | Deployment Model — Branch/Tag Environment Strategy | 2026-07-07 | superseded | 0063 |
 | 0050 | Attach ECR Policy to Pipeline User in Terraform | 2026-07-07 | active | — |
@@ -126,7 +126,10 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0113 | Rename CDC Events Layer to events and Demo Staging Environment to staging | 2026-08-19 | active | — |
 | 0114 | Single Bronze (Raw) Table Per Broker | 2026-08-20 | active | — |
 | 0115 | Phase-Level RSS Memory Observability in Pipeline Runs | 2026-08-20 | active | — |
-| 0116 | In-Memory Encrypted Fetch Handoff for Trading212 | 2026-08-21 | active | — |
+| 0116 | In-Memory Encrypted Fetch Handoff for Trading212 | 2026-08-21 | superseded | 0119 |
+| 0117 | Bounded Bronze Retention and Incremental Events | 2026-08-24 | active | — |
+| 0118 | Per-Account Staleness Flag and Account Purge Escape Hatch | 2026-08-24 | active | — |
+| 0119 | Remove the T212 In-Memory Fetch Handoff | 2026-08-24 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

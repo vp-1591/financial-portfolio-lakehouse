@@ -106,8 +106,8 @@ class TestTransformConnectorTableRead:
         """Golden (T5.3): the table-read path reproduces the pre-removal
         handoff output — the round-trip-verified normalized fixture.
 
-        The handoff path (ADR 0116) produced exactly this fixture; removing
-        the handoff must not change the normalized output.
+        The handoff path (ADR 0119, superseding 0116) produced exactly this
+        fixture; removing the handoff must not change the normalized output.
         """
         fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
         snap = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
