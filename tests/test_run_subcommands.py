@@ -206,6 +206,71 @@ class TestFetchConnectorIsolation:
             rc = fetch_connector(connector, args, fernet_key)
             assert rc == FetchResult.ERROR
 
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
+    def test_vacuum_runs_on_success(
+        self, mock_ingest: MagicMock, tmp_data_dir: Path
+    ) -> None:
+        """fetch_connector vacuums the raw table after a healthy run (AD-3)."""
+        connector = get("ibkr")
+        args = argparse.Namespace()
+
+        with (
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value=[
+                    {
+                        "flex_token": "t",
+                        "flex_query_id": "q",
+                        "flex_base_url": "u",
+                    }
+                ],
+            ),
+            patch.object(
+                connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
+            ),
+            patch.object(connector, "fetch_events_kwargs", return_value={}),
+            patch("pipeline.raw.retention.vacuum_raw") as mock_vacuum,
+        ):
+            fernet_key = generate_key()
+            rc = fetch_connector(connector, args, fernet_key)
+            assert rc == FetchResult.SUCCESS
+            mock_vacuum.assert_called_once()
+
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
+    def test_vacuum_skipped_on_error(
+        self, mock_ingest: MagicMock, tmp_data_dir: Path
+    ) -> None:
+        """fetch_connector does NOT vacuum when the run failed: no destructive
+        maintenance from an error path (a retry recovers the consistent state)."""
+        connector = get("ibkr")
+        args = argparse.Namespace()
+
+        with (
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value=[
+                    {
+                        "flex_token": "t",
+                        "flex_query_id": "q",
+                        "flex_base_url": "u",
+                    }
+                ],
+            ),
+            patch.object(
+                connector,
+                "fetch_snapshot",
+                side_effect=RuntimeError("API timeout"),
+            ),
+            patch.object(connector, "fetch_events_kwargs", return_value={}),
+            patch("pipeline.raw.retention.vacuum_raw") as mock_vacuum,
+        ):
+            fernet_key = generate_key()
+            rc = fetch_connector(connector, args, fernet_key)
+            assert rc == FetchResult.ERROR
+            mock_vacuum.assert_not_called()
+
 
 class TestTransformConnectorIsolation:
     """transform_connector delegates to connector transform methods."""

@@ -213,8 +213,10 @@ def fetch_connector(
     # dry_run=False is mandatory — deltalake 1.6.0 vacuums no-op by default).
     # The XTB EventBridge file-arrival task runs ``run-connector xtb``, so
     # the vacuum comes along via this call (ADR 0110). Silver tables are never
-    # vacuumed here — only raw/{connector.name}.
-    vacuum_raw(raw_path, storage_options=get_storage().storage_options)
+    # vacuumed here — only raw/{connector.name}. A failed run skips the vacuum:
+    # no destructive maintenance from an error path.
+    if not error_occurred:
+        vacuum_raw(raw_path, storage_options=get_storage().storage_options)
 
     return FetchResult.ERROR if error_occurred else FetchResult.SUCCESS
 
