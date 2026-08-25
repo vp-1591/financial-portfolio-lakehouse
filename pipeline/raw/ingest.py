@@ -6,9 +6,9 @@ import logging
 from datetime import UTC, datetime
 
 import pyarrow as pa
+from cryptography.fernet import Fernet
 from deltalake import DeltaTable, write_deltalake
 
-from pipeline.crypto import encrypt
 from pipeline.raw.retention import (
     merge_predicate,
     retention_key,
@@ -23,9 +23,14 @@ def encrypt_raw_payloads(table: pa.Table, fernet_key: bytes) -> pa.Table:
 
     The input table is not mutated; a new table is returned with the
     ``payload`` column replaced by Fernet-encrypted bytes.
+
+    Memory-bounded on purpose: raw batches carry megabyte-scale payloads, so
+    the plaintext ``to_pylist()`` copy of the whole column is avoided — each
+    row's bytes go straight from the arrow buffer into its Fernet token —
+    and one ``Fernet`` instance is reused instead of re-keying per row.
     """
-    payloads = table.column("payload").to_pylist()
-    encrypted = [encrypt(p, fernet_key) for p in payloads]
+    fernet = Fernet(fernet_key)
+    encrypted = [fernet.encrypt(value.as_py()) for value in table.column("payload")]
     idx = table.schema.get_field_index("payload")
     return table.set_column(idx, "payload", pa.array(encrypted, type=pa.binary()))
 
