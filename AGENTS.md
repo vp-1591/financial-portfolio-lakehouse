@@ -1,1 +1,97 @@
-@CLAUDE.md
+## Goal
+
+Single dashboard consolidating assets from different brokers. Medallion architecture: raw (encrypted broker payloads → Delta) → normalized (parsed, consolidated, FX-converted) → analytics (portfolio aggregations). All financial values are Fernet-encrypted at rest. Delta Lake for storage, DuckDB for queries, Polars for all data manipulation, PyArrow only for table schemas (`models.py`) and S3 filesystem (`s3.py`). `write_deltalake` accepts `pl.DataFrame` directly — do not convert to `pa.Table` for writes.
+
+## Checks
+
+Always use the project venv — never the system Python (`C:\Python314`). On Windows, use `python.exe -m pip` instead of bare `pip`:
+
+```bash
+.venv/Scripts/python.exe -m pip install <package>
+```
+
+Before committing, run all three checks. After linting, re-run tests to ensure auto-fixes didn't break anything:
+
+```bash
+.venv/Scripts/python -m ruff check --fix . && .venv/Scripts/python -m ruff format .
+.venv/Scripts/python -m pyright pipeline/ tests/
+.venv/Scripts/python -m pytest tests/ -q -rf
+```
+
+Run a single test file or specific test:
+
+```bash
+.venv/Scripts/python -m pytest tests/test_consolidate.py -v
+.venv/Scripts/python -m pytest tests/test_consolidate.py::test_consolidate_holdings -v
+```
+
+- When changing portfolio math, broker data normalization, or dashboard output, add or update focused tests that cover the changed behavior and any reported regression.
+
+## Verify before guessing
+
+Grep the source before importing — the actual function name may differ from
+intuition:
+
+```bash
+grep -rn "def load_" pipeline/crypto.py    # confirms load_key, not load_fernet_key
+```
+
+
+## Querying data
+
+**Always use `pipeline.run query`, never construct `DeltaTable()` manually.** The
+CLI handles S3 credentials, region config, encryption keys, and DuckDB setup.
+Manual construction produces opaque S3/region/crypto errors.
+
+Start with `SELECT *` to discover table and column names — don't guess them:
+
+```bash
+PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run query \
+  "SELECT * FROM <table> LIMIT 5" --decrypt --mode staging
+```
+
+1. If DuckDB says "table does not exist", its error message suggests close names.
+2. Once the table loads, read column headers from the output — names like `label`
+   or `security_value` are often wrong.
+3. Then narrow down with specific columns.
+
+Always prefix with `PYTHONIOENCODING=utf-8` on Windows (terminal default is
+cp1252; non-ASCII ISINs/currency symbols crash without it).
+
+```bash
+PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run query "..." --decrypt --mode staging
+PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run report --mode staging --open
+```
+
+## Schema migrations
+
+When a table schema changes (column types, added/removed columns), create a migration script under `pipeline/migrations/` that rewrites the existing Delta table to match the new schema. This ensures the deploy can succeed against pre-existing tables so that quality checks don't flag mismatches between the expected and actual schema.
+
+## Deploy logs
+
+When a staging deploy fails, the application error (Python tracebacks) is in the "Print container logs on failure". Check the `=== Container logs: <connector> ===` sections.
+
+## AWS Guidance
+
+- Prefer the AWS MCP Server for AWS interactions — it provides sandboxed execution, observability, and audit logging. If unavailable, use the AWS CLI directly.
+- Before starting a task, check whether a relevant AWS skill is available. Load the skill with `retrieve_skill` and prefer its guidance over general knowledge.
+- When uncertain about specific AWS details (API parameters, permissions, limits, error codes), verify against documentation rather than guessing. State uncertainty explicitly if you cannot confirm.
+- When creating infrastructure, prefer infrastructure-as-code (Terraform in this project, or AWS CDK / CloudFormation) over direct CLI commands.
+- When working with infrastructure, follow AWS Well-Architected Framework principles.
+- Do not use em dashes in AWS resource names or descriptions. Use hyphens instead.
+- Do not apply prod terraform.
+
+### Secret Safety
+
+- MUST load the `creating-secrets-using-best-practices` skill first for any secret, credential, API key, token, or password task. MUST NOT call `secretsmanager get-secret-value` or `batch-get-secret-value` directly, and MUST NOT hit the Secrets Manager Agent daemon directly. Prefer `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` with `asm-exec` so the secret resolves at runtime without entering context.
+
+## Git workflow
+- For this project, commit and open pr right after finishing your work
+
+## Tmp references
+
+- Do not mention any tmp scripts/reports in any tracked documentation or code 
+
+## Edits
+
+For each file you modify, add the import and its usage in the same Edit operation — do not add imports separately from the code that uses them, as ruff will strip unused imports between edits.
