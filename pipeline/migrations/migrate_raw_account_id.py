@@ -138,6 +138,13 @@ _OLD_RAW_SCHEMA = pa.schema(
 _WRITE_ATTEMPTS = 3
 _WRITE_RETRY_DELAY_S = 10.0
 
+# delta-rs gives each upload a 180s retry budget (retry_timeout); a single
+# ~100 MB parquet file over a typical home uplink lands right at that ceiling
+# and dies mid-multipart at a random part.  Capping the rewritten files well
+# under it means every file uploads on its own budget and completes even on a
+# slow link.
+_TARGET_FILE_SIZE_BYTES = 8 * 1024 * 1024
+
 
 @dataclass
 class MigrateReport:
@@ -184,6 +191,7 @@ def _overwrite_raw_table(
                 mode="overwrite",
                 schema_mode="overwrite",
                 storage_options=storage_opts,
+                target_file_size=_TARGET_FILE_SIZE_BYTES,
             )
             return
         except DeltaError as exc:
