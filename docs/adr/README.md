@@ -131,6 +131,7 @@ This index tracks all ADRs in `docs/adr/`. Run `/optimize-adrs` to update it.
 | 0118 | Per-Account Staleness Flag and Account Purge Escape Hatch | 2026-08-24 | superseded | 0120 |
 | 0119 | Remove the T212 In-Memory Fetch Handoff | 2026-08-24 | active | — |
 | 0120 | Drop Unparseable Account-id Rows at Fetch Time | 2026-08-24 | active | — |
+| 0121 | Fix Raw-Table Memory in Code: Streaming Encrypt Plus a Pre-Deploy Prune Gate | 2026-08-25 | active | — |
 
 <!-- Duplicate-number mapping
   0002a → 0002-add-consolidate-step-and-fix-duplicates.md

@@ -24,10 +24,11 @@ def encrypt_raw_payloads(table: pa.Table, fernet_key: bytes) -> pa.Table:
     The input table is not mutated; a new table is returned with the
     ``payload`` column replaced by Fernet-encrypted bytes.
 
-    Memory-bounded on purpose: raw batches carry megabyte-scale payloads, so
-    the plaintext ``to_pylist()`` copy of the whole column is avoided — each
-    row's bytes go straight from the arrow buffer into its Fernet token —
-    and one ``Fernet`` instance is reused instead of re-keying per row.
+    Memory-bounded on purpose (Decision: docs/adr/0121-fix-raw-memory-streaming-encrypt-and-prune-gate.md):
+    raw batches carry megabyte-scale payloads, so the plaintext ``to_pylist()``
+    copy of the whole column is avoided — each row's bytes go straight from the
+    arrow buffer into its Fernet token — and one ``Fernet`` instance is reused
+    instead of re-keying per row.
     """
     fernet = Fernet(fernet_key)
     encrypted = [fernet.encrypt(value.as_py()) for value in table.column("payload")]
