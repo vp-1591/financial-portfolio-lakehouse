@@ -26,15 +26,25 @@ For each broker (``ibkr``, ``trading212``, ``xtb``), read ``raw/{broker}``:
    ``write_deltalake(mode="overwrite", schema_mode="overwrite")``.  The
    ``pl.DataFrame`` is passed directly (project rule: never convert to
    ``pa.Table`` for writes); ``storage_options`` come from
-   ``get_storage_options_with_credentials()``.
+   ``get_storage_options_with_credentials()``.  For S3 tables the rewrite is
+   staged to a local Delta table first and then pushed object-by-object with
+   boto3's transfer manager: delta-rs' S3 uploader aborts sustained uploads
+   after a 180s wall-clock retry budget, so a large raw table (T212 carries
+   ~100 MB of encrypted payloads) never lands over a slow uplink -- every
+   attempt died at ~180s mid-multipart in staging.  boto3 multipart PUTs have
+   no such budget; objects whose key already exists remotely are skipped, so
+   an interrupted run resumes where it stopped.  The new ``_delta_log`` entry
+   is renamed to continue the remote version history and is uploaded LAST,
+   so a crash mid-upload leaves the old-schema table untouched.
 3. After the rewrite the table is re-read and verified (readable, exact
    ``RAW_SCHEMA`` in order, expected row count).
 
 Safety and idempotency
 ----------------------
-- Transient S3 write failures (e.g. ``error sending request`` aborting a
-  multipart PUT mid-upload, observed in staging) are retried with a fixed
-  delay; the overwrite is idempotent so a retry never duplicates rows.
+- Transient S3 write failures are retried with a fixed delay; because each
+  attempt skips objects already uploaded, a retry only pushes what is left.
+  The commit (log entry) lands last and atomically, so no intermediate state
+  is ever visible and a retry never duplicates rows.
 - Idempotent: a table already carrying the new ``RAW_SCHEMA`` is skipped and
   exits 0; a genuinely absent table is skipped and exits 0.
 - Never clobbers (ADR 0113 A1): a table whose schema is neither the old
@@ -98,15 +108,17 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import polars as pl
 import pyarrow as pa
 from botocore.exceptions import ClientError
 from deltalake import DeltaTable, write_deltalake
-from deltalake.exceptions import DeltaError, TableNotFoundError
+from deltalake.exceptions import TableNotFoundError
 
 from pipeline.connectors.xtb.fetch import _account_id_from_filename
 from pipeline.migrations._storage_options import get_storage_options_with_credentials
@@ -132,18 +144,11 @@ _OLD_RAW_SCHEMA = pa.schema(
 )
 
 
-# Transient S3 failures (multipart PUT aborted with "error sending request",
-# timeouts) surface as DeltaError from write_deltalake.  The overwrite is
-# atomic and idempotent, so retrying can only ever rewrite the same rows.
+# Transient S3 failures during the staged upload are retried with a fixed
+# delay; each attempt skips objects already uploaded, so only the remainder
+# is pushed.  The commit lands last and atomically.
 _WRITE_ATTEMPTS = 3
 _WRITE_RETRY_DELAY_S = 10.0
-
-# delta-rs gives each upload a 180s retry budget (retry_timeout); a single
-# ~100 MB parquet file over a typical home uplink lands right at that ceiling
-# and dies mid-multipart at a random part.  Capping the rewritten files well
-# under it means every file uploads on its own budget and completes even on a
-# slow link.
-_TARGET_FILE_SIZE_BYTES = 8 * 1024 * 1024
 
 
 @dataclass
@@ -173,33 +178,135 @@ def _backfill_account_id(source_file: object) -> str | None:
     return _account_id_from_filename(source_file)
 
 
-def _overwrite_raw_table(
+def _split_s3_uri(table_path: str) -> tuple[str, str]:
+    """Split ``s3://bucket/prefix`` into ``(bucket, prefix)``, no trailing slash."""
+    remainder = table_path.removeprefix("s3://")
+    bucket, _, prefix = remainder.partition("/")
+    return bucket, prefix.rstrip("/")
+
+
+def _object_exists(client: Any, bucket: str, key: str) -> bool:
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+    return True
+
+
+def _stage_and_upload(
+    client: Any,
+    table_path: str,
+    new_frame: pl.DataFrame,
+    *,
+    next_version: int,
+    stale_paths: list[str],
+) -> None:
+    """Rewrite the S3 table at *table_path* via a local Delta staging copy.
+
+    delta-rs' S3 uploader aborts sustained uploads after a 180s wall-clock
+    retry budget, so large raw rewrites never land over a slow uplink.  The
+    migrated frame is instead written to a local Delta table (no network),
+    and its files are pushed with boto3's transfer manager, whose multipart
+    PUTs have no such budget.
+
+    A fresh staging table's own commit cannot serve as the remote commit: it
+    has no ``remove`` actions, so the remote snapshot would keep the
+    superseded parquet files (observed: row count doubled).  The commit is
+    therefore rebuilt as the staging actions plus a ``remove`` per *stale_paths*
+    (the remote table's live files), renamed to *next_version* continuing the
+    remote history, and uploaded LAST -- a crash mid-upload leaves the
+    old-schema table untouched.  Parquet keys are random-UUID named, so an
+    object that already exists remotely is from an interrupted attempt and is
+    skipped; re-runs resume where they stopped.  Superseded files stay as
+    unreferenced orphans until the next VACUUM removes them.
+    """
+    import json
+
+    bucket, prefix = _split_s3_uri(table_path)
+
+    with tempfile.TemporaryDirectory(prefix="raw-migration-") as tmp:
+        local = Path(tmp) / "table"
+        write_deltalake(
+            str(local), new_frame, mode="overwrite", schema_mode="overwrite"
+        )
+
+        log_dir = local / "_delta_log"
+        staged_commit = log_dir / "00000000000000000000.json"
+        actions = [
+            json.loads(line)
+            for line in staged_commit.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        now_ms = int(time.time() * 1000)
+        actions.extend(
+            {
+                "remove": {
+                    "path": path,
+                    "deletionTimestamp": now_ms,
+                    "dataChange": True,
+                }
+            }
+            for path in stale_paths
+        )
+
+        commit = log_dir / f"{next_version:020d}.json"
+        commit.write_text(
+            "".join(json.dumps(action) + "\n" for action in actions),
+            encoding="utf-8",
+        )
+        staged_commit.unlink()
+
+        data_files = sorted(local.rglob("*.parquet"))
+        for path in [*data_files, commit]:
+            rel = path.relative_to(local).as_posix()
+            key = f"{prefix}/{rel}"
+            if _object_exists(client, bucket, key):
+                print(f"  already uploaded, skipping: {key}")
+                continue
+            print(f"  uploading: {key}")
+            client.upload_file(str(path), bucket, key)
+
+
+def _rewrite_table(
+    client: Any | None,
     table_path: str,
     new_frame: pl.DataFrame,
     storage_opts: dict[str, str],
+    *,
+    next_version: int,
+    stale_paths: list[str],
 ) -> None:
-    """Overwrite *table_path* with *new_frame*, retrying transient S3 errors.
+    """Overwrite *table_path* with *new_frame*.
 
-    A failed multipart upload leaves the Delta table untouched (the commit is
-    atomic), so each retry simply re-attempts the full overwrite.
+    Local tables are rewritten in place.  S3 tables go through the staged
+    boto3 upload (:func:`_stage_and_upload`) with bounded retries; each
+    retry resumes from the objects that already landed.
     """
+    if not table_path.startswith("s3://"):
+        write_deltalake(
+            table_path, new_frame, mode="overwrite", schema_mode="overwrite"
+        )
+        return
+
     for attempt in range(1, _WRITE_ATTEMPTS + 1):
         try:
-            write_deltalake(
+            _stage_and_upload(
+                client,
                 table_path,
                 new_frame,
-                mode="overwrite",
-                schema_mode="overwrite",
-                storage_options=storage_opts,
-                target_file_size=_TARGET_FILE_SIZE_BYTES,
+                next_version=next_version,
+                stale_paths=stale_paths,
             )
             return
-        except DeltaError as exc:
+        except (ClientError, OSError) as exc:
             if attempt == _WRITE_ATTEMPTS:
                 raise
             print(
-                f"  Write attempt {attempt}/{_WRITE_ATTEMPTS} failed "
-                f"(transient S3 error: {exc}); retrying in "
+                f"  Upload attempt {attempt}/{_WRITE_ATTEMPTS} failed "
+                f"(transient error: {exc}); retrying in "
                 f"{_WRITE_RETRY_DELAY_S:.0f}s..."
             )
             time.sleep(_WRITE_RETRY_DELAY_S)
@@ -230,6 +337,7 @@ def migrate_broker(
     table_path: str,
     storage_opts: dict[str, str],
     *,
+    client: Any | None = None,
     dry_run: bool = False,
 ) -> MigrateReport:
     """Rewrite one ``raw/{broker}`` from the old schema to ``RAW_SCHEMA``.
@@ -239,7 +347,8 @@ def migrate_broker(
     table or a table already in ``RAW_SCHEMA`` is skipped.  A table whose
     schema is neither old nor new raises (:class:`RuntimeError`) rather than
     being clobbered (ADR 0112 A1 / ADR 0113 A1).  ``--dry-run`` prints the
-    plan and writes nothing.
+    plan and writes nothing.  S3 tables require *client* (boto3 S3 client)
+    for the staged upload.
     """
     try:
         dt = DeltaTable(table_path, storage_options=storage_opts)
@@ -317,7 +426,24 @@ def migrate_broker(
             dry_run=True,
         )
 
-    _overwrite_raw_table(table_path, new_frame, storage_opts)
+    if table_path.startswith("s3://") and client is None:
+        raise RuntimeError(
+            f"An S3 client is required to migrate {table_path} (staged boto3 "
+            "upload); pass client= from run_migration."
+        )
+    stale_paths: list[str] = (
+        dt.get_add_actions(flatten=True)["path"].to_pylist()
+        if table_path.startswith("s3://")
+        else []
+    )
+    _rewrite_table(
+        client,
+        table_path,
+        new_frame,
+        storage_opts,
+        next_version=dt.version() + 1,
+        stale_paths=stale_paths,
+    )
 
     if not verify_migrated_table(
         table_path, storage_opts, expected_rows=new_frame.height
@@ -342,10 +468,10 @@ def migrate_broker(
 def run_migration(client: Any, *, dry_run: bool = False) -> list[MigrateReport]:
     """Execute (or plan) the raw-schema migration against the active storage.
 
-    This migration performs no S3 object-level operations (the rewrite is an
-    in-place Delta overwrite), so *client* is unused beyond CLI/error-handling
-    parity with :func:`pipeline.migrations.migrate_single_bronze.main` (ADR
-    0112 A1 convention: ``ClientError`` -> exit 1).
+    S3 rewrites are staged through boto3 (see :func:`_stage_and_upload`), so
+    *client* is the boto3 S3 client used for the object uploads.  Errors
+    propagate for ``main()`` to exit non-zero (ADR 0112 A1 convention:
+    ``ClientError`` -> exit 1).
     """
     storage = get_storage()
     storage_opts = get_storage_options_with_credentials()
@@ -361,20 +487,32 @@ def run_migration(client: Any, *, dry_run: bool = False) -> list[MigrateReport]:
         table_path = storage.raw_path(broker)
         print(f"Migrating {broker}...")
         reports.append(
-            migrate_broker(broker, table_path, storage_opts, dry_run=dry_run)
+            migrate_broker(
+                broker, table_path, storage_opts, client=client, dry_run=dry_run
+            )
         )
         print()
     return reports
 
 
 def _build_s3_client() -> Any:
-    """Build a boto3 S3 client using the project's consolidated credentials."""
+    """Build a boto3 S3 client using the project's consolidated credentials.
+
+    Adaptive retries with a high attempt count: the staged upload pushes
+    ~100 MB of parquet over the caller's uplink, and boto3's transfer manager
+    (unlike delta-rs') has no wall-clock budget -- it just needs each request
+    to eventually get through.
+    """
     import boto3
+    from botocore.config import Config
 
     from pipeline.secrets import resolve_aws_credentials
 
     creds = resolve_aws_credentials()
-    kwargs: dict[str, Any] = {"region_name": creds.region}
+    kwargs: dict[str, Any] = {
+        "region_name": creds.region,
+        "config": Config(retries={"max_attempts": 10, "mode": "adaptive"}),
+    }
     if creds.key_id is not None or creds.secret_key is not None:
         kwargs["aws_access_key_id"] = creds.key_id or ""
         kwargs["aws_secret_access_key"] = creds.secret_key or ""

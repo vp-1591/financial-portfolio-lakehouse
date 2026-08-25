@@ -23,10 +23,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import polars as pl
 import pyarrow as pa
 import pytest
+from botocore.exceptions import ClientError
 from deltalake import DeltaTable, write_deltalake
-from deltalake.exceptions import DeltaError
 
 import pipeline.migrations.migrate_raw_account_id as mod
 from pipeline.migrations.migrate_raw_account_id import migrate_broker
@@ -320,6 +321,102 @@ def test_migrate_conflict_raises_on_drifted_new_schema(tmp_path: Path) -> None:
     assert "unexpected" in _read(path).column_names
 
 
+class _RecordingS3:
+    """S3 client double for the staged upload: tracks head/upload calls."""
+
+    def __init__(self, existing: set[str] | None = None) -> None:
+        self.existing: set[str] = existing or set()
+        self.uploads: dict[str, bytes] = {}
+
+    def head_object(self, Bucket: str, Key: str) -> dict[str, object]:
+        if Key not in self.existing:
+            raise ClientError(
+                {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
+            )
+        return {"ContentLength": 1}
+
+    def upload_file(self, Filename: str, Bucket: str, Key: str) -> None:
+        # Copy immediately: the staging temp dir is deleted after the call.
+        self.uploads[Key] = Path(Filename).read_bytes()
+
+
+def _new_frame() -> pl.DataFrame:
+    """A one-row migrated frame matching RAW_SCHEMA exactly."""
+    table = pa.table(
+        {
+            "fetched_at": [_t(1)],
+            "broker": ["Trading 212"],
+            "source": ["/equity/account/summary"],
+            "payload": [b"\x01"],
+            "payload_hash": ["h1"],
+            "account_id": [None],
+        },
+        schema=RAW_SCHEMA,
+    )
+    frame = pl.from_arrow(table)
+    assert isinstance(frame, pl.DataFrame)
+    return frame
+
+
+def test_stage_upload_pushes_data_then_commit_with_shifted_version() -> None:
+    """The staged S3 rewrite writes the migrated frame locally, then uploads
+    each parquet file and finally the rebuilt commit (staged actions plus a
+    remove per stale file), renamed to continue the remote version history."""
+    import json
+
+    client = _RecordingS3()
+
+    mod._stage_and_upload(
+        client,
+        "s3://test-bucket/raw/trading212",
+        _new_frame(),
+        next_version=5,
+        stale_paths=["old-part-a.parquet", "old-part-b.parquet"],
+    )
+
+    assert set(client.uploads) == {
+        "raw/trading212/_delta_log/00000000000000000005.json",
+        next(k for k in client.uploads if k.endswith(".parquet")),
+    }
+    json_keys = [k for k in client.uploads if k.endswith(".json")]
+    parquet_keys = [k for k in client.uploads if k.endswith(".parquet")]
+    assert json_keys == ["raw/trading212/_delta_log/00000000000000000005.json"]
+    assert len(parquet_keys) == 1
+
+    actions = [
+        json.loads(line)
+        for line in client.uploads[json_keys[0]].decode("utf-8").splitlines()
+        if line.strip()
+    ]
+    removes = [a["remove"]["path"] for a in actions if "remove" in a]
+    adds = [a for a in actions if "add" in a]
+    metas = [a for a in actions if "metaData" in a]
+    # The remote snapshot drops BOTH superseded files and keeps only the new
+    # one; the schema change rides in metaData.
+    assert removes == ["old-part-a.parquet", "old-part-b.parquet"]
+    assert len(adds) == 1
+    assert len(metas) == 1
+
+
+def test_stage_upload_skips_objects_already_uploaded() -> None:
+    """Object keys are unique per write, so anything already present remotely
+    is from an earlier interrupted attempt -- re-runs resume without
+    re-uploading it."""
+    client = _RecordingS3(existing={"raw/xtb/_delta_log/00000000000000000007.json"})
+
+    mod._stage_and_upload(
+        client,
+        "s3://test-bucket/raw/xtb",
+        _new_frame(),
+        next_version=7,
+        stale_paths=["old.parquet"],
+    )
+
+    # The commit was already present, so only the parquet was pushed.
+    assert [k for k in client.uploads if k.endswith(".json")] == []
+    assert len(client.uploads) == 1
+
+
 def test_migrate_verification_failure_raises(monkeypatch, tmp_path: Path) -> None:
     path = tmp_path / "ibkr"
     _write(
@@ -354,75 +451,6 @@ def test_migrate_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> 
 
     with pytest.raises(OSError, match="simulated S3 auth/region error"):
         migrate_broker("ibkr", str(tmp_path / "ibkr"), {})
-
-
-def test_migrate_retries_transient_write_error_then_succeeds(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """A transient S3 DeltaError on the overwrite is retried; a later attempt
-    completes the migration (the failed upload leaves the table untouched)."""
-    path = tmp_path / "trading212"
-    _write(
-        path,
-        _old_raw_table(
-            [
-                {
-                    "fetched_at": _t(1),
-                    "broker": "Trading 212",
-                    "source": "/equity/account/summary",
-                    "payload_hash": "h1",
-                    "source_file": "report.xlsx",
-                }
-            ]
-        ),
-    )
-    attempts: list[int] = []
-
-    def _flaky_write(*args: object, **kwargs: object) -> None:
-        attempts.append(len(attempts))
-        if len(attempts) < 3:
-            raise DeltaError("Generic S3 error: error sending request")
-        write_deltalake(*args, **kwargs)  # type: ignore[arg-type]
-
-    sleeps: list[float] = []
-    monkeypatch.setattr(mod, "write_deltalake", _flaky_write)
-    monkeypatch.setattr(mod.time, "sleep", sleeps.append)
-
-    report = migrate_broker("trading212", str(path), {})
-
-    assert report.written is True and report.verified is True
-    assert len(attempts) == 3
-    assert sleeps == [mod._WRITE_RETRY_DELAY_S, mod._WRITE_RETRY_DELAY_S]
-    result = _read(path)
-    assert result.schema.equals(RAW_SCHEMA)
-    assert result.num_rows == 1
-
-
-def test_migrate_persistent_write_error_reraises_after_retries(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """After exhausting all write attempts the last DeltaError propagates
-    (exit non-zero); the old-schema table is left unchanged for a re-run."""
-    path = tmp_path / "xtb"
-    _write(
-        path,
-        _old_raw_table([_xtb_row(1, "h1", "PLN_12345678_2006-01-01_2026-08-03.xlsx")]),
-    )
-    calls: list[int] = []
-
-    def _always_fails(*args: object, **kwargs: object) -> None:
-        calls.append(len(calls))
-        raise DeltaError("Generic S3 error: error sending request")
-
-    monkeypatch.setattr(mod, "write_deltalake", _always_fails)
-    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
-
-    with pytest.raises(DeltaError, match="error sending request"):
-        migrate_broker("xtb", str(path), {})
-
-    assert len(calls) == mod._WRITE_ATTEMPTS
-    # The table still carries the OLD schema -- nothing was clobbered.
-    assert "source_file" in _read(path).column_names
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +514,7 @@ def test_run_migration_dispatches_all_brokers(monkeypatch, tmp_path: Path) -> No
         table_path: str,
         storage_opts: dict[str, str],
         *,
+        client: object = None,
         dry_run: bool = False,
     ) -> mod.MigrateReport:
         captured.append((broker, table_path))
