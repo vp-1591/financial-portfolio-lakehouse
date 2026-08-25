@@ -281,12 +281,13 @@ def _merge_events(
     creates it (merging against an absent table is impossible).
     """
     from deltalake import DeltaTable, write_deltalake
+    from deltalake.exceptions import TableNotFoundError
 
     predicate = " AND ".join(f"s.{col} = t.{col}" for col in identity_subset)
     updates = {col: f"s.{col}" for col in normalized.column_names}
     try:
         target = DeltaTable(norm_path, storage_options=storage_opts)
-    except Exception:
+    except TableNotFoundError:
         write_deltalake(
             norm_path, normalized, mode="overwrite", storage_options=storage_opts
         )
@@ -316,6 +317,7 @@ def transform_connector(connector, fernet_key: bytes) -> int:
     only path.
     """
     from deltalake import DeltaTable, write_deltalake
+    from deltalake.exceptions import TableNotFoundError
 
     storage_opts = get_storage().storage_options
 
@@ -331,7 +333,7 @@ def transform_connector(connector, fernet_key: bytes) -> int:
             return cached_raw["table"]
         try:
             dt = DeltaTable(raw_path, storage_options=storage_opts)
-        except Exception:
+        except TableNotFoundError:
             logger.debug(
                 "%s: raw table not present at %s, skipping",
                 connector.display_name,
@@ -404,6 +406,7 @@ def transform_connector(connector, fernet_key: bytes) -> int:
 def cmd_consolidate(args: argparse.Namespace) -> int:
     """Consolidate normalized broker snapshots into the holdings table."""
     from deltalake import DeltaTable
+    from deltalake.exceptions import TableNotFoundError
 
     from pipeline.crypto import load_key
     from pipeline.normalized.consolidate import (
@@ -435,7 +438,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         snapshot_path = config.normalized_path(f"{connector.name}_snapshot")
         try:
             DeltaTable(str(snapshot_path), storage_options=storage_opts)
-        except Exception:
+        except TableNotFoundError:
             logger.debug(
                 "Skipping %s: no normalized snapshot data", connector.display_name
             )
@@ -938,11 +941,15 @@ def cmd_purge_account(args: argparse.Namespace) -> int:
     ``{broker}_events`` rows on ``account_id``. Gold tables are NOT deleted —
     they have no per-account key and self-heal on the next consolidate.
     Requires ``--yes``; without it, prints the affected tables and predicates
-    and exits without deleting. XTB is the v1 scope: Trading 212's snapshot
+    and exits without deleting. Each table is purged independently: if one
+    delete fails after earlier tables succeeded, the remaining tables are
+    still purged and the command exits 1 so a partial purge is never reported
+    as green. XTB is the v1 scope: Trading 212's snapshot
     ``account_id`` is ``""`` and its raw retention key is ``source``, so a
     per-account purge is not meaningful there (RuntimeError).
     """
     from deltalake import DeltaTable
+    from deltalake.exceptions import TableNotFoundError
 
     from pipeline.raw.retention import retention_key
 
@@ -976,13 +983,22 @@ def cmd_purge_account(args: argparse.Namespace) -> int:
             print(f"  {path} WHERE {predicate}")
         return 0
 
+    failed = False
     for path, predicate in predicates:
         try:
             target = DeltaTable(path, storage_options=storage_opts)
-        except Exception:
+        except TableNotFoundError:
             print(f"  {path}: table not found, skipping")
             continue
-        metrics = target.delete(predicate)
+        try:
+            metrics = target.delete(predicate)
+        except Exception as exc:
+            failed = True
+            print(
+                f"  {path}: FAILED to delete rows WHERE {predicate}: {exc}",
+                file=sys.stderr,
+            )
+            continue
         deleted = metrics.get("num_deleted_rows", 0)
         print(f"  {path}: deleted {deleted} row(s) WHERE {predicate}")
 
@@ -993,7 +1009,7 @@ def cmd_purge_account(args: argparse.Namespace) -> int:
         raw_table = DeltaTable(
             raw_path, storage_options=storage_opts
         ).to_pyarrow_table()
-    except Exception:
+    except TableNotFoundError:
         raw_table = None
     if (
         raw_table is not None
@@ -1011,6 +1027,8 @@ def cmd_purge_account(args: argparse.Namespace) -> int:
                 broker,
                 account_id,
             )
+    if failed:
+        return 1
     return 0
 
 

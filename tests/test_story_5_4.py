@@ -408,3 +408,104 @@ class TestPurgeAccount:
         assert _read(str(tmp_data_dir / "raw" / "xtb")).num_rows == 3
         assert _read(str(tmp_data_dir / "normalized" / "xtb_snapshot")).num_rows == 2
         assert _read(str(tmp_data_dir / "normalized" / "xtb_events")).num_rows == 2
+
+    def test_purge_skips_missing_tables(
+        self, tmp_data_dir: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """A genuinely absent table is skipped with a note, not an error."""
+        now = datetime.now(UTC)
+        write_deltalake(
+            str(tmp_data_dir / "raw" / "xtb"),
+            _raw_table([_raw_row("XTB_REPORT", b"r1", account_id="111")]),
+            mode="overwrite",
+        )
+        write_deltalake(
+            str(tmp_data_dir / "normalized" / "xtb_snapshot"),
+            _snapshot([_snapshot_row("111", now)]),
+            mode="overwrite",
+        )
+        # normalized/xtb_events is deliberately never written.
+
+        rc = cmd_purge_account(
+            argparse.Namespace(broker="xtb", account_id="111", yes=True)
+        )
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "table not found, skipping" in out
+
+        raw_ids = _read(str(tmp_data_dir / "raw" / "xtb")).column("account_id")
+        assert "111" not in raw_ids.to_pylist()
+        snap_ids = _read(str(tmp_data_dir / "normalized" / "xtb_snapshot")).column(
+            "account_id"
+        )
+        assert snap_ids.to_pylist() == []
+
+    def test_purge_continues_and_returns_1_when_a_delete_fails(
+        self,
+        tmp_data_dir: Path,
+        capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A delete failure on one table still purges the others and exits 1.
+
+        A mid-loop failure must not abort the purge silently: the raw and
+        events tables are still purged, the failure is reported on stderr,
+        and the command returns 1 so a partial purge is visible (finding #13).
+        """
+        self._write_tables(tmp_data_dir)
+        from deltalake import DeltaTable as DT
+
+        real_delete = DT.delete
+
+        def flaky_delete(self, predicate, **kwargs):
+            if "xtb_snapshot" in str(self.table_uri):
+                raise RuntimeError("simulated S3 failure")
+            return real_delete(self, predicate, **kwargs)
+
+        monkeypatch.setattr(DT, "delete", flaky_delete)
+
+        rc = cmd_purge_account(
+            argparse.Namespace(broker="xtb", account_id="111", yes=True)
+        )
+        assert rc == 1
+
+        raw = _read(str(tmp_data_dir / "raw" / "xtb"))
+        assert "111" not in raw.column("account_id").to_pylist()
+        # The failed snapshot delete left account 111 in place.
+        snap = _read(str(tmp_data_dir / "normalized" / "xtb_snapshot"))
+        assert snap.column("account_id").to_pylist() == ["111", "222"]
+        # The events table was still purged after the failure.
+        events = _read(str(tmp_data_dir / "normalized" / "xtb_events"))
+        assert events.column("account_id").to_pylist() == ["222"]
+
+        captured = capsys.readouterr()
+        assert "FAILED to delete" in captured.err
+        assert "table not found, skipping" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Finding #9 — only TableNotFoundError means "table absent"
+# ---------------------------------------------------------------------------
+
+
+class TestAbsentTableGuard:
+    """Only ``TableNotFoundError`` means 'no raw data'; auth/permission/corrupt
+    errors must propagate (finding #9), mirroring the ``_path_exists`` contract
+    in ``migrate_single_bronze.py``."""
+
+    def test_read_raw_table_propagates_non_table_not_found(
+        self, tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-TableNotFoundError from DeltaTable raises, not a silent skip."""
+        import deltalake
+
+        from pipeline.connectors.registry import get
+        from pipeline.run import transform_connector
+
+        class _Boom:
+            def __init__(self, *args, **kwargs):
+                raise RuntimeError("simulated S3 auth failure")
+
+        monkeypatch.setattr(deltalake, "DeltaTable", _Boom)
+        with pytest.raises(RuntimeError, match="simulated S3 auth failure"):
+            transform_connector(get("ibkr"), generate_key())
