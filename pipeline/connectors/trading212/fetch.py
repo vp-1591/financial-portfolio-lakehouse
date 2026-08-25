@@ -10,6 +10,7 @@ import pyarrow as pa
 
 from pipeline.connectors.trading212.client import Trading212Client
 from pipeline.raw.models import RAW_SCHEMA
+from pipeline.raw.retention import strip_pagination_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def fetch_snapshot(
     sources: list[str] = []
     payloads: list[bytes] = []
     payload_hashes: list[str] = []
-    source_files: list[str] = []
+    account_ids: list[str | None] = []
 
     # Fetch account summary
     client.captured_responses.clear()
@@ -43,10 +44,10 @@ def fetch_snapshot(
     for path, raw_bytes in client.captured_responses:
         fetched_ats.append(now)
         brokers.append("Trading 212")
-        sources.append(path)
+        sources.append(strip_pagination_suffix(path))
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        source_files.append("")
+        account_ids.append(None)
 
     # Fetch positions
     client.captured_responses.clear()
@@ -54,10 +55,10 @@ def fetch_snapshot(
     for path, raw_bytes in client.captured_responses:
         fetched_ats.append(now)
         brokers.append("Trading 212")
-        sources.append(path)
+        sources.append(strip_pagination_suffix(path))
         payloads.append(raw_bytes)
         payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-        source_files.append("")
+        account_ids.append(None)
 
     return pa.table(
         {
@@ -66,7 +67,7 @@ def fetch_snapshot(
             "source": sources,
             "payload": payloads,
             "payload_hash": payload_hashes,
-            "source_file": source_files,
+            "account_id": account_ids,
         },
         schema=RAW_SCHEMA,
     )
@@ -78,7 +79,12 @@ def fetch_events(
     base_url: str = "https://live.trading212.com/api/v0",
     timeout: float = 20.0,
 ) -> pa.Table:
-    """Fetch Trading 212 events (orders, dividends, transactions)."""
+    """Fetch Trading 212 events (orders, dividends, transactions).
+
+    The stored ``source`` is the pagination-stripped endpoint base (AC-7) so
+    ``SELECT DISTINCT source`` is stable across runs — the per-run
+    ``?cursor=...`` token is dropped before the value is stored.
+    """
     client = Trading212Client(
         base_url,
         api_key=api_key,
@@ -93,13 +99,12 @@ def fetch_events(
     sources: list[str] = []
     payloads: list[bytes] = []
     payload_hashes: list[str] = []
-    source_files: list[str] = []
+    account_ids: list[str | None] = []
 
-    # Fail loud: ANY endpoint failure aborts the fetch. The transform consumes
-    # only the current fetch as an in-memory handoff (issue #154), so a silently
-    # skipped endpoint's events would be dropped from this run's normalized
-    # output instead of backfilled from the accumulated raw table — partial data
-    # must abort the run (see ADR 0116).
+    # Fail loud: ANY endpoint failure aborts the fetch. The transform
+    # normalizes the current fetch's events (the single bronze read, AD-6), so
+    # a silently skipped endpoint's events would be missing from this run's
+    # normalized output — partial data must abort the run (see ADR 0119).
     failed_endpoints: list[str] = []
     for endpoint_name, fetch_method in [
         ("orders", client.orders),
@@ -119,10 +124,10 @@ def fetch_events(
         for path, raw_bytes in client.captured_responses:
             fetched_ats.append(now)
             brokers.append("Trading 212")
-            sources.append(path)
+            sources.append(strip_pagination_suffix(path))
             payloads.append(raw_bytes)
             payload_hashes.append(hashlib.sha256(raw_bytes).hexdigest())
-            source_files.append("")
+            account_ids.append(None)
 
     if failed_endpoints:
         raise RuntimeError(
@@ -142,7 +147,7 @@ def fetch_events(
             "source": sources,
             "payload": payloads,
             "payload_hash": payload_hashes,
-            "source_file": source_files,
+            "account_id": account_ids,
         },
         schema=RAW_SCHEMA,
     )

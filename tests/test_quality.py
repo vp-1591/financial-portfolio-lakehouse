@@ -17,6 +17,7 @@ from pipeline.analytics.quality import (
     FAIL,
     PASS,
     WARN,
+    account_id_unparseable_check_result,
     check_freshness,
     check_non_empty,
     check_reconciliation,
@@ -654,6 +655,61 @@ class TestRunValidation:
             fernet_key=fernet_key, freshness_days=7, fail_on_warn=True
         )
         assert exit_code == 1
+
+
+class TestRunValidationExtraRecords:
+    """run_validation folds caller-supplied synthetic records into the dq write."""
+
+    def test_extra_records_folded_into_dq_table(self) -> None:
+        """A fetch-layer drop record lands in data_quality with the run's now."""
+        from pipeline.storage import get_storage
+
+        rc = run_validation(
+            fernet_key=generate_key(),
+            tables=[],
+            extra_records=[
+                account_id_unparseable_check_result("report.xlsx", "raw/xtb")
+            ],
+        )
+        assert rc == 0
+
+        rows = (
+            DeltaTable(get_storage().analytics_path("data_quality"))
+            .to_pyarrow_table()
+            .to_pylist()
+        )
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["table_name"] == "raw/xtb"
+        assert row["check_name"] == "account_id_unparseable"
+        assert row["status"] == WARN
+        assert row["threshold"] == "{CCY}_{account_id}_{from}_{to}.xlsx"
+        assert row["actual"] == "report.xlsx"
+        assert "report.xlsx" in row["details"]
+        assert row["checked_at"] is not None
+
+    def test_multiple_extra_records_share_one_checked_at(self) -> None:
+        """Two dropped files fold into one run with a single timestamp."""
+        from pipeline.storage import get_storage
+
+        rc = run_validation(
+            fernet_key=generate_key(),
+            tables=[],
+            extra_records=[
+                account_id_unparseable_check_result("a.xlsx", "raw/xtb"),
+                account_id_unparseable_check_result("b.xlsx", "raw/xtb"),
+            ],
+        )
+        assert rc == 0
+
+        rows = (
+            DeltaTable(get_storage().analytics_path("data_quality"))
+            .to_pyarrow_table()
+            .to_pylist()
+        )
+        assert len(rows) == 2
+        timestamps = {row["checked_at"] for row in rows}
+        assert len(timestamps) == 1, "synthetic records must share the run's now"
 
 
 # ---------------------------------------------------------------------------

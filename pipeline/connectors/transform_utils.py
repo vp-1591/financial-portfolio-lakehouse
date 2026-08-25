@@ -29,7 +29,8 @@ class DecodedRow:
 
     fetched_at: datetime
     source: str
-    source_file: str
+    account_id: str | None  # Raw-layer account_id (NULL for non-XTB rows)
+    payload_hash: str
     payload_parsed: Any  # Parsed JSON (dict or list), or None
     payload_raw: bytes  # Decrypted bytes (for XML/XLSX payloads)
 
@@ -154,7 +155,8 @@ def iter_raw_payloads(
     fetched_ats = raw.column("fetched_at").to_pylist()
     sources = raw.column("source").to_pylist()
     payloads = raw.column("payload").to_pylist()
-    source_files = raw.column("source_file").to_pylist()
+    payload_hashes = raw.column("payload_hash").to_pylist()
+    account_ids = raw.column("account_id").to_pylist()
 
     decode_failures = 0
     parse_failures = 0
@@ -162,7 +164,8 @@ def iter_raw_payloads(
     for i in range(len(fetched_ats)):
         fetched_at = coerce_fetched_at(fetched_ats[i])
         source = str(sources[i] or "")
-        source_file = str(source_files[i] or "")
+        payload_hash = str(payload_hashes[i] or "")
+        account_id = str(account_ids[i]) if account_ids[i] is not None else None
         payload_bytes = payloads[i]
 
         decrypted = decode_payload(payload_bytes, fernet_key)
@@ -178,7 +181,8 @@ def iter_raw_payloads(
         yield DecodedRow(
             fetched_at=fetched_at,
             source=source,
-            source_file=source_file,
+            account_id=account_id,
+            payload_hash=payload_hash,
             payload_parsed=parsed,
             payload_raw=decrypted,
         )

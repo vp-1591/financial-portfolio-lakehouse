@@ -161,7 +161,7 @@ class TestTransformSnapshot:
                 "source": sources,
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "source_file": [""] * len(sources),
+                "account_id": [None] * len(sources),
             },
             schema=RAW_SCHEMA,
         )
@@ -480,7 +480,7 @@ class TestTransformSnapshot:
                 "source": sources,
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "source_file": [""] * 4,
+                "account_id": [None] * 4,
             },
             schema=RAW_SCHEMA,
         )
@@ -791,8 +791,8 @@ class TestEventsFetch:
     def test_fetch_events_raises_on_single_endpoint_failure(self, caplog) -> None:
         """A single failing events endpoint aborts the fetch (fail loud).
 
-        The transform consumes only the current fetch as an in-memory handoff
-        (issue #154), so partial events data must never reach it — a RuntimeError
+        The transform normalizes the current fetch's events (the single bronze
+        read, AD-6), so partial events data must never reach it — a RuntimeError
         is raised even though the other endpoints succeeded. A WARNING naming the
         failing endpoint is still logged first.
         """
@@ -886,6 +886,51 @@ class TestEventsFetch:
                     base_url="https://demo.trading212.com/api/v0",
                 )
 
+    def test_fetch_events_strips_pagination_cursor_from_source(self) -> None:
+        """Stored source drops the ?cursor= token so distinct sources are stable.
+
+        The stored ``source`` column is the pagination-stripped endpoint base
+        (AC-7: ``SELECT DISTINCT source`` unchanged across runs) — the per-run
+        cursor token must not leak into the stored value.
+        """
+
+        with mock.patch(
+            "pipeline.connectors.trading212.fetch.Trading212Client"
+        ) as MockCls:
+            instance = MockCls.return_value
+            instance.captured_responses = []
+
+            def _capture(path: str, raw: bytes):
+                def _fetch():
+                    instance.captured_responses.append((path, raw))
+
+                return _fetch
+
+            instance.orders.side_effect = _capture(
+                "/equity/history/orders",
+                b'{"items": [{"id": 1}], "nextPagePath": null}',
+            )
+            instance.dividends.side_effect = _capture(
+                "/equity/history/dividends?cursor=abc",
+                b'{"items": [{"id": 2}], "nextPagePath": null}',
+            )
+            instance.transactions.side_effect = _capture(
+                "/equity/history/transactions?cursor=def",
+                b'{"items": [{"id": 3}], "nextPagePath": null}',
+            )
+
+            result = fetch_events(
+                api_key="test",
+                api_secret="test",
+                base_url="https://demo.trading212.com/api/v0",
+            )
+
+        assert result.column("source").to_pylist() == [
+            "/equity/history/orders",
+            "/equity/history/dividends",
+            "/equity/history/transactions",
+        ]
+
 
 class TestUnwrapEvents:
     """Tests for _unwrap_events helper (moved from transform_utils)."""
@@ -943,7 +988,7 @@ class TestEventsTransform:
                 "source": [source],
                 "payload": encrypted_payloads,
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in raw_payloads],
-                "source_file": [""],
+                "account_id": [None],
             },
             schema=RAW_SCHEMA,
         )

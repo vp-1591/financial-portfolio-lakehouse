@@ -52,7 +52,7 @@ def fetch_snapshot_via_flex(
             "source": ["flex"],
             "payload": [xml_bytes],
             "payload_hash": [payload_hash],
-            "source_file": [""],
+            "account_id": [None],
         },
         schema=RAW_SCHEMA,
     )
@@ -95,7 +95,7 @@ def fetch_events_via_flex(
             "source": ["flex_events"],
             "payload": [xml_bytes],
             "payload_hash": [payload_hash],
-            "source_file": [""],
+            "account_id": [None],
         },
         schema=RAW_SCHEMA,
     )

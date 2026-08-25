@@ -58,8 +58,8 @@ def _raw_table(rows: list[dict[str, Any]]) -> pa.Table:
             "payload_hash": pa.array(
                 [r["payload_hash"] for r in rows], type=pa.string()
             ),
-            "source_file": pa.array(
-                [r.get("source_file", "") for r in rows], type=pa.string()
+            "account_id": pa.array(
+                [r.get("account_id") for r in rows], type=pa.string()
             ),
         }
     )
@@ -106,7 +106,7 @@ def test_merge_combines_snapshot_and_events_into_one_table(tmp_path: Path) -> No
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h1",
-                    "source_file": "snap.xml",
+                    "account_id": "snap",
                 }
             ]
         ),
@@ -120,7 +120,7 @@ def test_merge_combines_snapshot_and_events_into_one_table(tmp_path: Path) -> No
                     "broker": "IBKR",
                     "source": "flex_events",
                     "payload_hash": "h2",
-                    "source_file": "events.xml",
+                    "account_id": "events",
                 }
             ]
         ),
@@ -150,7 +150,7 @@ def test_merge_dedups_on_dedup_key(tmp_path: Path) -> None:
                     "broker": "Trading 212",
                     "source": "/equity/account/summary",
                     "payload_hash": "same",
-                    "source_file": "a.json",
+                    "account_id": "a",
                 }
             ]
         ),
@@ -164,14 +164,14 @@ def test_merge_dedups_on_dedup_key(tmp_path: Path) -> None:
                     "broker": "Trading 212",
                     "source": "/equity/account/summary",
                     "payload_hash": "same",
-                    "source_file": "b.json",
+                    "account_id": "b",
                 },
                 {
                     "fetched_at": _t(3),
                     "broker": "Trading 212",
                     "source": "/equity/history/orders",
                     "payload_hash": "h2",
-                    "source_file": "c.json",
+                    "account_id": "c",
                 },
             ]
         ),
@@ -185,7 +185,7 @@ def test_merge_dedups_on_dedup_key(tmp_path: Path) -> None:
     assert sorted(result.column("payload_hash").to_pylist()) == ["h2", "same"]
 
 
-def test_merge_latest_fetched_at_tie_break_preserves_source_file(
+def test_merge_latest_fetched_at_tie_break_preserves_account_id(
     tmp_path: Path,
 ) -> None:
     snap, events, dest = _broker_paths(tmp_path, "xtb")
@@ -198,7 +198,7 @@ def test_merge_latest_fetched_at_tie_break_preserves_source_file(
                     "broker": "XTB",
                     "source": "XTB_REPORT",
                     "payload_hash": "same",
-                    "source_file": "report-old.xlsx",
+                    "account_id": "acc-old",
                 }
             ]
         ),
@@ -212,7 +212,7 @@ def test_merge_latest_fetched_at_tie_break_preserves_source_file(
                     "broker": "XTB",
                     "source": "XTB_REPORT",
                     "payload_hash": "same",
-                    "source_file": "report-new.xlsx",
+                    "account_id": "acc-new",
                 }
             ]
         ),
@@ -222,9 +222,9 @@ def test_merge_latest_fetched_at_tie_break_preserves_source_file(
 
     assert report.merged_rows == 1
     row = _read(dest).to_pylist()[0]
-    # Latest fetched_at wins and carries its source_file (ADR 0108 D18).
+    # Latest fetched_at wins and carries its account_id (ADR 0108 D18).
     assert row["fetched_at"] == _t(4)
-    assert row["source_file"] == "report-new.xlsx"
+    assert row["account_id"] == "acc-new"
     assert row["source"] == "XTB_REPORT"
 
 
@@ -250,7 +250,7 @@ def test_merge_absent_sources_with_existing_destination_is_noop(tmp_path: Path) 
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h1",
-                    "source_file": "snap.xml",
+                    "account_id": "snap",
                 }
             ]
         ),
@@ -275,7 +275,7 @@ def test_merge_idempotent_rerun_reproduces_destination(tmp_path: Path) -> None:
                     "broker": "Trading 212",
                     "source": "/equity/account/summary",
                     "payload_hash": "h1",
-                    "source_file": "a.json",
+                    "account_id": "a",
                 }
             ]
         ),
@@ -289,7 +289,7 @@ def test_merge_idempotent_rerun_reproduces_destination(tmp_path: Path) -> None:
                     "broker": "Trading 212",
                     "source": "/equity/history/orders",
                     "payload_hash": "h2",
-                    "source_file": "b.json",
+                    "account_id": "b",
                 }
             ]
         ),
@@ -320,7 +320,7 @@ def test_merge_refuses_to_overwrite_destination_with_extra_rows(
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h1",
-                    "source_file": "snap.xml",
+                    "account_id": "snap",
                 }
             ]
         ),
@@ -334,7 +334,7 @@ def test_merge_refuses_to_overwrite_destination_with_extra_rows(
                     "broker": "IBKR",
                     "source": "flex_events",
                     "payload_hash": "h2",
-                    "source_file": "events.xml",
+                    "account_id": "events",
                 }
             ]
         ),
@@ -351,14 +351,14 @@ def test_merge_refuses_to_overwrite_destination_with_extra_rows(
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h1",
-                    "source_file": "snap.xml",
+                    "account_id": "snap",
                 },
                 {
                     "fetched_at": _t(5),
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h3",
-                    "source_file": "new-fetch.xml",
+                    "account_id": "new-fetch",
                 },
             ]
         ),
@@ -382,7 +382,7 @@ def test_merge_destination_subset_of_sources_reruns(tmp_path: Path) -> None:
                     "broker": "Trading 212",
                     "source": "/equity/account/summary",
                     "payload_hash": "h1",
-                    "source_file": "a.json",
+                    "account_id": "a",
                 }
             ]
         ),
@@ -396,7 +396,7 @@ def test_merge_destination_subset_of_sources_reruns(tmp_path: Path) -> None:
                     "broker": "Trading 212",
                     "source": "/equity/history/orders",
                     "payload_hash": "h2",
-                    "source_file": "b.json",
+                    "account_id": "b",
                 }
             ]
         ),
@@ -412,7 +412,7 @@ def test_merge_destination_subset_of_sources_reruns(tmp_path: Path) -> None:
                     "broker": "Trading 212",
                     "source": "/equity/account/summary",
                     "payload_hash": "h1",
-                    "source_file": "a.json",
+                    "account_id": "a",
                 }
             ]
         ),
@@ -435,7 +435,7 @@ def test_merge_dry_run_does_not_write(tmp_path: Path) -> None:
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h1",
-                    "source_file": "snap.xml",
+                    "account_id": "snap",
                 }
             ]
         ),
@@ -449,7 +449,7 @@ def test_merge_dry_run_does_not_write(tmp_path: Path) -> None:
                     "broker": "IBKR",
                     "source": "flex_events",
                     "payload_hash": "h2",
-                    "source_file": "events.xml",
+                    "account_id": "events",
                 }
             ]
         ),
@@ -473,7 +473,7 @@ def test_merge_destination_schema_conflict_raises(tmp_path: Path) -> None:
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h1",
-                    "source_file": "snap.xml",
+                    "account_id": "snap",
                 }
             ]
         ),
@@ -485,7 +485,7 @@ def test_merge_destination_schema_conflict_raises(tmp_path: Path) -> None:
                 "broker": "IBKR",
                 "source": "flex",
                 "payload_hash": "h1",
-                "source_file": "snap.xml",
+                "account_id": "snap",
             }
         ]
     ).append_column("unexpected", pa.array(["x"], type=pa.string()))
@@ -509,7 +509,7 @@ def test_merge_verification_failure_refuses_delete(monkeypatch, tmp_path: Path) 
                     "broker": "IBKR",
                     "source": "flex",
                     "payload_hash": "h1",
-                    "source_file": "snap.xml",
+                    "account_id": "snap",
                 }
             ]
         ),
@@ -523,7 +523,7 @@ def test_merge_verification_failure_refuses_delete(monkeypatch, tmp_path: Path) 
                     "broker": "IBKR",
                     "source": "flex_events",
                     "payload_hash": "h2",
-                    "source_file": "events.xml",
+                    "account_id": "events",
                 }
             ]
         ),

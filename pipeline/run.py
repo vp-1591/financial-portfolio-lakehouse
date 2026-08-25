@@ -33,7 +33,11 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from pipeline.analytics.quality import run_validation
+from pipeline.analytics.quality import (
+    account_id_unparseable_check_result,
+    run_validation,
+)
+from pipeline.connectors.base import UnparseableAccountIdError
 from pipeline.connectors.registry import all as all_connectors
 from pipeline.connectors.registry import get
 from pipeline.crypto import load_key
@@ -50,8 +54,7 @@ from pipeline.storage import get_storage
 logger = logging.getLogger(__name__)
 
 # The two transform layers, in processing order. Single source of truth for the
-# layer loop in transform_connector and for the handoff dictionary keys built in
-# fetch_connector (issue #154).
+# layer loop in transform_connector.
 TRANSFORM_LAYERS: tuple[str, str] = ("snapshot", "events")
 SNAPSHOT_LAYER, EVENTS_LAYER = TRANSFORM_LAYERS
 
@@ -121,42 +124,43 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 
 def fetch_connector(
-    connector, args: argparse.Namespace, fernet_key: bytes
-) -> tuple[FetchResult, dict[str, pa.Table] | None]:
+    connector,
+    args: argparse.Namespace,
+    fernet_key: bytes,
+    dq_records: list | None = None,
+) -> FetchResult:
     """Fetch data from a single connector and write to raw Delta tables.
 
-    Every connector writes to the single merged bronze table
+    Every connector group writes to the single merged bronze table
     ``raw/{connector.name}`` (AD-5). ``fetch_kwargs(args)`` returns one or
-    more kwarg batches (e.g. XTB returns one batch per ``--xtb-file``); each
-    batch is fetched and appended to the same ``raw/{name}``. The events fetch
+    more kwarg batches (e.g. XTB returns one entry per ``--xtb-file``); each
+    batch is merged onto the same ``raw/{name}`` on the broker retention key
+    (AD-1; XTB ``account_id``, Trading 212/IBKR ``source``). The events fetch
     (when the connector has one — IBKR ``flex_events``, Trading 212 history
-    endpoints) appends its rows to the SAME ``raw/{name}``; XTB has no events
-    fetch, the shared bronze row feeds both silver transforms (AD-6).
+    endpoints) merges its rows into the SAME ``raw/{name}``; XTB has no
+    events fetch, the shared bronze row feeds both silver transforms
+    (AD-6). Every run ends with a per-broker VACUUM (AD-3).
 
-    Returns a ``(FetchResult, handoff)`` pair:
+    Returns a ``FetchResult``:
     - ``SUCCESS`` — data was fetched and written
     - ``SKIPPED`` — connector had no credentials or required input (e.g. XTB
       without ``--xtb-file``)
     - ``ERROR`` — fetch was attempted but failed
 
-    *handoff* is ``None`` unless the connector declares ``handoff_supported``
-    (a per-connector capability, default False), in which case it carries the
-    Fernet-encrypted PRE-DEDUP current fetch (``{"snapshot": ..., "events":
-    ...}``) so the transform never re-reads the accumulated raw table (issue
-    #154). The pre-dedup tables are what ``ingest_raw`` encrypts before its
-    dedup write — an unchanged endpoint deduped out of the write must still
-    reach the transform, exactly as it does today via the accumulated table.
-    Multi-batch fetches (``fetch_kwargs`` returning several batches) are
-    concatenated into the same layer key. On ``FetchResult.ERROR`` the handoff
-    may be only partially populated (the failing layer is absent); the caller
-    must discard it — ``cmd_run_connector`` exits 1 before transform.
+    ``dq_records``, when provided, is a mutable list of
+    ``((table_name, check_name), CheckResult)`` tuples. A row dropped for an
+    unparseable account id appends its synthetic data_quality WARN here
+    instead of failing the fetch; ``cmd_run_connector`` threads the list into
+    ``run_validation(extra_records=...)`` so the run's overwrite write
+    surfaces it.
+
+    The transform reads the merged table back (the single bronze read, AD-6);
+    the in-memory encrypted-fetch handoff is removed (AD-8).
     """
     from pipeline.raw.ingest import ingest_raw
+    from pipeline.raw.retention import vacuum_raw
 
     error_occurred = False
-    handoff: dict[str, pa.Table] | None = (
-        {} if getattr(connector, "handoff_supported", False) else None
-    )
 
     # Uniform contract: fetch_kwargs returns one or more kwarg batches.
     snapshot_batches = connector.fetch_kwargs(args)
@@ -164,29 +168,38 @@ def fetch_connector(
         logger.debug(
             "Skipping %s: required secrets not configured", connector.display_name
         )
-        return FetchResult.SKIPPED, None
+        return FetchResult.SKIPPED
 
     raw_path = get_raw_path(connector.name)
     for snapshot_kwargs in snapshot_batches:
         try:
             raw = connector.fetch_snapshot(**snapshot_kwargs)
             get_storage().backend.ensure_parent(raw_path)
-            encrypted = ingest_raw(raw, raw_path, fernet_key)
-            if handoff is not None:
-                # Multiple batches (e.g. XTB's per-file fetches) must not
-                # overwrite earlier batches — concatenate into the layer key.
-                handoff[SNAPSHOT_LAYER] = (
-                    pa.concat_tables([handoff[SNAPSHOT_LAYER], encrypted])
-                    if SNAPSHOT_LAYER in handoff
-                    else encrypted
-                )
+            ingest_raw(raw, raw_path, fernet_key, connector.name)
             logger.debug(
                 "%s snapshot: %d rows in current fetch",
                 connector.display_name,
-                encrypted.num_rows,
+                raw.num_rows,
             )
         except NotImplementedError:
             logger.debug("%s snapshot: not implemented", connector.display_name)
+        except UnparseableAccountIdError as exc:
+            # Decision: docs/adr/0120-drop-unparseable-account-id-at-fetch.md
+            # An unparseable XTB filename is dropped at fetch time — no
+            # NULL-keyed raw row is written — and surfaced as a data_quality
+            # WARN instead. The run continues (rc SUCCESS).
+            logger.warning(
+                "Dropping %s report %r: could not derive account_id from the "
+                "filename; no raw row written",
+                connector.display_name,
+                exc.filename,
+            )
+            if dq_records is not None:
+                dq_records.append(
+                    account_id_unparseable_check_result(
+                        exc.filename, f"raw/{connector.name}"
+                    )
+                )
         except Exception as exc:
             error_occurred = True
             print(
@@ -212,17 +225,11 @@ def fetch_connector(
             try:
                 raw_events = connector.fetch_events(**events_kwargs)
                 get_storage().backend.ensure_parent(raw_path)
-                encrypted_events = ingest_raw(raw_events, raw_path, fernet_key)
-                if handoff is not None:
-                    handoff[EVENTS_LAYER] = (
-                        pa.concat_tables([handoff[EVENTS_LAYER], encrypted_events])
-                        if EVENTS_LAYER in handoff
-                        else encrypted_events
-                    )
+                ingest_raw(raw_events, raw_path, fernet_key, connector.name)
                 logger.debug(
                     "%s events: %d rows in current fetch",
                     connector.display_name,
-                    encrypted_events.num_rows,
+                    raw_events.num_rows,
                 )
             except NotImplementedError:
                 logger.debug("%s events: not implemented", connector.display_name)
@@ -233,58 +240,123 @@ def fetch_connector(
                     file=sys.stderr,
                 )
 
-    return (FetchResult.ERROR if error_occurred else FetchResult.SUCCESS), handoff
+    # AD-3: each broker run vacuums its own raw table (7-day default,
+    # dry_run=False is mandatory — deltalake 1.6.0 vacuums no-op by default).
+    # The XTB EventBridge file-arrival task runs ``run-connector xtb``, so
+    # the vacuum comes along via this call (ADR 0110). Silver tables are never
+    # vacuumed here — only raw/{connector.name}. A failed run skips the vacuum:
+    # no destructive maintenance from an error path.
+    if not error_occurred:
+        vacuum_raw(raw_path, storage_options=get_storage().storage_options)
+
+    return FetchResult.ERROR if error_occurred else FetchResult.SUCCESS
 
 
-def transform_connector(
-    connector,
-    fernet_key: bytes,
-    raw_tables: dict[str, pa.Table] | None = None,
-) -> int:
+# Per-broker event identity subsets for the append-preserving events MERGE
+# (AD-4). The predicate MUST use the same subset as the broker's in-batch
+# dedup (ADR 0105) — never ``event_id`` alone — so same-ID events across XTB
+# accounts or across Trading 212 order/dividend/transaction ID spaces stay
+# distinct (adversarial review F8).
+EVENT_IDENTITY_SUBSETS: dict[str, tuple[str, ...]] = {
+    "ibkr": ("event_id",),
+    "trading212": ("event_type", "event_id"),
+    "xtb": ("event_type", "event_id", "account_id"),
+}
+
+
+def _merge_events(
+    norm_path: str,
+    normalized: pa.Table,
+    identity_subset: tuple[str, ...],
+    storage_opts: dict[str, str] | None = None,
+) -> None:
+    """Append-preserving events MERGE (AD-4): update-only-if-newer, insert, never delete.
+
+    Merges the normalized rows into the ``normalized/{broker}_events`` target
+    keyed on the broker's FULL event identity subset (AC-1). A matched
+    identity is updated only when the incoming ``fetched_at`` is strictly
+    newer (``>`` — pinned by review); a new identity is inserted; nothing is
+    ever deleted, so an event absent from the current broker response survives
+    (CAP-2). The first run has no target table yet — the overwrite write
+    creates it (merging against an absent table is impossible).
+    """
+    from deltalake import DeltaTable, write_deltalake
+    from deltalake.exceptions import TableNotFoundError
+
+    predicate = " AND ".join(f"s.{col} = t.{col}" for col in identity_subset)
+    updates = {col: f"s.{col}" for col in normalized.column_names}
+    try:
+        target = DeltaTable(norm_path, storage_options=storage_opts)
+    except TableNotFoundError:
+        write_deltalake(
+            norm_path, normalized, mode="overwrite", storage_options=storage_opts
+        )
+        return
+    target.merge(
+        source=normalized,
+        predicate=predicate,
+        source_alias="s",
+        target_alias="t",
+    ).when_matched_update(
+        updates=updates,
+        predicate="s.fetched_at > t.fetched_at",
+    ).when_not_matched_insert_all().execute()
+
+
+def transform_connector(connector, fernet_key: bytes) -> int:
     """Transform raw data for a single connector into normalized Delta tables.
 
     Returns 0 on success or when the connector is skipped (no raw data,
     not implemented).
 
-    *raw_tables* is the encrypted current-fetch handoff produced by
-    :func:`fetch_connector` for ``handoff_supported`` connectors (issue
-    #154). A layer present in the handoff is used directly; otherwise the
-    connector falls back to reading the accumulated raw Delta table — ibkr/
-    xtb always take this path because their transforms are designed around
-    the accumulation (see ADR 0116).
+    The merged ``raw/{broker}`` table is read AT MOST ONCE per run and the
+    same decoded result is routed to both the snapshot and the events
+    transforms (AD-6); the events write is an append-preserving MERGE on the
+    broker's event identity (AD-4) instead of an overwrite. The in-memory
+    encrypted-fetch handoff is removed (AD-8) — the single bronze read is the
+    only path.
     """
     from deltalake import DeltaTable, write_deltalake
+    from deltalake.exceptions import TableNotFoundError
 
     storage_opts = get_storage().storage_options
+
+    # Single bronze read per broker run (AD-6): ``raw/{broker}`` is opened at
+    # most once and the same table feeds both transforms — never re-read per
+    # layer.
+    raw_path = get_raw_path(connector.name)
+    cached_raw: dict[str, pa.Table | None] = {}
+
+    def read_raw_table() -> pa.Table | None:
+        """Read ``raw/{broker}`` once; return None when the table is absent."""
+        if "table" in cached_raw:
+            return cached_raw["table"]
+        try:
+            dt = DeltaTable(raw_path, storage_options=storage_opts)
+        except TableNotFoundError:
+            logger.debug(
+                "%s: raw table not present at %s, skipping",
+                connector.display_name,
+                raw_path,
+            )
+            cached_raw["table"] = None
+            return None
+        cached_raw["table"] = dt.to_pyarrow_table()
+        return cached_raw["table"]
 
     for layer in TRANSFORM_LAYERS:
         # Both transforms read the single merged bronze table raw/{name}; the
         # ``source`` column discriminates snapshot vs events rows (AD-2). The
         # normalized output is still written to
         # ``normalized/{name}_{layer}`` — silver stays two tables per broker.
-        raw_path = get_raw_path(connector.name)
-        if raw_tables is not None and layer in raw_tables:
-            raw_table = raw_tables[layer]
-            source_noun = "current fetch"
-        else:
-            source_noun = "raw table"
-            try:
-                dt = DeltaTable(raw_path, storage_options=storage_opts)
-            except Exception:
-                logger.debug(
-                    "%s %s: raw table not present at %s, skipping",
-                    connector.display_name,
-                    layer,
-                    raw_path,
-                )
-                continue
-            raw_table = dt.to_pyarrow_table()
+        raw_table = read_raw_table()
+        if raw_table is None:
+            continue
         if raw_table.num_rows == 0:
             logger.warning(
-                "%s %s: %s is empty (0 rows); skipping transform",
+                "%s %s: raw table is empty (0 rows); skipping transform",
                 connector.display_name,
                 layer,
-                source_noun,
             )
             continue
 
@@ -298,12 +370,25 @@ def transform_connector(
             norm_path = config.normalized_path(f"{connector.name}_{layer}")
             config.backend.ensure_parent(norm_path)
 
-            write_deltalake(
-                norm_path,
-                normalized,
-                mode="overwrite",
-                storage_options=storage_opts,
-            )
+            if layer == "snapshot":
+                # Snapshot stays a full overwrite — only the events write
+                # becomes incremental (AD-4).
+                write_deltalake(
+                    norm_path,
+                    normalized,
+                    mode="overwrite",
+                    storage_options=storage_opts,
+                )
+            else:
+                # Append-preserving MERGE on the broker's full event identity
+                # (AD-4): existing events update only when the incoming
+                # fetched_at is newer; absent events are never deleted.
+                _merge_events(
+                    norm_path,
+                    normalized,
+                    EVENT_IDENTITY_SUBSETS[connector.name],
+                    storage_opts,
+                )
             logger.debug(
                 "%s %s: %d rows transformed",
                 connector.display_name,
@@ -321,6 +406,7 @@ def transform_connector(
 def cmd_consolidate(args: argparse.Namespace) -> int:
     """Consolidate normalized broker snapshots into the holdings table."""
     from deltalake import DeltaTable
+    from deltalake.exceptions import TableNotFoundError
 
     from pipeline.crypto import load_key
     from pipeline.normalized.consolidate import (
@@ -352,7 +438,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         snapshot_path = config.normalized_path(f"{connector.name}_snapshot")
         try:
             DeltaTable(str(snapshot_path), storage_options=storage_opts)
-        except Exception:
+        except TableNotFoundError:
             logger.debug(
                 "Skipping %s: no normalized snapshot data", connector.display_name
             )
@@ -733,7 +819,8 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
 
         fernet_key = load_key()
         log_memory(f"connector:{args.connector}:post-key")
-        rc, handoff = fetch_connector(connector, args, fernet_key)
+        dq_records: list = []
+        rc = fetch_connector(connector, args, fernet_key, dq_records=dq_records)
         log_memory(f"connector:{args.connector}:post-fetch")
         if rc == FetchResult.SKIPPED:
             # Connector has no credentials or required input (e.g. XTB without
@@ -741,15 +828,10 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
             return 0
         if rc == FetchResult.ERROR:
             return 1
-        # For handoff_supported connectors the encrypted current fetch is
-        # passed in memory so the transform does not re-read the accumulated
-        # raw table (issue #154); ibkr/xtb receive None and read the table.
-        rc = transform_connector(connector, fernet_key, raw_tables=handoff)
+        # The transform reads the merged raw table back (the single bronze
+        # read, AD-6); the in-memory encrypted-fetch handoff is removed (AD-8).
+        rc = transform_connector(connector, fernet_key)
         log_memory(f"connector:{args.connector}:post-transform")
-        # Release the encrypted current-fetch handoff now that the transform has
-        # consumed it — keeping it resident through validation would inflate the
-        # post-transform peak (issue #154).
-        del handoff
         if rc:
             return rc
         # Validate connector's normalized tables after transform.
@@ -763,6 +845,7 @@ def cmd_run_connector(args: argparse.Namespace) -> int:
             fernet_key=fernet_key,
             tables=tables,
             connectors=[connector.name],
+            extra_records=dq_records,
         )
         log_memory(f"connector:{args.connector}:post-validate")
         return rc
@@ -847,6 +930,105 @@ def cmd_upload_xtb(args: argparse.Namespace) -> int:
     result_uri = upload_to_staging(file_path, s3_uri)
     print(f"Uploaded {file_path.name} → {result_uri}")
     print("EventBridge will trigger the orchestrator on this file's arrival.")
+    return 0
+
+
+def cmd_purge_account(args: argparse.Namespace) -> int:
+    """Remove all records of one account from a broker's raw + silver tables.
+
+    The purge escape hatch (AC-4): deletes ``raw/{broker}`` rows on the
+    broker retention key, ``{broker}_snapshot`` rows on ``account_id``, and
+    ``{broker}_events`` rows on ``account_id``. Gold tables are NOT deleted —
+    they have no per-account key and self-heal on the next consolidate.
+    Requires ``--yes``; without it, prints the affected tables and predicates
+    and exits without deleting. Each table is purged independently: if one
+    delete fails after earlier tables succeeded, the remaining tables are
+    still purged and the command exits 1 so a partial purge is never reported
+    as green. XTB is the v1 scope: Trading 212's snapshot
+    ``account_id`` is ``""`` and its raw retention key is ``source``, so a
+    per-account purge is not meaningful there (RuntimeError).
+    """
+    from deltalake import DeltaTable
+    from deltalake.exceptions import TableNotFoundError
+
+    from pipeline.raw.retention import retention_key
+
+    broker = args.broker
+    account_id = args.account_id
+    key_col = retention_key(broker)
+    if key_col != "account_id":
+        raise RuntimeError(
+            f"purge-account is not supported for {broker}: its raw retention "
+            f"key is '{key_col}' and its snapshot account_id is not a "
+            "per-account identity, so there is no per-account key to purge. "
+            "XTB is the v1 scope."
+        )
+
+    storage = get_storage()
+    storage_opts = storage.storage_options
+    raw_path = get_raw_path(broker)
+    snapshot_path = storage.normalized_path(f"{broker}_snapshot")
+    events_path = storage.normalized_path(f"{broker}_events")
+
+    quoted = account_id.replace("'", "''")
+    predicates = [
+        (raw_path, f"{key_col} = '{quoted}'"),
+        (snapshot_path, f"account_id = '{quoted}'"),
+        (events_path, f"account_id = '{quoted}'"),
+    ]
+
+    if not args.yes:
+        print("Would delete (dry run; pass --yes to execute):")
+        for path, predicate in predicates:
+            print(f"  {path} WHERE {predicate}")
+        return 0
+
+    failed = False
+    for path, predicate in predicates:
+        try:
+            target = DeltaTable(path, storage_options=storage_opts)
+        except TableNotFoundError:
+            print(f"  {path}: table not found, skipping")
+            continue
+        try:
+            metrics = target.delete(predicate)
+        except Exception as exc:
+            failed = True
+            print(
+                f"  {path}: FAILED to delete rows WHERE {predicate}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        deleted = metrics.get("num_deleted_rows", 0)
+        print(f"  {path}: deleted {deleted} row(s) WHERE {predicate}")
+
+    # AC-5 residue: NULL-keyed raw rows are not matched by the account_id
+    # predicate, but the XTB transform's fallback parses them to recover the
+    # account — warn when any remain for the target broker.
+    try:
+        raw_table = DeltaTable(
+            raw_path, storage_options=storage_opts
+        ).to_pyarrow_table()
+    except TableNotFoundError:
+        raw_table = None
+    if (
+        raw_table is not None
+        and raw_table.num_rows > 0
+        and key_col in raw_table.column_names
+    ):
+        null_keyed = raw_table.column(key_col).null_count
+        if null_keyed > 0:
+            logger.warning(
+                "%d NULL-keyed raw row(s) remain for %s; a NULL-keyed row whose "
+                "payload parses to account %s would re-materialize it on the next "
+                "XTB transform (fully removing them requires decrypt+parse of raw "
+                "payloads - out of v1 scope)",
+                null_keyed,
+                broker,
+                account_id,
+            )
+    if failed:
+        return 1
     return 0
 
 
@@ -1055,6 +1237,29 @@ def main() -> int:
         help="Manual FX rate override as CURRENCY=RATE",
     )
 
+    # purge-account
+    purge_account_parser = subparsers.add_parser(
+        "purge-account",
+        parents=[mode_parser],
+        help="Remove all records of one account from a broker's raw + silver tables",
+    )
+    purge_account_parser.add_argument(
+        "broker",
+        type=str,
+        help="Connector name (v1 scope: xtb)",
+    )
+    purge_account_parser.add_argument(
+        "account_id",
+        type=str,
+        help="Account id to purge",
+    )
+    purge_account_parser.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Execute the deletion (without it, print what would be deleted and exit)",
+    )
+
     args = parser.parse_args()
 
     # keygen is a standalone utility that generates an encryption key without
@@ -1084,6 +1289,7 @@ def main() -> int:
         "upload-xtb": cmd_upload_xtb,
         "run-connector": cmd_run_connector,
         "run-consolidate-analytics": cmd_run_consolidate_analytics,
+        "purge-account": cmd_purge_account,
     }
 
     return commands[args.command](args)

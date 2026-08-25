@@ -14,10 +14,12 @@ from unittest.mock import MagicMock, patch
 
 import boto3
 import pytest
+from deltalake import DeltaTable
 
 import pipeline.sfn as sfn_mod
 from pipeline import run as run_module
 from pipeline import storage as storage_mod
+from pipeline.analytics.quality import WARN
 from pipeline.connectors.registry import get
 from pipeline.crypto import generate_key
 from pipeline.run import (
@@ -85,6 +87,26 @@ class TestArgparseDispatch:
         assert rc == 99
         assert called.get("invoked") is True
 
+    def test_main_dispatches_purge_account(self, monkeypatch) -> None:
+        """main() parses 'purge-account' and dispatches to cmd_purge_account."""
+
+        called: dict[str, bool] = {}
+
+        def fake_purge_account(args: argparse.Namespace) -> int:
+            called["invoked"] = True
+            return 99
+
+        monkeypatch.setattr(run_module, "cmd_purge_account", fake_purge_account)
+        monkeypatch.setattr(storage_mod, "resolve_storage", lambda: None)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["pipeline.run", "purge-account", "xtb", "123", "--mode", "docker"],
+        )
+        rc = run_module.main()
+        assert rc == 99
+        assert called.get("invoked") is True
+
     def test_run_connector_ibkr_resolves(self) -> None:
         """run-connector ibkr resolves via get("ibkr")."""
         connector = get("ibkr")
@@ -107,7 +129,7 @@ class TestArgparseDispatch:
 class TestFetchConnectorIsolation:
     """fetch_connector uses connector.fetch_kwargs (no if/elif)."""
 
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=MagicMock(num_rows=1))
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
     def test_uses_fetch_kwargs(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
@@ -133,14 +155,12 @@ class TestFetchConnectorIsolation:
             patch.object(connector, "fetch_events_kwargs", return_value={}),
         ):
             fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, args, fernet_key)
+            rc = fetch_connector(connector, args, fernet_key)
             assert rc == FetchResult.SUCCESS
-            # ibkr does not declare handoff_supported → no handoff is built.
-            assert handoff is None
             mock_kwargs.assert_called_once_with(args)
             mock_snapshot.assert_called_once()
 
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
     def test_skips_connector_when_kwargs_empty(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
@@ -153,12 +173,11 @@ class TestFetchConnectorIsolation:
             patch.object(connector, "fetch_snapshot") as mock_snapshot,
         ):
             fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, args, fernet_key)
+            rc = fetch_connector(connector, args, fernet_key)
             assert rc == FetchResult.SKIPPED
-            assert handoff is None
             mock_snapshot.assert_not_called()
 
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=1)
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
     def test_returns_nonzero_on_snapshot_error(
         self, mock_ingest: MagicMock, tmp_data_dir: Path
     ) -> None:
@@ -186,9 +205,73 @@ class TestFetchConnectorIsolation:
             patch.object(connector, "fetch_events_kwargs", return_value={}),
         ):
             fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, args, fernet_key)
+            rc = fetch_connector(connector, args, fernet_key)
             assert rc == FetchResult.ERROR
-            assert handoff is None
+
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
+    def test_vacuum_runs_on_success(
+        self, mock_ingest: MagicMock, tmp_data_dir: Path
+    ) -> None:
+        """fetch_connector vacuums the raw table after a healthy run (AD-3)."""
+        connector = get("ibkr")
+        args = argparse.Namespace()
+
+        with (
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value=[
+                    {
+                        "flex_token": "t",
+                        "flex_query_id": "q",
+                        "flex_base_url": "u",
+                    }
+                ],
+            ),
+            patch.object(
+                connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
+            ),
+            patch.object(connector, "fetch_events_kwargs", return_value={}),
+            patch("pipeline.raw.retention.vacuum_raw") as mock_vacuum,
+        ):
+            fernet_key = generate_key()
+            rc = fetch_connector(connector, args, fernet_key)
+            assert rc == FetchResult.SUCCESS
+            mock_vacuum.assert_called_once()
+
+    @patch("pipeline.raw.ingest.ingest_raw", return_value=None)
+    def test_vacuum_skipped_on_error(
+        self, mock_ingest: MagicMock, tmp_data_dir: Path
+    ) -> None:
+        """fetch_connector does NOT vacuum when the run failed: no destructive
+        maintenance from an error path (a retry recovers the consistent state)."""
+        connector = get("ibkr")
+        args = argparse.Namespace()
+
+        with (
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value=[
+                    {
+                        "flex_token": "t",
+                        "flex_query_id": "q",
+                        "flex_base_url": "u",
+                    }
+                ],
+            ),
+            patch.object(
+                connector,
+                "fetch_snapshot",
+                side_effect=RuntimeError("API timeout"),
+            ),
+            patch.object(connector, "fetch_events_kwargs", return_value={}),
+            patch("pipeline.raw.retention.vacuum_raw") as mock_vacuum,
+        ):
+            fernet_key = generate_key()
+            rc = fetch_connector(connector, args, fernet_key)
+            assert rc == FetchResult.ERROR
+            mock_vacuum.assert_not_called()
 
 
 class TestTransformConnectorIsolation:
@@ -214,7 +297,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SUCCESS, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_enabled_connector_calls_fetch_then_transform(
         self,
@@ -232,11 +315,12 @@ class TestCmdRunConnector:
             fernet_key=b"test-key",
             tables=["ibkr_snapshot", "ibkr_events"],
             connectors=["ibkr"],
+            extra_records=[],
         )
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.ERROR, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.ERROR)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_fetch_failure_skips_transform(
         self,
@@ -254,7 +338,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation")
     @patch("pipeline.run.transform_connector")
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SKIPPED, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SKIPPED)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_skipped_connector_returns_zero(
         self,
@@ -273,7 +357,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=1)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SUCCESS, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_validation_failure_returns_nonzero(
         self,
@@ -310,7 +394,7 @@ class TestCmdRunConnector:
 
     @patch("pipeline.run.run_validation", return_value=0)
     @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.fetch_connector", return_value=(FetchResult.SUCCESS, None))
+    @patch("pipeline.run.fetch_connector", return_value=FetchResult.SUCCESS)
     @patch("pipeline.run.load_key", return_value=b"test-key")
     def test_xtb_with_file_calls_fetch(
         self,
@@ -327,6 +411,7 @@ class TestCmdRunConnector:
             fernet_key=b"test-key",
             tables=["xtb_snapshot", "xtb_events"],
             connectors=["xtb"],
+            extra_records=[],
         )
         mock_fetch.assert_called_once()
         mock_transform.assert_called_once()
@@ -345,9 +430,53 @@ class TestFetchConnectorXtbSkip:
         connector = get("xtb")
         args = argparse.Namespace(xtb_file=None)
         fernet_key = generate_key()
-        rc, handoff = fetch_connector(connector, args, fernet_key)
+        rc = fetch_connector(connector, args, fernet_key)
         assert rc == FetchResult.SKIPPED
-        assert handoff is None
+
+
+class TestFetchConnectorDroppedFile:
+    """fetch_connector drops unparseable-account_id files and records a dq WARN."""
+
+    def test_dropped_unparseable_file_records_dq_and_continues(
+        self, tmp_path: Path, tmp_data_dir: Path
+    ) -> None:
+        """A file whose name has no account id is dropped, WARNed, not errored."""
+        connector = get("xtb")
+        bad_file = tmp_path / "report.xlsx"
+        bad_file.write_bytes(b"not a real xlsx")
+        args = argparse.Namespace(xtb_file=[str(bad_file)])
+        dq_records: list = []
+
+        with patch("pipeline.raw.ingest.ingest_raw") as mock_ingest:
+            rc = fetch_connector(connector, args, generate_key(), dq_records=dq_records)
+
+        assert rc == FetchResult.SUCCESS
+        mock_ingest.assert_not_called()
+        assert len(dq_records) == 1
+        metadata, result = dq_records[0]
+        assert metadata == ("raw/xtb", "account_id_unparseable")
+        assert result.status == WARN
+        assert result.actual == "report.xlsx"
+        assert result.threshold == "{CCY}_{account_id}_{from}_{to}.xlsx"
+        assert "report.xlsx" in result.details
+
+    def test_fetch_connector_success_with_real_ingest_and_valid_filename(
+        self, tmp_path: Path, tmp_data_dir: Path
+    ) -> None:
+        """Regression lock: a valid-pattern file reaches ingest and writes bronze."""
+        connector = get("xtb")
+        report = tmp_path / "PLN_12345678_2006-01-01_2026-08-03.xlsx"
+        report.write_bytes(b"not a real xlsx")
+        args = argparse.Namespace(xtb_file=[str(report)])
+        dq_records: list = []
+
+        rc = fetch_connector(connector, args, generate_key(), dq_records=dq_records)
+
+        assert rc == FetchResult.SUCCESS
+        assert dq_records == []
+        raw = DeltaTable(str(tmp_data_dir / "raw" / "xtb")).to_pyarrow_table()
+        assert raw.num_rows == 1
+        assert raw.column("account_id")[0].as_py() == "12345678"
 
 
 # ---------------------------------------------------------------------------

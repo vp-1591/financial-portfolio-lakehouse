@@ -148,7 +148,7 @@ def t212_raw_snapshot(
                 hashlib.sha256(positions_bytes).hexdigest(),
                 hashlib.sha256(instruments_bytes).hexdigest(),
             ],
-            "source_file": ["", "", ""],
+            "account_id": [None, None, None],
         },
         schema=RAW_SCHEMA,
     )
@@ -261,7 +261,7 @@ def t212_raw_events(
             "source": [source],
             "payload": [encrypt(payload, fernet_key)],
             "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "source_file": [""],
+            "account_id": [None],
         },
         schema=RAW_SCHEMA,
     )

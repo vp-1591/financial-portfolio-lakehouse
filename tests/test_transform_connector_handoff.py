@@ -1,18 +1,15 @@
-"""Tests for the encrypted in-memory fetch handoff (issue #154).
+"""Tests for the post-handoff transform contract (AD-8).
 
-``fetch_connector`` builds an encrypted pre-dedup handoff
-(``{"snapshot": ..., "events": ...}``) for connectors that declare
-``handoff_supported``; ``transform_connector`` uses it when present so the
-transform never re-reads the accumulated raw table, and falls back to the
-Delta read otherwise. Covers: the declared capability, output-identical
-handoff vs table-read (golden), unchanged-endpoint pre-dedup semantics,
-empty-fetch skip, missing-layer fallback, ``cmd_run_connector`` threading,
-and the ``ingest_raw``/``dedup_raw`` contract changes.
+The in-memory encrypted-fetch handoff (issue #154) is removed: ``fetch_connector``
+returns only a ``FetchResult``, ``transform_connector`` reads the merged bronze
+table once (AD-6), and ``ingest_raw`` returns nothing. Covers: the golden
+regression (table-read output identical to the pre-removal handoff output),
+empty-table skip, the real ingest_raw -> transform boundary, the events-fetch
+branch of ``fetch_connector``, and the ``ingest_raw`` merge-on-key contract.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import logging
 from datetime import UTC, datetime
@@ -26,15 +23,10 @@ from deltalake import DeltaTable, write_deltalake
 from pipeline import run as run_module
 from pipeline.connectors.registry import get
 from pipeline.connectors.transform_utils import empty_arrow_table
-from pipeline.crypto import decrypt, encrypt, generate_key
-from pipeline.raw.ingest import dedup_raw, ingest_raw
+from pipeline.crypto import decrypt, encrypt
+from pipeline.raw.ingest import ingest_raw
 from pipeline.raw.models import RAW_SCHEMA
-from pipeline.run import (
-    FetchResult,
-    cmd_run_connector,
-    fetch_connector,
-    transform_connector,
-)
+from pipeline.run import FetchResult, fetch_connector, transform_connector
 from pipeline.storage import get_storage
 from tests.fixtures.trading212 import (
     t212_normalized_snapshot,
@@ -43,152 +35,17 @@ from tests.fixtures.trading212 import (
 )
 
 
-class TestHandoffCapability:
-    """handoff_supported is a declared per-connector capability (issue #154)."""
+def _plaintext_raw(table: pa.Table, fernet_key: bytes) -> pa.Table:
+    """Return the raw table with payloads decrypted to plaintext (as fetched).
 
-    def test_trading212_declares_handoff_supported(self) -> None:
-        assert getattr(get("trading212"), "handoff_supported", False) is True
-
-    def test_ibkr_and_xtb_keep_the_default(self) -> None:
-        assert getattr(get("ibkr"), "handoff_supported", False) is False
-        assert getattr(get("xtb"), "handoff_supported", False) is False
-
-
-class TestFetchConnectorHandoff:
-    """fetch_connector builds the handoff only for declared connectors."""
-
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=MagicMock(num_rows=1))
-    def test_builds_handoff_for_supported_connector(
-        self, mock_ingest: MagicMock, tmp_data_dir: Path
-    ) -> None:
-        connector = get("trading212")
-        with (
-            patch.object(
-                connector,
-                "fetch_kwargs",
-                return_value=[{"api_key": "k", "api_secret": "s", "base_url": "u"}],
-            ),
-            patch.object(
-                connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
-            ),
-            patch.object(connector, "fetch_events_kwargs", return_value={}),
-        ):
-            fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, MagicMock(), fernet_key)
-            assert rc == FetchResult.SUCCESS
-            assert handoff is not None
-            assert set(handoff) == {"snapshot"}
-            assert handoff["snapshot"].num_rows == 1
-
-    @patch("pipeline.raw.ingest.ingest_raw", return_value=MagicMock(num_rows=1))
-    def test_no_handoff_for_non_supported_connector(
-        self, mock_ingest: MagicMock, tmp_data_dir: Path
-    ) -> None:
-        connector = get("ibkr")
-        with (
-            patch.object(
-                connector,
-                "fetch_kwargs",
-                return_value=[
-                    {"flex_token": "t", "flex_query_id": "q", "flex_base_url": "u"}
-                ],
-            ),
-            patch.object(
-                connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
-            ),
-            patch.object(connector, "fetch_events_kwargs", return_value={}),
-        ):
-            fernet_key = generate_key()
-            rc, handoff = fetch_connector(connector, argparse.Namespace(), fernet_key)
-            assert rc == FetchResult.SUCCESS
-            assert handoff is None
-
-    def test_events_fetch_populates_handoff_events(
-        self, tmp_data_dir: Path, fernet_key: bytes
-    ) -> None:
-        """A successful events fetch lands in handoff['events'].
-
-        Guards the events branch of fetch_connector: deleting
-        ``handoff['events'] = ...`` must fail this test (verification-gap
-        finding — every older fetch test patched ``fetch_events_kwargs`` to
-        ``{}``, so the branch was never exercised).
-        """
-        connector = get("trading212")
-        with (
-            patch(
-                "pipeline.raw.ingest.ingest_raw",
-                return_value=_raw_one_row(fernet_key),
-            ),
-            patch.object(
-                connector,
-                "fetch_kwargs",
-                return_value=[{"api_key": "k", "api_secret": "s", "base_url": "u"}],
-            ),
-            patch.object(
-                connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
-            ),
-            patch.object(
-                connector,
-                "fetch_events_kwargs",
-                return_value={"api_key": "k", "api_secret": "s", "base_url": "u"},
-            ),
-            patch.object(connector, "fetch_events", return_value=MagicMock(num_rows=1)),
-        ):
-            rc, handoff = fetch_connector(connector, MagicMock(), fernet_key)
-        assert rc == FetchResult.SUCCESS
-        assert handoff is not None
-        assert set(handoff) == {"snapshot", "events"}
-        assert handoff["events"].num_rows == 1
-
-    def test_multibatch_handoff_concatenates_snapshot(
-        self, tmp_data_dir: Path, fernet_key: bytes
-    ) -> None:
-        """Multiple fetch_kwargs batches concatenate, not last-wins.
-
-        The Protocol documents ``fetch_kwargs`` returns one or more batches;
-        the handoff must carry ALL of them or the transform would drop data.
-        """
-        connector = get("trading212")
-        with (
-            patch(
-                "pipeline.raw.ingest.ingest_raw",
-                return_value=_raw_one_row(fernet_key),
-            ),
-            patch.object(
-                connector,
-                "fetch_kwargs",
-                return_value=[
-                    {"api_key": "k", "api_secret": "s", "base_url": "u"},
-                    {"api_key": "k", "api_secret": "s", "base_url": "u"},
-                ],
-            ),
-            patch.object(
-                connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
-            ),
-            patch.object(connector, "fetch_events_kwargs", return_value={}),
-        ):
-            rc, handoff = fetch_connector(connector, MagicMock(), fernet_key)
-        assert rc == FetchResult.SUCCESS
-        assert handoff is not None
-        assert set(handoff) == {"snapshot"}
-        assert handoff["snapshot"].num_rows == 2  # concatenated, not last batch
-
-
-def _raw_one_row(fernet_key: bytes) -> pa.Table:
-    """One RAW_SCHEMA row so ``pa.concat_tables`` works on handoff layers."""
-    now = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-    payload = b"{}"
-    return pa.table(
-        {
-            "fetched_at": [now],
-            "broker": ["Trading 212"],
-            "source": ["/equity/account/summary"],
-            "payload": [encrypt(payload, fernet_key)],
-            "payload_hash": [hashlib.sha256(payload).hexdigest()],
-            "source_file": [""],
-        },
-        schema=RAW_SCHEMA,
-    )
+    The fixtures ship Fernet-encrypted payloads; ``ingest_raw`` encrypts its
+    input, so feeding it the fixture would double-encrypt. Decrypting first
+    simulates the real fetch, which returns plaintext API bytes.
+    """
+    payloads = table.column("payload").to_pylist()
+    plain = [decrypt(p, fernet_key) for p in payloads]
+    idx = table.schema.get_field_index("payload")
+    return table.set_column(idx, "payload", pa.array(plain, type=pa.binary()))
 
 
 def _decrypted_columns(table: pa.Table, fernet_key: bytes) -> dict[str, list]:
@@ -206,8 +63,8 @@ def _decrypted_columns(table: pa.Table, fernet_key: bytes) -> dict[str, list]:
     return columns
 
 
-class TestTransformConnectorHandoff:
-    """transform_connector uses the in-memory handoff when present (issue #154)."""
+class TestTransformConnectorTableRead:
+    """transform_connector reads the merged bronze table once (AD-6)."""
 
     @staticmethod
     def _write_merged_raw(merged: pa.Table) -> None:
@@ -226,46 +83,39 @@ class TestTransformConnectorHandoff:
             norm_path, storage_options=get_storage().storage_options
         ).to_pyarrow_table()
 
-    def test_handoff_output_identical_to_table_read(
+    def test_table_read_output_matches_golden_fixture(
         self, tmp_data_dir: Path, fernet_key: bytes
     ) -> None:
+        """Golden (T5.3): the table-read path reproduces the pre-removal
+        handoff output — the round-trip-verified normalized fixture.
+
+        The handoff path (ADR 0119, superseding 0116) produced exactly this
+        fixture; removing the handoff must not change the normalized output.
+        """
         fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
         snap = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
         evt = t212_raw_events(fernet_key=fernet_key, fetched_at=fetched_at)
         self._write_merged_raw(pa.concat_tables([snap, evt], schema=RAW_SCHEMA))
 
         connector = get("trading212")
-        rc = transform_connector(
-            connector, fernet_key, raw_tables={"snapshot": snap, "events": evt}
-        )
-        assert rc == 0
-        handoff_snap = self._read_normalized("snapshot")
-        handoff_events = self._read_normalized("events")
-
-        rc = transform_connector(connector, fernet_key)  # table-read fallback
+        rc = transform_connector(connector, fernet_key)
         assert rc == 0
         read_snap = self._read_normalized("snapshot")
         read_events = self._read_normalized("events")
 
-        # Golden: handoff output matches the round-trip-verified fixture AND
-        # the accumulated-table-read output (decrypted contents — Fernet
-        # ciphertext is randomized per encrypt).
+        # Golden: the table-read output matches the round-trip-verified fixture
+        # (decrypted contents — Fernet ciphertext is randomized per encrypt).
         expected_snap = t212_normalized_snapshot(
             fernet_key=fernet_key, fetched_at=fetched_at
         )
-        assert handoff_snap.num_rows == 3
-        assert handoff_events.num_rows == 1
-        assert _decrypted_columns(handoff_snap, fernet_key) == _decrypted_columns(
+        assert read_snap.num_rows == 3
+        assert read_events.num_rows == 1
+        assert _decrypted_columns(read_snap, fernet_key) == _decrypted_columns(
             expected_snap, fernet_key
         )
-        assert _decrypted_columns(handoff_snap, fernet_key) == _decrypted_columns(
-            read_snap, fernet_key
-        )
-        assert _decrypted_columns(handoff_events, fernet_key) == _decrypted_columns(
-            read_events, fernet_key
-        )
+        assert read_events.column("event_type").to_pylist() == ["TRADE"]
 
-    def test_empty_handoff_skips_without_rewriting(
+    def test_empty_raw_table_skips_without_rewriting(
         self, tmp_data_dir: Path, fernet_key: bytes, caplog: pytest.LogCaptureFixture
     ) -> None:
         norm_path = get_storage().normalized_path("trading212_snapshot")
@@ -276,126 +126,144 @@ class TestTransformConnectorHandoff:
             mode="overwrite",
             storage_options=get_storage().storage_options,
         )
-        empty = empty_arrow_table(RAW_SCHEMA)
+        self._write_merged_raw(empty_arrow_table(RAW_SCHEMA))
         with caplog.at_level(logging.WARNING, logger="pipeline.run"):
-            rc = transform_connector(
-                get("trading212"),
-                fernet_key,
-                raw_tables={"snapshot": empty, "events": empty},
-            )
+            rc = transform_connector(get("trading212"), fernet_key)
         assert rc == 0
-        assert any("current fetch is empty" in r.message for r in caplog.records)
-        # 0-row handoff skips: the pre-existing normalized table is not
-        # rewritten (today's accumulated-table behavior).
+        assert any("raw table is empty" in r.message for r in caplog.records)
+        # 0-row table skips: the pre-existing normalized table is not
+        # rewritten.
         read_back = DeltaTable(
             norm_path, storage_options=get_storage().storage_options
         ).to_pyarrow_table()
         assert read_back.num_rows == 3
 
-    def test_missing_handoff_layer_falls_back_to_table_read(
-        self, tmp_data_dir: Path, fernet_key: bytes
-    ) -> None:
-        fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-        snap = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
-        evt = t212_raw_events(fernet_key=fernet_key, fetched_at=fetched_at)
-        self._write_merged_raw(pa.concat_tables([snap, evt], schema=RAW_SCHEMA))
-
-        # Handoff covers only the snapshot layer; events fall back to the table.
-        rc = transform_connector(
-            get("trading212"), fernet_key, raw_tables={"snapshot": snap}
-        )
-        assert rc == 0
-        events = self._read_normalized("events")
-        assert events.num_rows == 1
-        assert events.column("event_type").to_pylist() == ["TRADE"]
-
-    def test_handoff_path_does_not_open_delta_table(
-        self, tmp_data_dir: Path, fernet_key: bytes
-    ) -> None:
-        """Regression guard: the handoff path never reads the accumulated raw table.
-
-        transform_connector imports ``DeltaTable`` from ``deltalake`` at call
-        time, so patching ``deltalake.DeltaTable`` intercepts the table-read
-        fallback. When both handoff layers are present, the constructor must
-        never be called — that is the whole point of the memory fix (issue
-        #154).
-        """
-        fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-        snap = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
-        evt = t212_raw_events(fernet_key=fernet_key, fetched_at=fetched_at)
-        self._write_merged_raw(pa.concat_tables([snap, evt], schema=RAW_SCHEMA))
-        connector = get("trading212")
-        with patch("deltalake.DeltaTable") as mock_dt:
-            rc = transform_connector(
-                connector, fernet_key, raw_tables={"snapshot": snap, "events": evt}
-            )
-        assert rc == 0
-        mock_dt.assert_not_called()
-
-    def test_real_ingest_raw_result_threaded_to_transform(
+    def test_real_ingest_raw_then_transform(
         self, tmp_path: Path, tmp_data_dir: Path, fernet_key: bytes
     ) -> None:
-        """A REAL ingest_raw pre-dedup result, threaded as the handoff, yields the
-        same normalized output as the table read (end-to-end threading test).
+        """A REAL ingest_raw write, followed by the table-read transform,
+        yields the golden normalized output (end-to-end fetch->transform
+        boundary, previously threaded via the handoff).
         """
         fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-        snap = t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at)
-        evt = t212_raw_events(fernet_key=fernet_key, fetched_at=fetched_at)
+        snap = _plaintext_raw(
+            t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at),
+            fernet_key,
+        )
+        evt = _plaintext_raw(
+            t212_raw_events(fernet_key=fernet_key, fetched_at=fetched_at),
+            fernet_key,
+        )
 
-        # Thread real ingest_raw results (encrypted pre-dedup current fetch)
-        # through the fetch→transform boundary, as cmd_run_connector does.
         raw_path = run_module.get_raw_path("trading212")
-        handoff = {
-            "snapshot": ingest_raw(snap, raw_path, fernet_key),
-            "events": ingest_raw(evt, raw_path, fernet_key),
-        }
-        connector = get("trading212")
-        rc = transform_connector(connector, fernet_key, raw_tables=handoff)
-        assert rc == 0
-        handoff_snap = self._read_normalized("snapshot")
-        handoff_events = self._read_normalized("events")
+        assert ingest_raw(snap, raw_path, fernet_key, "trading212") is None
+        assert ingest_raw(evt, raw_path, fernet_key, "trading212") is None
 
-        rc = transform_connector(connector, fernet_key)  # table-read fallback
+        connector = get("trading212")
+        rc = transform_connector(connector, fernet_key)
         assert rc == 0
         read_snap = self._read_normalized("snapshot")
         read_events = self._read_normalized("events")
 
-        assert _decrypted_columns(handoff_snap, fernet_key) == _decrypted_columns(
-            read_snap, fernet_key
+        expected_snap = t212_normalized_snapshot(
+            fernet_key=fernet_key, fetched_at=fetched_at
         )
-        assert _decrypted_columns(handoff_events, fernet_key) == _decrypted_columns(
-            read_events, fernet_key
+        assert _decrypted_columns(read_snap, fernet_key) == _decrypted_columns(
+            expected_snap, fernet_key
         )
+        assert read_events.num_rows == 1
 
 
-class TestCmdRunConnectorThreadsHandoff:
-    """cmd_run_connector passes fetch_connector's handoff to transform_connector."""
+class TestFetchConnectorEventsBranch:
+    """fetch_connector returns a FetchResult; the events branch still writes."""
 
-    @pytest.mark.usefixtures("docker_mode")
-    @patch("pipeline.run.run_validation", return_value=0)
-    @patch("pipeline.run.transform_connector", return_value=0)
-    @patch("pipeline.run.load_key", return_value=b"test-key")
-    def test_handoff_threaded_to_transform(
-        self,
-        mock_key: MagicMock,
-        mock_transform: MagicMock,
-        mock_validate: MagicMock,
+    def test_events_fetch_branch_writes_events(
+        self, tmp_data_dir: Path, fernet_key: bytes
     ) -> None:
-        handoff = {"snapshot": MagicMock(), "events": MagicMock()}
-        with patch(
-            "pipeline.run.fetch_connector",
-            return_value=(FetchResult.SUCCESS, handoff),
-        ) as mock_fetch:
-            rc = cmd_run_connector(argparse.Namespace(connector="trading212"))
-        assert rc == 0
-        mock_fetch.assert_called_once()
-        mock_transform.assert_called_once_with(
-            get("trading212"), b"test-key", raw_tables=handoff
-        )
+        """A successful events fetch reaches ingest_raw (the events branch).
+
+        Guards the events branch of fetch_connector: deleting the events
+        fetch call must fail this test (verification-gap finding — every
+        older fetch test patched ``fetch_events_kwargs`` to ``{}``, so the
+        branch was never exercised).
+        """
+        connector = get("trading212")
+        with (
+            patch(
+                "pipeline.raw.ingest.ingest_raw",
+                return_value=None,
+            ) as mock_ingest,
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value=[{"api_key": "k", "api_secret": "s", "base_url": "u"}],
+            ),
+            patch.object(
+                connector, "fetch_snapshot", return_value=MagicMock(num_rows=1)
+            ),
+            patch.object(
+                connector,
+                "fetch_events_kwargs",
+                return_value={"api_key": "k", "api_secret": "s", "base_url": "u"},
+            ),
+            patch.object(connector, "fetch_events", return_value=MagicMock(num_rows=1)),
+        ):
+            rc = fetch_connector(connector, MagicMock(), fernet_key)
+        assert rc == FetchResult.SUCCESS
+        # ingest_raw called once for the snapshot batch and once for events.
+        assert mock_ingest.call_count == 2
 
 
-class TestIngestRawReturnsPreDedupHandoff:
-    """ingest_raw returns the current PRE-DEDUP encrypted fetch (issue #154)."""
+class TestFetchConnectorRealIngest:
+    """fetch_connector with the REAL ingest_raw (no mocked return value)."""
+
+    def test_snapshot_and_events_branches_succeed(
+        self, tmp_data_dir: Path, fernet_key: bytes
+    ) -> None:
+        """A real ingest_raw routed through fetch_connector returns SUCCESS.
+
+        Regression guard for the handoff removal (AD-8): ``ingest_raw``
+        returns None, so any caller still reading ``.num_rows`` off its
+        return value crashes every real run and flips it to ERROR. The
+        mocked fetch_connector tests cannot catch that; this one drives the
+        real ingest_raw through both the snapshot and events branches.
+        """
+        fetched_at = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
+        connector = get("trading212")
+        with (
+            patch.object(
+                connector,
+                "fetch_kwargs",
+                return_value=[{"api_key": "k", "api_secret": "s", "base_url": "u"}],
+            ),
+            patch.object(
+                connector,
+                "fetch_snapshot",
+                return_value=_plaintext_raw(
+                    t212_raw_snapshot(fernet_key=fernet_key, fetched_at=fetched_at),
+                    fernet_key,
+                ),
+            ),
+            patch.object(
+                connector,
+                "fetch_events_kwargs",
+                return_value={"api_key": "k", "api_secret": "s", "base_url": "u"},
+            ),
+            patch.object(
+                connector,
+                "fetch_events",
+                return_value=_plaintext_raw(
+                    t212_raw_events(fernet_key=fernet_key, fetched_at=fetched_at),
+                    fernet_key,
+                ),
+            ),
+        ):
+            rc = fetch_connector(connector, MagicMock(), fernet_key)
+        assert rc == FetchResult.SUCCESS
+
+
+class TestIngestRawReturnsNone:
+    """ingest_raw returns None; the merge-on-key write is the only contract."""
 
     @staticmethod
     def _raw_table(fernet_key: bytes) -> pa.Table:
@@ -408,70 +276,20 @@ class TestIngestRawReturnsPreDedupHandoff:
                 "source": ["/equity/account/summary", "/equity/positions"],
                 "payload": [encrypt(p, fernet_key) for p in payloads],
                 "payload_hash": [hashlib.sha256(p).hexdigest() for p in payloads],
-                "source_file": ["", ""],
+                "account_id": [None, None],
             },
             schema=RAW_SCHEMA,
         )
 
-    def test_second_ingest_returns_pre_dedup_fetch(
+    def test_second_ingest_does_not_grow_table(
         self, tmp_path: Path, tmp_data_dir: Path, fernet_key: bytes
     ) -> None:
         table_path = str(tmp_path / "raw" / "trading212")
         raw = self._raw_table(fernet_key)
-        first = ingest_raw(raw, table_path, fernet_key)
-        assert first.num_rows == 2
+        assert ingest_raw(raw, table_path, fernet_key, "trading212") is None
 
-        # Identical re-fetch: all rows are deduped out of the write, but the
-        # returned pre-dedup handoff still carries the current fetch — an
-        # unchanged endpoint (deduped away) must still reach the transform.
-        second = ingest_raw(raw, table_path, fernet_key)
-        assert second.num_rows == 2
+        # Identical re-fetch: the merge matches both rows in place (no net
+        # growth) — the current fetch is written, nothing is returned.
+        assert ingest_raw(raw, table_path, fernet_key, "trading212") is None
         dt = DeltaTable(table_path, storage_options=get_storage().storage_options)
-        assert dt.to_pyarrow_table().num_rows == 2  # only the first run's rows
-
-
-class TestDedupRawProjected:
-    """dedup_raw's projected key read keeps dedup behavior identical."""
-
-    @staticmethod
-    def _raw_table(rows: list[tuple[str, str]], fernet_key: bytes) -> pa.Table:
-        now = datetime(2026, 8, 3, 6, 0, tzinfo=UTC)
-        payloads = [b"{}" for _ in rows]
-        return pa.table(
-            {
-                "fetched_at": [now] * len(rows),
-                "broker": [broker for broker, _ in rows],
-                "source": [source for _, source in rows],
-                "payload": [encrypt(p, fernet_key) for p in payloads],
-                "payload_hash": [hashlib.sha256(p).hexdigest() for p in payloads],
-                "source_file": [""] * len(rows),
-            },
-            schema=RAW_SCHEMA,
-        )
-
-    def test_projected_read_dedups_identically(
-        self, tmp_path: Path, tmp_data_dir: Path, fernet_key: bytes
-    ) -> None:
-        table_path = str(tmp_path / "raw" / "dedup_broker")
-        existing = self._raw_table(
-            [("B", "/equity/account/summary"), ("B", "/equity/positions")],
-            fernet_key,
-        )
-        get_storage().backend.ensure_parent(table_path)
-        write_deltalake(
-            table_path,
-            existing,
-            mode="append",
-            storage_options=get_storage().storage_options,
-        )
-        new = self._raw_table(
-            [
-                ("B", "/equity/account/summary"),  # duplicate → dropped
-                ("B", "/equity/positions"),  # duplicate → dropped
-                ("B", "/equity/history/orders"),  # new → kept
-            ],
-            fernet_key,
-        )
-        deduped = dedup_raw(new, table_path)
-        assert deduped.num_rows == 1
-        assert deduped.column("source").to_pylist() == ["/equity/history/orders"]
+        assert dt.to_pyarrow_table().num_rows == 2  # merged in place, no growth

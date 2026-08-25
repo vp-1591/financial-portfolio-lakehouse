@@ -1,5 +1,7 @@
 # 0047: Move XLSX Parsing to Silver Layer and Remove account_id from Raw Schema
 
+> **Superseded by [ADR 0117](./0117-bounded-bronze-retention-and-incremental-events.md)** — `account_id` returns to `RAW_SCHEMA` (nullable) as XTB's merge retention key; `source_file` is dropped. The raw layer still stores original unmodified broker payloads, unchanged since 0047 §Decision.
+
 ## Context
 
 The XTB connector's fetch layer parses `.xlsx` files into structured JSON before storing in the raw/bronze layer. This violates the medallion architecture principle (ADR 0003) that the raw layer should store original, unmodified source data. Parsing in the fetch layer also means `account_id` — which is extracted from the XLSX during parsing — gets written to the raw table, making it the only broker to populate that column. IBKR and Trading 212 both leave `account_id` empty in the raw layer.

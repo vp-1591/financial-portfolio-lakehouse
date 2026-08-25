@@ -12,10 +12,12 @@ What this script does
 ---------------------
 1. For each broker (``ibkr``, ``trading212``, ``xtb``), read
    ``raw/{broker}_snapshot`` and ``raw/{broker}_events`` (absent tables are
-   skipped), concat them with polars, and dedup on ``(broker, source,
-   payload_hash)`` keeping the latest ``fetched_at`` row -- and its
-   ``source_file``, so XTB's ``account_id`` derivation (ADR 0108 D18)
-   survives.  The deduped frame is written to ``raw/{broker}`` with
+   skipped), concat them with polars, and dedup on ``(source, payload_hash)``
+   keeping the latest ``fetched_at`` row.  Each merged raw row already
+   carries its nullable ``account_id``, derived at fetch time from the source
+   filename (ADR 0120) or backfilled by ``migrate_raw_account_id``; the merge
+   never recomputes it.  The deduped frame is written to ``raw/{broker}``
+   with
    ``write_deltalake(mode="overwrite", schema_mode="overwrite")``.  The
    ``pl.DataFrame`` is passed directly (project rule: never convert to
    ``pa.Table`` for writes).
@@ -111,8 +113,8 @@ _BROKER_DISPLAY: dict[str, str] = {
 # covers the orphaned ``raw/xtb_events`` that was never written.
 _SOURCE_TABLE_SUFFIXES: tuple[str, ...] = ("_snapshot", "_events")
 
-# Dedup key of the raw layer (ADR 0047, ingest.py:46-52).
-_DEDUP_KEY: tuple[str, ...] = ("broker", "source", "payload_hash")
+# Dedup key of each broker-scoped raw table (ADR 0120, ingest.py:46-52).
+_DEDUP_KEY: tuple[str, ...] = ("source", "payload_hash")
 
 # boto3 delete_objects accepts at most this many keys per call.
 _DELETE_CHUNK = 1000
@@ -156,12 +158,12 @@ def _path_exists(table_path: str, storage_opts: dict[str, str]) -> bool:
 
 
 def _dedup_merged(frames: list[pl.DataFrame]) -> pl.DataFrame:
-    """Concat source frames and dedup on ``(broker, source, payload_hash)``.
+    """Concat source frames and dedup on ``(source, payload_hash)``.
 
     For each dedup key the row with the latest ``fetched_at`` wins (descending
-    sort, then ``unique(keep="first")`` -- mirrors ``dedup_events`` ADR 0105),
-    preserving the winning row's ``source_file`` so XTB's per-``account_id``
-    derivation (ADR 0108 D18) survives the merge.
+    sort, then ``unique(keep="first")`` -- mirrors ``dedup_events`` ADR 0105).
+    The winning row's nullable ``account_id`` is kept as-is: it was derived
+    at fetch time from the source filename (ADR 0120), never recomputed here.
     """
     merged = pl.concat(frames)
     return (
@@ -475,7 +477,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Merge per-layer raw tables into one bronze table per "
         "broker (raw/{broker}_snapshot + raw/{broker}_events -> raw/{broker}, "
-        "deduped on (broker, source, payload_hash)) and remove every per-layer "
+        "deduped on (source, payload_hash)) and remove every per-layer "
         "raw path. Run BEFORE deploying the renamed-path code in each "
         "environment.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

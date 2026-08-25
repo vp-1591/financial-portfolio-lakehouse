@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import polars as pl
 import pyarrow as pa
@@ -95,6 +95,15 @@ FRESHNESS_COLUMNS: dict[str, str] = {
     "dividend_income": "calculated_at",
     "interest_income": "calculated_at",
     "cash_flow_summary": "calculated_at",
+}
+
+# Snapshot tables with a REAL per-account key column. The per-account
+# staleness check (:func:`check_account_freshness`) is only meaningful where
+# the account key is a genuine identity: XTB populates ``account_id`` from
+# the report; Trading 212 writes ``""`` and IBKR's snapshot ``account_id``
+# is not a per-account purge key, so they are intentionally absent.
+ACCOUNT_STALENESS_KEYS: dict[str, str] = {
+    "xtb_snapshot": "account_id",
 }
 
 # Fields that must never be null in each table.  Delta Lake schemas mark all
@@ -307,6 +316,21 @@ def check_row_count_stability(
     )
 
 
+def _age_days(max_ts: datetime | str) -> int:
+    """Return the age in days of *max_ts* (normalized to timezone-aware UTC).
+
+    Naive datetimes are assumed UTC; ISO-8601 strings are parsed. Shared by
+    the table-level and per-account freshness checks so the ISO/UTC handling
+    cannot drift between them.
+    """
+    if isinstance(max_ts, datetime):
+        if max_ts.tzinfo is None:
+            max_ts = max_ts.replace(tzinfo=UTC)
+    else:
+        max_ts = datetime.fromisoformat(str(max_ts)).replace(tzinfo=UTC)
+    return (datetime.now(UTC) - max_ts).days
+
+
 def check_freshness(
     table_name: str,
     arrow_table: pa.Table,
@@ -336,18 +360,8 @@ def check_freshness(
             details=f"Freshness column '{freshness_column}' has all null values",
         )
 
-    # Ensure timezone-aware comparison
-    cutoff = datetime.now(UTC) - timedelta(days=freshness_days)
-    if isinstance(max_ts, datetime):
-        if max_ts.tzinfo is None:
-            # Assume UTC if no timezone info
-            max_ts = max_ts.replace(tzinfo=UTC)
-    else:
-        # String timestamp — parse it
-        max_ts = datetime.fromisoformat(str(max_ts)).replace(tzinfo=UTC)
-
-    if max_ts < cutoff:
-        age_days = (datetime.now(UTC) - max_ts).days
+    age_days = _age_days(max_ts)
+    if age_days >= freshness_days:
         return CheckResult(
             status=WARN,
             details=f"Data is {age_days} days old (threshold: {freshness_days} days)",
@@ -355,10 +369,69 @@ def check_freshness(
             actual=f"{age_days} days old",
         )
 
-    age_days = (datetime.now(UTC) - max_ts).days
     return CheckResult(
         status=PASS,
         details=f"Data is {age_days} days old (within {freshness_days}-day threshold)",
+    )
+
+
+def check_account_freshness(
+    table_name: str,
+    arrow_table: pa.Table,
+    key_column: str,
+    freshness_days: int,
+) -> CheckResult:
+    """WARN when any account's latest ``fetched_at`` is older than the window.
+
+    Groups *arrow_table* by *key_column* and computes ``max(fetched_at)`` per
+    key; keys whose latest fetch is older than *freshness_days* are listed
+    with their age. An empty table or a missing key column is PASS — the
+    per-account signal is not applicable (ADR 0072 empty-table behavior
+    preserved). Read-only: no rows are deleted or rewritten.
+    """
+    if key_column not in arrow_table.column_names:
+        return CheckResult(
+            status=PASS,
+            details=f"Account key column '{key_column}' not found; not applicable",
+        )
+    if "fetched_at" not in arrow_table.column_names:
+        return CheckResult(
+            status=PASS,
+            details="Freshness column 'fetched_at' not found; not applicable",
+        )
+    if arrow_table.num_rows == 0:
+        return CheckResult(
+            status=PASS,
+            details=f"Table {table_name} is empty; account freshness not applicable",
+        )
+
+    df = pl.from_arrow(arrow_table)
+    per_key = (
+        df.group_by(key_column)
+        .agg(pl.col("fetched_at").max())
+        .filter(pl.col(key_column).is_not_null() & pl.col("fetched_at").is_not_null())
+    )
+
+    stale: list[str] = []
+    for row in per_key.iter_rows(named=True):
+        age_days = _age_days(row["fetched_at"])
+        if age_days >= freshness_days:
+            stale.append(f"{row[key_column]} ({age_days} days old)")
+
+    if not stale:
+        return CheckResult(
+            status=PASS,
+            details=(
+                f"All {per_key.height} account(s) fresh "
+                f"(within {freshness_days}-day threshold)"
+            ),
+        )
+
+    return CheckResult(
+        status=WARN,
+        details="Stale account(s): " + "; ".join(stale),
+        threshold=f"<{freshness_days} days old",
+        actual="; ".join(stale),
     )
 
 
@@ -466,12 +539,36 @@ def _get_previous_row_count(
 # ---------------------------------------------------------------------------
 
 
+def account_id_unparseable_check_result(
+    filename: str, table_name: str
+) -> tuple[tuple[str, str], CheckResult]:
+    """Synthetic dq WARN for a fetch-layer row dropped on unparseable account id.
+
+    The fetch layer raises :class:`pipeline.connectors.base.UnparseableAccountIdError`
+    instead of writing a NULL-keyed raw row; the caller feeds this record back
+    through :func:`run_validation` so it shares the run's single ``checked_at``.
+    """
+    return (
+        (table_name, "account_id_unparseable"),
+        CheckResult(
+            status=WARN,
+            details=(
+                f"Dropped file '{filename}': could not derive account_id "
+                "from the report filename; no raw row written"
+            ),
+            threshold="{CCY}_{account_id}_{from}_{to}.xlsx",
+            actual=filename,
+        ),
+    )
+
+
 def run_validation(
     fernet_key: bytes | None = None,
     freshness_days: int = 7,
     fail_on_warn: bool = False,
     tables: list[str] | None = None,
     connectors: list[str] | None = None,
+    extra_records: list[tuple[tuple[str, str], CheckResult]] | None = None,
 ) -> int:
     """Run quality checks and persist results.
 
@@ -491,6 +588,10 @@ def run_validation(
         Enabled connector names for this execution. When provided, only
         their event tables are validated and missing or empty event tables
         produce WARN results.
+    extra_records:
+        Caller-supplied synthetic records (e.g. fetch-layer drops) folded into
+        this run's results before the single overwrite write, so they share
+        this run's one ``checked_at``.
 
     Returns
     -------
@@ -626,6 +727,16 @@ def run_validation(
             all_results.append(result)
             result_metadata.append((table_name, "freshness"))
 
+        # 4b. Per-account staleness check (registered snapshot tables only).
+        # Reuses the already-loaded arrow_table — no extra read.
+        account_key = ACCOUNT_STALENESS_KEYS.get(table_name)
+        if account_key:
+            result = check_account_freshness(
+                table_name, arrow_table, account_key, freshness_days
+            )
+            all_results.append(result)
+            result_metadata.append((table_name, "account_freshness"))
+
         # 5. Enabled event tables must be non-empty, but only as warnings.
         if table_name in enabled_event_tables:
             result = check_non_empty(table_name, arrow_table)
@@ -643,6 +754,13 @@ def run_validation(
             result_metadata.append((table_name, "reconciliation"))
 
     # Persist results to data_quality table
+    # Fold caller-supplied synthetic records (e.g. fetch-layer drops) into the
+    # same overwrite write so they share this run's single checked_at.
+    if extra_records:
+        for metadata, result in extra_records:
+            result_metadata.append(metadata)
+            all_results.append(result)
+
     now = datetime.now(UTC)
     records = {
         "checked_at": [now] * len(all_results),

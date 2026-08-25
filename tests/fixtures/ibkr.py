@@ -85,7 +85,7 @@ def ibkr_raw_positions(
             "source": ["flex"],
             "payload": [encrypted_payload],
             "payload_hash": [payload_hash],
-            "source_file": [""],
+            "account_id": [None],
         },
         schema=RAW_SCHEMA,
     )
@@ -230,7 +230,7 @@ def ibkr_raw_events(
             "source": ["flex_events"],
             "payload": [encrypted_payload],
             "payload_hash": [payload_hash],
-            "source_file": [""],
+            "account_id": [None],
         },
         schema=RAW_SCHEMA,
     )
