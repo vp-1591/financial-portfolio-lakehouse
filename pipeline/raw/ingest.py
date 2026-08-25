@@ -59,17 +59,21 @@ def _dedup_by_retention_key(table: pa.Table, connector_name: str) -> pa.Table:
     merge/loop order decide the winner. Keep the row with the latest
     ``fetched_at``; on a tie (e.g. Trading 212 pages captured at one ``now``),
     keep the LAST row in batch order — the endpoint's final page is what the
-    endpoint retains (AC-4). Only non-NULL-keyed rows reach this helper
-    (ingest_raw splits them out first); NULL keys are appended (AC-3).
-    An empty or single-row input is returned as-is (no collision to resolve).
+    endpoint retains (AC-4). The key is the broker's retention-key column
+    (AD-1) — XTB ``account_id``, Trading 212/IBKR ``source`` — with Trading
+    212's value pagination-stripped to the endpoint base (AC-4). NULL keys
+    cannot occur (unparseable XTB filenames are dropped at fetch, ADR 0120),
+    so every row is keyed. An empty or single-row input is returned as-is
+    (no collision to resolve).
     """
     if table.num_rows <= 1:
         return table
-    sources = table.column("source").to_pylist()
+    key_col = retention_key(connector_name)
+    key_values = table.column(key_col).to_pylist()
     fetched = table.column("fetched_at").to_pylist()
     best: dict[str, tuple[int, datetime | None]] = {}
-    for i, (source, at) in enumerate(zip(sources, fetched)):
-        key = retention_value(connector_name, source)
+    for i, (key_value, at) in enumerate(zip(key_values, fetched)):
+        key = retention_value(connector_name, key_value)
         prev = best.get(key)
         if prev is None or _as_datetime(at) >= _as_datetime(prev[1]):
             best[key] = (i, at)
@@ -113,11 +117,13 @@ def ingest_raw(
     (AD-1, AC-1): XTB ``account_id``, Trading 212/IBKR ``source`` (Trading
     212's key is the pagination-stripped endpoint base, AC-4). Matched keys
     are replaced by the current fetch row (``when_matched_update``), new keys
-    inserted (``when_not_matched_insert_all``), absent keys untouched. Rows
-    whose retention key is NULL (an unparseable XTB filename) are appended,
-    never merged (AC-3). The batch is deduped in-batch on ``(source,
-    payload_hash)`` and then on the retention key (latest ``fetched_at`` wins,
-    tie -> last in batch order) before the merge (AC-2, F1.2).
+    inserted (``when_not_matched_insert_all``), absent keys untouched. NULL
+    retention keys cannot occur — unparseable XTB filenames are dropped
+    at fetch with a data_quality WARN (ADR 0120) — so every row merges; the
+    merge inserts rows whose key is new (AC-1). The batch is deduped in-batch
+    on ``(source, payload_hash)`` and then on the retention key (latest
+    ``fetched_at`` wins, tie -> last in batch order) before the merge (AC-2,
+    F1.2).
 
     Returns nothing — the transform reads the merged table back (the single
     bronze read, AD-6); the in-memory encrypted-fetch handoff is removed
@@ -142,17 +148,11 @@ def ingest_raw(
     storage_opts = get_storage().storage_options
     get_storage().backend.ensure_parent(table_path)
 
-    key_col = retention_key(connector_name)
-    keys = deduped.column(key_col).to_pylist()
-    null_key_mask = [value is None for value in keys]
-    # AC-3: NULL retention keys are appended, never merged (a MERGE predicate
-    # never matches NULL). Distinct (source, payload_hash) null-keyed rows
-    # still pass the in-batch dedup above — that is the only dedup they get.
-    append_rows = deduped.filter(pa.array(null_key_mask))
-    merge_rows = deduped.filter(pa.array([not m for m in null_key_mask]))
-    # F1.2: dedup in-batch on the retention key too — one row per key, newest
-    # fetched_at wins (tie -> last in batch order).
-    merge_rows = _dedup_by_retention_key(merge_rows, connector_name)
+    # F1.2: dedup in-batch on the retention key — one row per key, newest
+    # fetched_at wins (tie -> last in batch order). NULL keys cannot occur
+    # (unparseable XTB filenames are dropped at fetch, ADR 0120), so every
+    # row merges; the merge inserts rows whose key is new (AC-1).
+    merge_rows = _dedup_by_retention_key(deduped, connector_name)
 
     try:
         target = DeltaTable(table_path, storage_options=storage_opts)
@@ -160,14 +160,13 @@ def ingest_raw(
         # First fetch: the merge needs an existing target. Bootstrap the table
         # with the whole deduped batch (the merge's insert path); an empty
         # batch handled above still yields a schema-only table.
-        first_rows = pa.concat_tables([merge_rows, append_rows])
         write_deltalake(
             table_path,
-            first_rows,
+            merge_rows,
             mode="append",
             storage_options=storage_opts,
         )
-        logger.debug("%s: %d rows written (first run)", table_path, first_rows.num_rows)
+        logger.debug("%s: %d rows written (first run)", table_path, merge_rows.num_rows)
         return
 
     if merge_rows.num_rows:
@@ -179,17 +178,9 @@ def ingest_raw(
         ).when_matched_update(
             updates={column: f"s.{column}" for column in merge_rows.column_names}
         ).when_not_matched_insert_all().execute()
-    if append_rows.num_rows:
-        write_deltalake(
-            table_path,
-            append_rows,
-            mode="append",
-            storage_options=storage_opts,
-        )
     logger.debug(
-        "%s: %d rows merged / %d appended (from %d)",
+        "%s: %d rows merged (from %d)",
         table_path,
         merge_rows.num_rows,
-        append_rows.num_rows,
         table.num_rows,
     )
