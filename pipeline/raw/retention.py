@@ -42,15 +42,15 @@ def strip_pagination_suffix(source: str) -> str:
     return source.split("?", 1)[0]
 
 
-def retention_value(connector_name: str, source: str) -> str:
-    """Return the merge-key value for a raw row's ``source``.
+def retention_value(connector_name: str, key_value: str) -> str:
+    """Return the effective merge-key value for a raw row's key column.
 
     Trading 212 keys on the endpoint base (pagination suffix stripped, AC-4);
-    all other brokers key on the source as-is.
+    all other brokers key on the column value as-is.
     """
     if connector_name == _PAGINATED_CONNECTOR:
-        return strip_pagination_suffix(source)
-    return source
+        return strip_pagination_suffix(key_value)
+    return key_value
 
 
 def merge_predicate(

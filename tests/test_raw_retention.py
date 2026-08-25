@@ -188,18 +188,36 @@ class TestMergeSemantics:
         rows = _by_source(_read(table_path))
         assert rows == {"/equity/history/orders": hashlib.sha256(b"fresh").hexdigest()}
 
+    def test_two_keyed_xtb_rows_in_one_batch_both_survive(
+        self, tmp_path, tmp_data_dir, fernet_key
+    ) -> None:
+        """F1.2: the retention-key dedup keys on ``account_id``, not ``source``.
+
+        Every XTB row shares ``source == "XTB_REPORT"``; a source-keyed dedup
+        would collapse two accounts into one. Distinct account_ids must each
+        land (regression for the source-keyed collapse).
+        """
+        table_path = str(tmp_path / "raw" / "xtb")
+        batch = _raw_table(
+            _row("XTB_REPORT", b"acct1", account_id="111", broker="XTB"),
+            _row("XTB_REPORT", b"acct2", account_id="222", broker="XTB"),
+        )
+        ingest_raw(batch, table_path, fernet_key, "xtb")
+        assert _read(table_path).num_rows == 2
+
 
 class TestNullKeyAppendBound:
-    """AC-3: NULL retention keys are appended, never merged."""
+    """AC-3: NULL retention keys are inserted by the merge, never updated."""
 
-    def test_null_key_row_is_appended_every_run(
+    def test_null_key_row_inserted_every_run(
         self, tmp_path, tmp_data_dir, fernet_key
     ) -> None:
         table_path = str(tmp_path / "raw" / "xtb")
         row = _row("XTB_REPORT", b"rpt", account_id=None, broker="XTB")
         ingest_raw(_raw_table(row), table_path, fernet_key, "xtb")
         ingest_raw(_raw_table(row), table_path, fernet_key, "xtb")
-        # Two runs, two rows: the second was appended, never merged away.
+        # Two runs, two rows: the second was inserted by the merge (NULL never
+        # matches the predicate), never updated in place.
         assert _read(table_path).num_rows == 2
 
     def test_in_batch_dedup_limits_null_key_growth(
@@ -217,7 +235,7 @@ class TestNullKeyAppendBound:
         # rows -> one row lands, not three.
         assert _read(table_path).num_rows == 1
 
-    def test_null_key_and_keyed_rows_split_in_one_batch(
+    def test_null_key_row_inserted_by_merge_never_updated(
         self, tmp_path, tmp_data_dir, fernet_key
     ) -> None:
         table_path = str(tmp_path / "raw" / "xtb")
@@ -228,7 +246,8 @@ class TestNullKeyAppendBound:
         ingest_raw(batch, table_path, fernet_key, "xtb")
         assert _read(table_path).num_rows == 2
         ingest_raw(batch, table_path, fernet_key, "xtb")
-        # The keyed row merged in place; the null-key row appended again.
+        # The keyed row merged in place; the null-key row is inserted again by
+        # the merge (NULL never matches the predicate).
         assert _read(table_path).num_rows == 3
 
 
