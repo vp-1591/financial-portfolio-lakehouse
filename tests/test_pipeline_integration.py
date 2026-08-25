@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
+from cryptography.fernet import Fernet
 from deltalake import write_deltalake
 
 from pipeline import run as run_module
@@ -93,6 +94,34 @@ class TestEncryptRawPayloadsSetColumn:
 
         result = encrypt_raw_payloads(table, key)
         assert result.num_rows == 0
+
+    def test_encrypt_payloads_decrypt_to_originals(self) -> None:
+        """Every token decrypts back to its exact plaintext (byte equality).
+
+        Fernet tokens are non-deterministic (fresh nonce per call), so the
+        golden check is round-trip equality against the input column, not
+        token bytes.
+        """
+        key = generate_key()
+        fernet = Fernet(key)
+        payloads = [b"a" * 1000, b"b" * 5000, b"c", b""]
+        table = pa.table(
+            {
+                "fetched_at": [None] * 4,
+                "broker": ["TEST"] * 4,
+                "source": ["test_source"] * 4,
+                "payload": payloads,
+                "payload_hash": ["h1", "h2", "h3", "h4"],
+                "account_id": [None] * 4,
+            },
+            schema=RAW_SCHEMA,
+        )
+
+        result = encrypt_raw_payloads(table, key)
+
+        assert [
+            fernet.decrypt(token) for token in result.column("payload").to_pylist()
+        ] == payloads
 
 
 class TestT212EventsKwargsSeparation:

@@ -41,3 +41,6 @@ _bmad/*
 # temporary investigation results and artifacts
 tmp/
 PROGRESS.md
+
+# Opencode local settings
+opencode.json
