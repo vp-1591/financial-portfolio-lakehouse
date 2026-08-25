@@ -46,7 +46,7 @@ Manual construction produces opaque S3/region/crypto errors.
 Start with `SELECT *` to discover table and column names — don't guess them:
 
 ```bash
-PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run query \
+.venv/Scripts/python -m pipeline.run query \
   "SELECT * FROM <table> LIMIT 5" --decrypt --mode staging
 ```
 
@@ -54,14 +54,6 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run query \
 2. Once the table loads, read column headers from the output — names like `label`
    or `security_value` are often wrong.
 3. Then narrow down with specific columns.
-
-Always prefix with `PYTHONIOENCODING=utf-8` on Windows (terminal default is
-cp1252; non-ASCII ISINs/currency symbols crash without it).
-
-```bash
-PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run query "..." --decrypt --mode staging
-PYTHONIOENCODING=utf-8 .venv/Scripts/python -m pipeline.run report --mode staging --open
-```
 
 ## Schema migrations
 
