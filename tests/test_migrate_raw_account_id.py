@@ -26,6 +26,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 from deltalake import DeltaTable, write_deltalake
+from deltalake.exceptions import DeltaError
 
 import pipeline.migrations.migrate_raw_account_id as mod
 from pipeline.migrations.migrate_raw_account_id import migrate_broker
@@ -353,6 +354,75 @@ def test_migrate_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> 
 
     with pytest.raises(OSError, match="simulated S3 auth/region error"):
         migrate_broker("ibkr", str(tmp_path / "ibkr"), {})
+
+
+def test_migrate_retries_transient_write_error_then_succeeds(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A transient S3 DeltaError on the overwrite is retried; a later attempt
+    completes the migration (the failed upload leaves the table untouched)."""
+    path = tmp_path / "trading212"
+    _write(
+        path,
+        _old_raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "Trading 212",
+                    "source": "/equity/account/summary",
+                    "payload_hash": "h1",
+                    "source_file": "report.xlsx",
+                }
+            ]
+        ),
+    )
+    attempts: list[int] = []
+
+    def _flaky_write(*args: object, **kwargs: object) -> None:
+        attempts.append(len(attempts))
+        if len(attempts) < 3:
+            raise DeltaError("Generic S3 error: error sending request")
+        write_deltalake(*args, **kwargs)  # type: ignore[arg-type]
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(mod, "write_deltalake", _flaky_write)
+    monkeypatch.setattr(mod.time, "sleep", sleeps.append)
+
+    report = migrate_broker("trading212", str(path), {})
+
+    assert report.written is True and report.verified is True
+    assert len(attempts) == 3
+    assert sleeps == [mod._WRITE_RETRY_DELAY_S, mod._WRITE_RETRY_DELAY_S]
+    result = _read(path)
+    assert result.schema.equals(RAW_SCHEMA)
+    assert result.num_rows == 1
+
+
+def test_migrate_persistent_write_error_reraises_after_retries(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """After exhausting all write attempts the last DeltaError propagates
+    (exit non-zero); the old-schema table is left unchanged for a re-run."""
+    path = tmp_path / "xtb"
+    _write(
+        path,
+        _old_raw_table([_xtb_row(1, "h1", "PLN_12345678_2006-01-01_2026-08-03.xlsx")]),
+    )
+    calls: list[int] = []
+
+    def _always_fails(*args: object, **kwargs: object) -> None:
+        calls.append(len(calls))
+        raise DeltaError("Generic S3 error: error sending request")
+
+    monkeypatch.setattr(mod, "write_deltalake", _always_fails)
+    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+
+    with pytest.raises(DeltaError, match="error sending request"):
+        migrate_broker("xtb", str(path), {})
+
+    assert len(calls) == mod._WRITE_ATTEMPTS
+    # The table still carries the OLD schema -- nothing was clobbered.
+    assert "source_file" in _read(path).column_names
 
 
 # ---------------------------------------------------------------------------

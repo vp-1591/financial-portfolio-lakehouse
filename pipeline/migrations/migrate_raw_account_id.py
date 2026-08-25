@@ -32,6 +32,9 @@ For each broker (``ibkr``, ``trading212``, ``xtb``), read ``raw/{broker}``:
 
 Safety and idempotency
 ----------------------
+- Transient S3 write failures (e.g. ``error sending request`` aborting a
+  multipart PUT mid-upload, observed in staging) are retried with a fixed
+  delay; the overwrite is idempotent so a retry never duplicates rows.
 - Idempotent: a table already carrying the new ``RAW_SCHEMA`` is skipped and
   exits 0; a genuinely absent table is skipped and exits 0.
 - Never clobbers (ADR 0113 A1): a table whose schema is neither the old
@@ -95,6 +98,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -102,7 +106,7 @@ import polars as pl
 import pyarrow as pa
 from botocore.exceptions import ClientError
 from deltalake import DeltaTable, write_deltalake
-from deltalake.exceptions import TableNotFoundError
+from deltalake.exceptions import DeltaError, TableNotFoundError
 
 from pipeline.connectors.xtb.fetch import _account_id_from_filename
 from pipeline.migrations._storage_options import get_storage_options_with_credentials
@@ -126,6 +130,13 @@ _OLD_RAW_SCHEMA = pa.schema(
         pa.field("source_file", pa.string()),
     ]
 )
+
+
+# Transient S3 failures (multipart PUT aborted with "error sending request",
+# timeouts) surface as DeltaError from write_deltalake.  The overwrite is
+# atomic and idempotent, so retrying can only ever rewrite the same rows.
+_WRITE_ATTEMPTS = 3
+_WRITE_RETRY_DELAY_S = 10.0
 
 
 @dataclass
@@ -153,6 +164,37 @@ def _backfill_account_id(source_file: object) -> str | None:
     if not isinstance(source_file, str):
         return None
     return _account_id_from_filename(source_file)
+
+
+def _overwrite_raw_table(
+    table_path: str,
+    new_frame: pl.DataFrame,
+    storage_opts: dict[str, str],
+) -> None:
+    """Overwrite *table_path* with *new_frame*, retrying transient S3 errors.
+
+    A failed multipart upload leaves the Delta table untouched (the commit is
+    atomic), so each retry simply re-attempts the full overwrite.
+    """
+    for attempt in range(1, _WRITE_ATTEMPTS + 1):
+        try:
+            write_deltalake(
+                table_path,
+                new_frame,
+                mode="overwrite",
+                schema_mode="overwrite",
+                storage_options=storage_opts,
+            )
+            return
+        except DeltaError as exc:
+            if attempt == _WRITE_ATTEMPTS:
+                raise
+            print(
+                f"  Write attempt {attempt}/{_WRITE_ATTEMPTS} failed "
+                f"(transient S3 error: {exc}); retrying in "
+                f"{_WRITE_RETRY_DELAY_S:.0f}s..."
+            )
+            time.sleep(_WRITE_RETRY_DELAY_S)
 
 
 def verify_migrated_table(
@@ -267,13 +309,7 @@ def migrate_broker(
             dry_run=True,
         )
 
-    write_deltalake(
-        table_path,
-        new_frame,
-        mode="overwrite",
-        schema_mode="overwrite",
-        storage_options=storage_opts,
-    )
+    _overwrite_raw_table(table_path, new_frame, storage_opts)
 
     if not verify_migrated_table(
         table_path, storage_opts, expected_rows=new_frame.height
