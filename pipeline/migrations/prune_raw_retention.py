@@ -40,11 +40,11 @@ from botocore.exceptions import ClientError
 from deltalake import DeltaTable
 from deltalake.exceptions import TableNotFoundError
 
+from pipeline.migrations._staged_upload import rewrite_table
 from pipeline.migrations.migrate_raw_account_id import (
     _BROKER_DISPLAY,
     _BROKERS,
     _build_s3_client,
-    _rewrite_table,
     get_storage_options_with_credentials,
     verify_migrated_table,
 )
@@ -143,7 +143,7 @@ def prune_broker(
         if table_path.startswith("s3://")
         else []
     )
-    _rewrite_table(
+    rewrite_table(
         client,
         table_path,
         new_frame,
@@ -176,7 +176,7 @@ def run_prune(client: Any, *, dry_run: bool = False) -> list[PruneReport]:
     """Execute (or plan) the retention prune against the active storage.
 
     *client* is the boto3 S3 client used for staged uploads (see
-    ``migrate_raw_account_id._stage_and_upload``). Errors propagate for
+    ``_staged_upload.stage_and_upload``). Errors propagate for
     ``main()`` to exit non-zero (ADR 0112 A1 convention).
     """
     from pipeline.storage import get_storage

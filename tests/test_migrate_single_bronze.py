@@ -29,6 +29,7 @@ import pytest
 from deltalake import DeltaTable, write_deltalake
 
 import pipeline.migrations.migrate_single_bronze as mod
+from pipeline.migrations.migrate_raw_account_id import _OLD_RAW_SCHEMA
 from pipeline.migrations.migrate_single_bronze import (
     delete_broker_sources,
     merge_broker,
@@ -64,6 +65,27 @@ def _raw_table(rows: list[dict[str, Any]]) -> pa.Table:
         }
     )
     return table.cast(RAW_SCHEMA)
+
+
+def _legacy_raw_table(rows: list[dict[str, Any]]) -> pa.Table:
+    """Build a pre-5-1 raw table (``source_file`` instead of ``account_id``)."""
+    table = pa.table(
+        {
+            "fetched_at": pa.array([r["fetched_at"] for r in rows], type=_TS),
+            "broker": pa.array([r["broker"] for r in rows], type=pa.string()),
+            "source": pa.array([r["source"] for r in rows], type=pa.string()),
+            "payload": pa.array(
+                [r.get("payload", b"\x01") for r in rows], type=pa.binary()
+            ),
+            "payload_hash": pa.array(
+                [r["payload_hash"] for r in rows], type=pa.string()
+            ),
+            "source_file": pa.array(
+                [r.get("source_file") for r in rows], type=pa.string()
+            ),
+        }
+    )
+    return table.cast(_OLD_RAW_SCHEMA)
 
 
 def _write(path: Path, table: pa.Table) -> None:
@@ -498,6 +520,71 @@ def test_merge_destination_schema_conflict_raises(tmp_path: Path) -> None:
     assert "unexpected" in _read(dest).column_names
 
 
+def test_merge_legacy_schema_sources_are_verified(tmp_path: Path) -> None:
+    """Prod's per-layer tables predate 5-1: merging them as-is is valid.
+
+    The merged table keeps the legacy ``source_file`` layout; the follow-up
+    ``migrate_raw_account_id`` run rewrites it to ``RAW_SCHEMA``.
+    """
+    snap, events, dest = _broker_paths(tmp_path, "xtb")
+    _write(
+        Path(snap),
+        _legacy_raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "XTB",
+                    "source": "XTB_REPORT",
+                    "payload_hash": "h1",
+                    "source_file": "PLN_123_20240101_20240201.xlsx",
+                }
+            ]
+        ),
+    )
+
+    report = merge_broker("xtb", (snap, events), dest, {})
+
+    assert report.verified is True
+    assert "source_file" in _read(dest).column_names
+    assert "account_id" not in _read(dest).column_names
+
+
+def test_merge_destination_with_legacy_schema_is_not_a_conflict(
+    tmp_path: Path,
+) -> None:
+    snap, events, dest = _broker_paths(tmp_path, "ibkr")
+    row = {
+        "fetched_at": _t(1),
+        "broker": "IBKR",
+        "source": "flex",
+        "payload_hash": "h1",
+        "source_file": "q.xml",
+    }
+    _write(Path(snap), _legacy_raw_table([row]))
+    _write(Path(dest), _legacy_raw_table([row]))
+
+    report = merge_broker("ibkr", (snap, events), dest, {})
+
+    assert report.verified is True
+
+
+def test_verify_merged_table_rejects_unknown_schema(tmp_path: Path) -> None:
+    dest = str(tmp_path / "ibkr")
+    bad = _raw_table(
+        [
+            {
+                "fetched_at": _t(1),
+                "broker": "IBKR",
+                "source": "flex",
+                "payload_hash": "h1",
+            }
+        ]
+    ).append_column("unexpected", pa.array(["x"], type=pa.string()))
+    _write(Path(dest), bad)
+
+    assert mod.verify_merged_table(dest, {}, expected_rows=1) is False
+
+
 def test_merge_verification_failure_refuses_delete(monkeypatch, tmp_path: Path) -> None:
     snap, events, dest = _broker_paths(tmp_path, "ibkr")
     _write(
@@ -536,6 +623,151 @@ def test_merge_verification_failure_refuses_delete(monkeypatch, tmp_path: Path) 
     # Source tables untouched: no partial deletion.
     assert _read(snap).num_rows == 1
     assert _read(events).num_rows == 1
+
+
+def test_merge_s3_destination_requires_client(monkeypatch, tmp_path: Path) -> None:
+    snap, events, _ = _broker_paths(tmp_path, "ibkr")
+    s3_dest = "s3://test-bucket/raw/ibkr"
+    monkeypatch.setattr(mod, "_path_exists", lambda path, opts: False)
+    _write(
+        Path(snap),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "IBKR",
+                    "source": "flex",
+                    "payload_hash": "h1",
+                }
+            ]
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="(?i)s3 client is required"):
+        merge_broker("ibkr", (snap, events), s3_dest, {})
+
+
+def test_merge_s3_destination_uses_staged_upload(monkeypatch, tmp_path: Path) -> None:
+    """S3 destinations go through the staged boto3 rewrite (delta-rs' S3
+    uploader aborts sustained uploads after a 180s retry budget), carrying
+    the destination's live files as stale paths and continuing its version
+    history; a fresh destination starts at version 0 with nothing stale."""
+    import polars as pl
+
+    snap, events, _ = _broker_paths(tmp_path, "ibkr")
+    for hour, source, payload_hash in ((1, "flex", "h1"), (2, "flex_events", "h2")):
+        _write(
+            Path(snap if source == "flex" else events),
+            _raw_table(
+                [
+                    {
+                        "fetched_at": _t(hour),
+                        "broker": "IBKR",
+                        "source": source,
+                        "payload_hash": payload_hash,
+                    }
+                ]
+            ),
+        )
+
+    recorded: dict[str, object] = {}
+    sentinel_client = object()
+    monkeypatch.setattr(mod, "_path_exists", lambda path, opts: False)
+
+    def _fake_rewrite(
+        client: object,
+        table_path: str,
+        new_frame: pl.DataFrame,
+        storage_opts: dict[str, str],
+        *,
+        next_version: int,
+        stale_paths: list[str],
+    ) -> None:
+        recorded["client"] = client
+        recorded["table_path"] = table_path
+        recorded["rows"] = new_frame.height
+        recorded["next_version"] = next_version
+        recorded["stale_paths"] = stale_paths
+
+    monkeypatch.setattr(mod, "rewrite_table", _fake_rewrite)
+    # The remote write is faked; verification must not hit S3.
+    monkeypatch.setattr(mod, "verify_merged_table", lambda *a, **k: True)
+
+    report = merge_broker(
+        "ibkr", (snap, events), "s3://test-bucket/raw/ibkr", {}, client=sentinel_client
+    )
+
+    assert report.verified is True
+    assert recorded["client"] is sentinel_client
+    assert recorded["table_path"] == "s3://test-bucket/raw/ibkr"
+    assert recorded["rows"] == 2
+    assert recorded["next_version"] == 0
+    assert recorded["stale_paths"] == []
+
+
+def test_merge_s3_existing_destination_carries_stale_paths_and_version(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Re-running against an existing S3 destination removes its live files
+    in the rebuilt commit and continues from its current version."""
+    import polars as pl
+
+    class _FakeDestDeltaTable:
+        def to_pyarrow_table(self) -> pa.Table:
+            return _raw_table([]).slice(0, 0)
+
+        def get_add_actions(self, flatten: bool) -> Any:
+            assert flatten is True
+            return pa.table({"path": ["old-a.parquet", "old-b.parquet"]})
+
+        def version(self) -> int:
+            return 4
+
+    monkeypatch.setattr(
+        mod, "_path_exists", lambda path, opts: path.startswith("s3://")
+    )
+    monkeypatch.setattr(mod, "DeltaTable", lambda *a, **k: _FakeDestDeltaTable())
+    snap, events, _ = _broker_paths(tmp_path, "ibkr")
+    _write(
+        Path(snap),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "IBKR",
+                    "source": "flex",
+                    "payload_hash": "h1",
+                }
+            ]
+        ),
+    )
+
+    recorded: dict[str, object] = {}
+
+    def _fake_rewrite(
+        client: object,
+        table_path: str,
+        new_frame: pl.DataFrame,
+        storage_opts: dict[str, str],
+        *,
+        next_version: int,
+        stale_paths: list[str],
+    ) -> None:
+        recorded["next_version"] = next_version
+        recorded["stale_paths"] = stale_paths
+
+    monkeypatch.setattr(mod, "rewrite_table", _fake_rewrite)
+
+    merge_broker(
+        "ibkr",
+        (snap, events),
+        "s3://test-bucket/raw/ibkr",
+        {},
+        client=object(),
+    )
+
+    assert recorded["next_version"] == 5
+    assert recorded["stale_paths"] == ["old-a.parquet", "old-b.parquet"]
 
 
 def test_merge_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> None:
@@ -746,6 +978,7 @@ def test_run_migration_merges_and_deletes_sources(monkeypatch, tmp_path: Path) -
         dest_path: str,
         storage_opts: dict[str, str],
         *,
+        client: Any = None,
         dry_run: bool = False,
     ) -> mod.MergeReport:
         captured.append((broker, source_paths, dest_path))

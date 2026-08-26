@@ -17,14 +17,18 @@ What this script does
    carries its nullable ``account_id``, derived at fetch time from the source
    filename (ADR 0120) or backfilled by ``migrate_raw_account_id``; the merge
    never recomputes it.  The deduped frame is written to ``raw/{broker}``
-   with
-   ``write_deltalake(mode="overwrite", schema_mode="overwrite")``.  The
-   ``pl.DataFrame`` is passed directly (project rule: never convert to
-   ``pa.Table`` for writes).
-2. After the merged table is written and verified (readable, exact
-   ``RAW_SCHEMA`` in order, expected row count), every per-layer raw path for
+   overwriting it; S3 writes are staged through boto3's transfer manager
+   (see :func:`pipeline.migrations._staged_upload.rewrite_table` --
+   delta-rs' S3 uploader aborts sustained uploads after a 180s wall-clock
+   retry budget).  The ``pl.DataFrame`` is passed directly (project rule:
+   never convert to ``pa.Table`` for writes).
+2. After the merged table is written and verified (readable, a known raw
+   schema -- current ``RAW_SCHEMA`` or the pre-5-1 legacy ``source_file``
+   layout -- in order, expected row count), every per-layer raw path for
    that broker is deleted from S3 via batched ``delete_objects``
    (``_DELETE_CHUNK=1000``).  This also purges the orphaned ``raw/xtb_events``.
+   A legacy-schema merged table is rewritten to ``RAW_SCHEMA`` by the
+   follow-up ``migrate_raw_account_id`` run.
 
 Safety and idempotency
 ----------------------
@@ -35,8 +39,9 @@ Safety and idempotency
   and exits 0.
 - Never clobbers: a destination ``raw/{broker}`` is overwritten only when it
   is empty or its rows are a subset of the source tables (matched on the
-  dedup key).  A destination whose schema is not exactly ``RAW_SCHEMA``
-  (order-sensitive ``schema.equals``) or that holds rows not present in the
+  dedup key).  A destination whose schema is neither the current
+  ``RAW_SCHEMA`` nor the pre-5-1 legacy layout (order-sensitive
+  ``schema.equals``) or that holds rows not present in the
   sources raises instead of being overwritten (ADR 0113 A1 conflict
   convention) -- rows appended after a partially failed earlier run are never
   silently discarded.
@@ -92,13 +97,28 @@ from dataclasses import dataclass
 from typing import Any
 
 import polars as pl
+import pyarrow as pa
 from botocore.exceptions import ClientError
-from deltalake import DeltaTable, write_deltalake
+from deltalake import DeltaTable
 from deltalake.exceptions import TableNotFoundError
 
+from pipeline.migrations._staged_upload import rewrite_table
 from pipeline.migrations._storage_options import get_storage_options_with_credentials
+from pipeline.migrations.migrate_raw_account_id import _OLD_RAW_SCHEMA
 from pipeline.raw.models import RAW_SCHEMA
 from pipeline.storage import get_storage
+
+
+def _known_raw_schema(schema: pa.Schema) -> bool:
+    """Return True when *schema* is a raw schema the pipeline recognizes.
+
+    Sources written before the 5-1 schema change carry the legacy
+    ``source_file`` layout; merging preserves it as-is and the follow-up
+    ``migrate_raw_account_id`` run rewrites the merged table to the current
+    ``RAW_SCHEMA``.  Anything else means drift -- refuse rather than clobber.
+    """
+    return schema.equals(RAW_SCHEMA) or schema.equals(_OLD_RAW_SCHEMA)
+
 
 # Table paths use the lowercase connector names; the ``broker`` column values
 # in the data are the display names ("IBKR", "Trading 212", "XTB").
@@ -179,17 +199,19 @@ def verify_merged_table(
     *,
     expected_rows: int,
 ) -> bool:
-    """Return True when *dest_path* is readable with exactly RAW_SCHEMA.
+    """Return True when *dest_path* is readable with a known raw schema.
 
-    The schema comparison is order-sensitive (``pa.schema.equals`` fails on
-    any unexpected column or a column out of order, mirroring
-    ``quality.check_schema``), and the row count must match the merged frame.
+    The schema must equal the current ``RAW_SCHEMA`` or the pre-5-1 legacy
+    layout (see :func:`_known_raw_schema`); the comparison is order-sensitive
+    (mirroring ``quality.check_schema``), and the row count must match the
+    merged frame.  A legacy-schema table is valid here because
+    ``migrate_raw_account_id`` rewrites it to ``RAW_SCHEMA`` afterwards.
     """
     try:
         table = DeltaTable(dest_path, storage_options=storage_opts).to_pyarrow_table()
     except TableNotFoundError:
         return False
-    return table.schema.equals(RAW_SCHEMA) and table.num_rows == expected_rows
+    return _known_raw_schema(table.schema) and table.num_rows == expected_rows
 
 
 def merge_broker(
@@ -198,17 +220,19 @@ def merge_broker(
     dest_path: str,
     storage_opts: dict[str, str],
     *,
+    client: Any | None = None,
     dry_run: bool = False,
 ) -> MergeReport:
     """Merge *source_paths* (snapshot + events) into the single table *dest_path*.
 
     Returns a :class:`MergeReport`.  ``verified`` is True only when the merged
     table was written and re-verified (or already existed as a valid
-    ``RAW_SCHEMA`` table while all sources are gone).  ``--dry-run`` never
-    writes.
+    raw-schema table while all sources are gone).  ``--dry-run`` never
+    writes.  S3 destinations require *client* (boto3 S3 client) for the
+    staged upload.
 
     Raises :class:`RuntimeError` when the destination already exists with a
-    valid ``RAW_SCHEMA`` but holds rows the source tables do not (never
+    known raw schema but holds rows the source tables do not (never
     clobbers -- ADR 0113 A1).
     """
     frames: list[pl.DataFrame] = []
@@ -226,15 +250,15 @@ def merge_broker(
         frames.append(pl.from_arrow(dt.to_pyarrow_table()))
         present.append(path)
 
+    dest_dt: Any | None = None
     dest_table: Any | None = None
     if _path_exists(dest_path, storage_opts):
-        dest_table = DeltaTable(
-            dest_path, storage_options=storage_opts
-        ).to_pyarrow_table()
+        dest_dt = DeltaTable(dest_path, storage_options=storage_opts)
+        dest_table = dest_dt.to_pyarrow_table()
         # Destination conflict guard (ADR 0113 A1): a destination whose schema
-        # is NOT exactly RAW_SCHEMA (order-sensitive) raises rather than being
-        # clobbered -- including in a dry-run.
-        if not dest_table.schema.equals(RAW_SCHEMA):
+        # is neither the current RAW_SCHEMA nor the pre-5-1 legacy layout
+        # raises rather than being clobbered -- including in a dry-run.
+        if not _known_raw_schema(dest_table.schema):
             raise RuntimeError(
                 f"Conflict: {dest_path} already exists with schema {dest_table.schema}, "
                 "expected RAW_SCHEMA. Refusing to overwrite; investigate before "
@@ -292,12 +316,28 @@ def merge_broker(
             dry_run=True,
         )
 
-    write_deltalake(
+    # S3 writes go through the staged boto3 upload (rewrite_table ->
+    # stage_and_upload): delta-rs' S3 uploader aborts sustained uploads
+    # after a 180s wall-clock retry budget, so a large merged table (T212
+    # carries ~100 MB of encrypted payloads) never lands over a slow uplink.
+    if dest_path.startswith("s3://") and client is None:
+        raise RuntimeError(
+            f"An S3 client is required to write {dest_path} (staged boto3 "
+            "upload); pass client= from run_migration."
+        )
+    stale_paths: list[str] = (
+        dest_dt.get_add_actions(flatten=True)["path"].to_pylist()
+        if dest_dt is not None and dest_path.startswith("s3://")
+        else []
+    )
+    next_version = dest_dt.version() + 1 if dest_dt is not None else 0
+    rewrite_table(
+        client,
         dest_path,
         merged,
-        mode="overwrite",
-        schema_mode="overwrite",
-        storage_options=storage_opts,
+        storage_opts,
+        next_version=next_version,
+        stale_paths=stale_paths,
     )
 
     if not verify_merged_table(dest_path, storage_opts, expected_rows=merged.height):
@@ -438,7 +478,12 @@ def run_migration(client: Any, *, dry_run: bool = False) -> list[MergeReport]:
         dest_path = storage.raw_path(broker)
         print(f"Merging {broker}...")
         report = merge_broker(
-            broker, source_paths, dest_path, storage_opts, dry_run=dry_run
+            broker,
+            source_paths,
+            dest_path,
+            storage_opts,
+            client=client,
+            dry_run=dry_run,
         )
         reports.append(report)
 
@@ -456,13 +501,23 @@ def run_migration(client: Any, *, dry_run: bool = False) -> list[MergeReport]:
 
 
 def _build_s3_client() -> Any:
-    """Build a boto3 S3 client using the project's consolidated credentials."""
+    """Build a boto3 S3 client using the project's consolidated credentials.
+
+    Adaptive retries with a high attempt count: the staged upload pushes
+    ~100 MB of parquet over the caller's uplink, and boto3's transfer manager
+    (unlike delta-rs') has no wall-clock budget -- it just needs each request
+    to eventually get through.
+    """
     import boto3
+    from botocore.config import Config
 
     from pipeline.secrets import resolve_aws_credentials
 
     creds = resolve_aws_credentials()
-    kwargs: dict[str, Any] = {"region_name": creds.region}
+    kwargs: dict[str, Any] = {
+        "region_name": creds.region,
+        "config": Config(retries={"max_attempts": 10, "mode": "adaptive"}),
+    }
     if creds.key_id is not None or creds.secret_key is not None:
         kwargs["aws_access_key_id"] = creds.key_id or ""
         kwargs["aws_secret_access_key"] = creds.secret_key or ""

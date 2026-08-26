@@ -108,19 +108,17 @@ from __future__ import annotations
 
 import argparse
 import sys
-import tempfile
-import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import polars as pl
 import pyarrow as pa
 from botocore.exceptions import ClientError
-from deltalake import DeltaTable, write_deltalake
+from deltalake import DeltaTable
 from deltalake.exceptions import TableNotFoundError
 
 from pipeline.connectors.xtb.fetch import _account_id_from_filename
+from pipeline.migrations._staged_upload import rewrite_table
 from pipeline.migrations._storage_options import get_storage_options_with_credentials
 from pipeline.raw.models import RAW_SCHEMA
 from pipeline.storage import get_storage
@@ -142,13 +140,6 @@ _OLD_RAW_SCHEMA = pa.schema(
         pa.field("source_file", pa.string()),
     ]
 )
-
-
-# Transient S3 failures during the staged upload are retried with a fixed
-# delay; each attempt skips objects already uploaded, so only the remainder
-# is pushed.  The commit lands last and atomically.
-_WRITE_ATTEMPTS = 3
-_WRITE_RETRY_DELAY_S = 10.0
 
 
 @dataclass
@@ -176,140 +167,6 @@ def _backfill_account_id(source_file: object) -> str | None:
     if not isinstance(source_file, str):
         return None
     return _account_id_from_filename(source_file)
-
-
-def _split_s3_uri(table_path: str) -> tuple[str, str]:
-    """Split ``s3://bucket/prefix`` into ``(bucket, prefix)``, no trailing slash."""
-    remainder = table_path.removeprefix("s3://")
-    bucket, _, prefix = remainder.partition("/")
-    return bucket, prefix.rstrip("/")
-
-
-def _object_exists(client: Any, bucket: str, key: str) -> bool:
-    try:
-        client.head_object(Bucket=bucket, Key=key)
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in ("404", "NoSuchKey", "NotFound"):
-            return False
-        raise
-    return True
-
-
-def _stage_and_upload(
-    client: Any,
-    table_path: str,
-    new_frame: pl.DataFrame,
-    *,
-    next_version: int,
-    stale_paths: list[str],
-) -> None:
-    """Rewrite the S3 table at *table_path* via a local Delta staging copy.
-
-    delta-rs' S3 uploader aborts sustained uploads after a 180s wall-clock
-    retry budget, so large raw rewrites never land over a slow uplink.  The
-    migrated frame is instead written to a local Delta table (no network),
-    and its files are pushed with boto3's transfer manager, whose multipart
-    PUTs have no such budget.
-
-    A fresh staging table's own commit cannot serve as the remote commit: it
-    has no ``remove`` actions, so the remote snapshot would keep the
-    superseded parquet files (observed: row count doubled).  The commit is
-    therefore rebuilt as the staging actions plus a ``remove`` per *stale_paths*
-    (the remote table's live files), renamed to *next_version* continuing the
-    remote history, and uploaded LAST -- a crash mid-upload leaves the
-    old-schema table untouched.  Parquet keys are random-UUID named, so an
-    object that already exists remotely is from an interrupted attempt and is
-    skipped; re-runs resume where they stopped.  Superseded files stay as
-    unreferenced orphans until the next VACUUM removes them.
-    """
-    import json
-
-    bucket, prefix = _split_s3_uri(table_path)
-
-    with tempfile.TemporaryDirectory(prefix="raw-migration-") as tmp:
-        local = Path(tmp) / "table"
-        write_deltalake(
-            str(local), new_frame, mode="overwrite", schema_mode="overwrite"
-        )
-
-        log_dir = local / "_delta_log"
-        staged_commit = log_dir / "00000000000000000000.json"
-        actions = [
-            json.loads(line)
-            for line in staged_commit.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        now_ms = int(time.time() * 1000)
-        actions.extend(
-            {
-                "remove": {
-                    "path": path,
-                    "deletionTimestamp": now_ms,
-                    "dataChange": True,
-                }
-            }
-            for path in stale_paths
-        )
-
-        commit = log_dir / f"{next_version:020d}.json"
-        commit.write_text(
-            "".join(json.dumps(action) + "\n" for action in actions),
-            encoding="utf-8",
-        )
-        staged_commit.unlink()
-
-        data_files = sorted(local.rglob("*.parquet"))
-        for path in [*data_files, commit]:
-            rel = path.relative_to(local).as_posix()
-            key = f"{prefix}/{rel}"
-            if _object_exists(client, bucket, key):
-                print(f"  already uploaded, skipping: {key}")
-                continue
-            print(f"  uploading: {key}")
-            client.upload_file(str(path), bucket, key)
-
-
-def _rewrite_table(
-    client: Any | None,
-    table_path: str,
-    new_frame: pl.DataFrame,
-    storage_opts: dict[str, str],
-    *,
-    next_version: int,
-    stale_paths: list[str],
-) -> None:
-    """Overwrite *table_path* with *new_frame*.
-
-    Local tables are rewritten in place.  S3 tables go through the staged
-    boto3 upload (:func:`_stage_and_upload`) with bounded retries; each
-    retry resumes from the objects that already landed.
-    """
-    if not table_path.startswith("s3://"):
-        write_deltalake(
-            table_path, new_frame, mode="overwrite", schema_mode="overwrite"
-        )
-        return
-
-    for attempt in range(1, _WRITE_ATTEMPTS + 1):
-        try:
-            _stage_and_upload(
-                client,
-                table_path,
-                new_frame,
-                next_version=next_version,
-                stale_paths=stale_paths,
-            )
-            return
-        except (ClientError, OSError) as exc:
-            if attempt == _WRITE_ATTEMPTS:
-                raise
-            print(
-                f"  Upload attempt {attempt}/{_WRITE_ATTEMPTS} failed "
-                f"(transient error: {exc}); retrying in "
-                f"{_WRITE_RETRY_DELAY_S:.0f}s..."
-            )
-            time.sleep(_WRITE_RETRY_DELAY_S)
 
 
 def verify_migrated_table(
@@ -436,7 +293,7 @@ def migrate_broker(
         if table_path.startswith("s3://")
         else []
     )
-    _rewrite_table(
+    rewrite_table(
         client,
         table_path,
         new_frame,
@@ -468,7 +325,8 @@ def migrate_broker(
 def run_migration(client: Any, *, dry_run: bool = False) -> list[MigrateReport]:
     """Execute (or plan) the raw-schema migration against the active storage.
 
-    S3 rewrites are staged through boto3 (see :func:`_stage_and_upload`), so
+    S3 rewrites are staged through boto3 (see
+    :func:`pipeline.migrations._staged_upload.stage_and_upload`), so
     *client* is the boto3 S3 client used for the object uploads.  Errors
     propagate for ``main()`` to exit non-zero (ADR 0112 A1 convention:
     ``ClientError`` -> exit 1).
