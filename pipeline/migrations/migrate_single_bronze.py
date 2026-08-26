@@ -18,7 +18,7 @@ What this script does
    filename (ADR 0120) or backfilled by ``migrate_raw_account_id``; the merge
    never recomputes it.  The deduped frame is written to ``raw/{broker}``
    overwriting it; S3 writes are staged through boto3's transfer manager
-   (see :func:`pipeline.migrations.migrate_raw_account_id._rewrite_table` --
+   (see :func:`pipeline.migrations._staged_upload.rewrite_table` --
    delta-rs' S3 uploader aborts sustained uploads after a 180s wall-clock
    retry budget).  The ``pl.DataFrame`` is passed directly (project rule:
    never convert to ``pa.Table`` for writes).
@@ -102,11 +102,9 @@ from botocore.exceptions import ClientError
 from deltalake import DeltaTable
 from deltalake.exceptions import TableNotFoundError
 
+from pipeline.migrations._staged_upload import rewrite_table
 from pipeline.migrations._storage_options import get_storage_options_with_credentials
-from pipeline.migrations.migrate_raw_account_id import (
-    _OLD_RAW_SCHEMA,
-    _rewrite_table,
-)
+from pipeline.migrations.migrate_raw_account_id import _OLD_RAW_SCHEMA
 from pipeline.raw.models import RAW_SCHEMA
 from pipeline.storage import get_storage
 
@@ -318,8 +316,8 @@ def merge_broker(
             dry_run=True,
         )
 
-    # S3 writes go through the staged boto3 upload (_rewrite_table ->
-    # _stage_and_upload): delta-rs' S3 uploader aborts sustained uploads
+    # S3 writes go through the staged boto3 upload (rewrite_table ->
+    # stage_and_upload): delta-rs' S3 uploader aborts sustained uploads
     # after a 180s wall-clock retry budget, so a large merged table (T212
     # carries ~100 MB of encrypted payloads) never lands over a slow uplink.
     if dest_path.startswith("s3://") and client is None:
@@ -333,7 +331,7 @@ def merge_broker(
         else []
     )
     next_version = dest_dt.version() + 1 if dest_dt is not None else 0
-    _rewrite_table(
+    rewrite_table(
         client,
         dest_path,
         merged,

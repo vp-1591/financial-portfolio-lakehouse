@@ -689,7 +689,7 @@ def test_merge_s3_destination_uses_staged_upload(monkeypatch, tmp_path: Path) ->
         recorded["next_version"] = next_version
         recorded["stale_paths"] = stale_paths
 
-    monkeypatch.setattr(mod, "_rewrite_table", _fake_rewrite)
+    monkeypatch.setattr(mod, "rewrite_table", _fake_rewrite)
     # The remote write is faked; verification must not hit S3.
     monkeypatch.setattr(mod, "verify_merged_table", lambda *a, **k: True)
 
@@ -756,7 +756,7 @@ def test_merge_s3_existing_destination_carries_stale_paths_and_version(
         recorded["next_version"] = next_version
         recorded["stale_paths"] = stale_paths
 
-    monkeypatch.setattr(mod, "_rewrite_table", _fake_rewrite)
+    monkeypatch.setattr(mod, "rewrite_table", _fake_rewrite)
 
     merge_broker(
         "ibkr",
