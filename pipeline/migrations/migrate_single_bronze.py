@@ -21,10 +21,13 @@ What this script does
    ``write_deltalake(mode="overwrite", schema_mode="overwrite")``.  The
    ``pl.DataFrame`` is passed directly (project rule: never convert to
    ``pa.Table`` for writes).
-2. After the merged table is written and verified (readable, exact
-   ``RAW_SCHEMA`` in order, expected row count), every per-layer raw path for
+2. After the merged table is written and verified (readable, a known raw
+   schema -- current ``RAW_SCHEMA`` or the pre-5-1 legacy ``source_file``
+   layout -- in order, expected row count), every per-layer raw path for
    that broker is deleted from S3 via batched ``delete_objects``
    (``_DELETE_CHUNK=1000``).  This also purges the orphaned ``raw/xtb_events``.
+   A legacy-schema merged table is rewritten to ``RAW_SCHEMA`` by the
+   follow-up ``migrate_raw_account_id`` run.
 
 Safety and idempotency
 ----------------------
@@ -35,8 +38,9 @@ Safety and idempotency
   and exits 0.
 - Never clobbers: a destination ``raw/{broker}`` is overwritten only when it
   is empty or its rows are a subset of the source tables (matched on the
-  dedup key).  A destination whose schema is not exactly ``RAW_SCHEMA``
-  (order-sensitive ``schema.equals``) or that holds rows not present in the
+  dedup key).  A destination whose schema is neither the current
+  ``RAW_SCHEMA`` nor the pre-5-1 legacy layout (order-sensitive
+  ``schema.equals``) or that holds rows not present in the
   sources raises instead of being overwritten (ADR 0113 A1 conflict
   convention) -- rows appended after a partially failed earlier run are never
   silently discarded.
@@ -92,13 +96,27 @@ from dataclasses import dataclass
 from typing import Any
 
 import polars as pl
+import pyarrow as pa
 from botocore.exceptions import ClientError
 from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import TableNotFoundError
 
 from pipeline.migrations._storage_options import get_storage_options_with_credentials
+from pipeline.migrations.migrate_raw_account_id import _OLD_RAW_SCHEMA
 from pipeline.raw.models import RAW_SCHEMA
 from pipeline.storage import get_storage
+
+
+def _known_raw_schema(schema: pa.Schema) -> bool:
+    """Return True when *schema* is a raw schema the pipeline recognizes.
+
+    Sources written before the 5-1 schema change carry the legacy
+    ``source_file`` layout; merging preserves it as-is and the follow-up
+    ``migrate_raw_account_id`` run rewrites the merged table to the current
+    ``RAW_SCHEMA``.  Anything else means drift -- refuse rather than clobber.
+    """
+    return schema.equals(RAW_SCHEMA) or schema.equals(_OLD_RAW_SCHEMA)
+
 
 # Table paths use the lowercase connector names; the ``broker`` column values
 # in the data are the display names ("IBKR", "Trading 212", "XTB").
@@ -179,17 +197,19 @@ def verify_merged_table(
     *,
     expected_rows: int,
 ) -> bool:
-    """Return True when *dest_path* is readable with exactly RAW_SCHEMA.
+    """Return True when *dest_path* is readable with a known raw schema.
 
-    The schema comparison is order-sensitive (``pa.schema.equals`` fails on
-    any unexpected column or a column out of order, mirroring
-    ``quality.check_schema``), and the row count must match the merged frame.
+    The schema must equal the current ``RAW_SCHEMA`` or the pre-5-1 legacy
+    layout (see :func:`_known_raw_schema`); the comparison is order-sensitive
+    (mirroring ``quality.check_schema``), and the row count must match the
+    merged frame.  A legacy-schema table is valid here because
+    ``migrate_raw_account_id`` rewrites it to ``RAW_SCHEMA`` afterwards.
     """
     try:
         table = DeltaTable(dest_path, storage_options=storage_opts).to_pyarrow_table()
     except TableNotFoundError:
         return False
-    return table.schema.equals(RAW_SCHEMA) and table.num_rows == expected_rows
+    return _known_raw_schema(table.schema) and table.num_rows == expected_rows
 
 
 def merge_broker(
@@ -204,11 +224,11 @@ def merge_broker(
 
     Returns a :class:`MergeReport`.  ``verified`` is True only when the merged
     table was written and re-verified (or already existed as a valid
-    ``RAW_SCHEMA`` table while all sources are gone).  ``--dry-run`` never
+    raw-schema table while all sources are gone).  ``--dry-run`` never
     writes.
 
     Raises :class:`RuntimeError` when the destination already exists with a
-    valid ``RAW_SCHEMA`` but holds rows the source tables do not (never
+    known raw schema but holds rows the source tables do not (never
     clobbers -- ADR 0113 A1).
     """
     frames: list[pl.DataFrame] = []
@@ -232,9 +252,9 @@ def merge_broker(
             dest_path, storage_options=storage_opts
         ).to_pyarrow_table()
         # Destination conflict guard (ADR 0113 A1): a destination whose schema
-        # is NOT exactly RAW_SCHEMA (order-sensitive) raises rather than being
-        # clobbered -- including in a dry-run.
-        if not dest_table.schema.equals(RAW_SCHEMA):
+        # is neither the current RAW_SCHEMA nor the pre-5-1 legacy layout
+        # raises rather than being clobbered -- including in a dry-run.
+        if not _known_raw_schema(dest_table.schema):
             raise RuntimeError(
                 f"Conflict: {dest_path} already exists with schema {dest_table.schema}, "
                 "expected RAW_SCHEMA. Refusing to overwrite; investigate before "

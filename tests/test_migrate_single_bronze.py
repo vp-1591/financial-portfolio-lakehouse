@@ -29,6 +29,7 @@ import pytest
 from deltalake import DeltaTable, write_deltalake
 
 import pipeline.migrations.migrate_single_bronze as mod
+from pipeline.migrations.migrate_raw_account_id import _OLD_RAW_SCHEMA
 from pipeline.migrations.migrate_single_bronze import (
     delete_broker_sources,
     merge_broker,
@@ -64,6 +65,27 @@ def _raw_table(rows: list[dict[str, Any]]) -> pa.Table:
         }
     )
     return table.cast(RAW_SCHEMA)
+
+
+def _legacy_raw_table(rows: list[dict[str, Any]]) -> pa.Table:
+    """Build a pre-5-1 raw table (``source_file`` instead of ``account_id``)."""
+    table = pa.table(
+        {
+            "fetched_at": pa.array([r["fetched_at"] for r in rows], type=_TS),
+            "broker": pa.array([r["broker"] for r in rows], type=pa.string()),
+            "source": pa.array([r["source"] for r in rows], type=pa.string()),
+            "payload": pa.array(
+                [r.get("payload", b"\x01") for r in rows], type=pa.binary()
+            ),
+            "payload_hash": pa.array(
+                [r["payload_hash"] for r in rows], type=pa.string()
+            ),
+            "source_file": pa.array(
+                [r.get("source_file") for r in rows], type=pa.string()
+            ),
+        }
+    )
+    return table.cast(_OLD_RAW_SCHEMA)
 
 
 def _write(path: Path, table: pa.Table) -> None:
@@ -496,6 +518,71 @@ def test_merge_destination_schema_conflict_raises(tmp_path: Path) -> None:
 
     # The conflicting destination was not clobbered.
     assert "unexpected" in _read(dest).column_names
+
+
+def test_merge_legacy_schema_sources_are_verified(tmp_path: Path) -> None:
+    """Prod's per-layer tables predate 5-1: merging them as-is is valid.
+
+    The merged table keeps the legacy ``source_file`` layout; the follow-up
+    ``migrate_raw_account_id`` run rewrites it to ``RAW_SCHEMA``.
+    """
+    snap, events, dest = _broker_paths(tmp_path, "xtb")
+    _write(
+        Path(snap),
+        _legacy_raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "XTB",
+                    "source": "XTB_REPORT",
+                    "payload_hash": "h1",
+                    "source_file": "PLN_123_20240101_20240201.xlsx",
+                }
+            ]
+        ),
+    )
+
+    report = merge_broker("xtb", (snap, events), dest, {})
+
+    assert report.verified is True
+    assert "source_file" in _read(dest).column_names
+    assert "account_id" not in _read(dest).column_names
+
+
+def test_merge_destination_with_legacy_schema_is_not_a_conflict(
+    tmp_path: Path,
+) -> None:
+    snap, events, dest = _broker_paths(tmp_path, "ibkr")
+    row = {
+        "fetched_at": _t(1),
+        "broker": "IBKR",
+        "source": "flex",
+        "payload_hash": "h1",
+        "source_file": "q.xml",
+    }
+    _write(Path(snap), _legacy_raw_table([row]))
+    _write(Path(dest), _legacy_raw_table([row]))
+
+    report = merge_broker("ibkr", (snap, events), dest, {})
+
+    assert report.verified is True
+
+
+def test_verify_merged_table_rejects_unknown_schema(tmp_path: Path) -> None:
+    dest = str(tmp_path / "ibkr")
+    bad = _raw_table(
+        [
+            {
+                "fetched_at": _t(1),
+                "broker": "IBKR",
+                "source": "flex",
+                "payload_hash": "h1",
+            }
+        ]
+    ).append_column("unexpected", pa.array(["x"], type=pa.string()))
+    _write(Path(dest), bad)
+
+    assert mod.verify_merged_table(dest, {}, expected_rows=1) is False
 
 
 def test_merge_verification_failure_refuses_delete(monkeypatch, tmp_path: Path) -> None:
