@@ -417,6 +417,36 @@ def test_stage_upload_skips_objects_already_uploaded() -> None:
     assert len(client.uploads) == 1
 
 
+def test_stage_upload_fresh_destination_version_zero() -> None:
+    """A fresh destination starts at version 0, so the rebuilt commit's name
+    collides with the staged commit's.  The rebuilt commit (not an unlinked
+    empty shell) must survive and be uploaded -- regression: unlinking the
+    staged commit AFTER the rebuild deleted the file and crashed the upload."""
+    import json
+
+    client = _RecordingS3()
+
+    mod._stage_and_upload(
+        client,
+        "s3://test-bucket/raw/trading212",
+        _new_frame(),
+        next_version=0,
+        stale_paths=[],
+    )
+
+    commit_key = "raw/trading212/_delta_log/00000000000000000000.json"
+    assert commit_key in client.uploads
+    actions = [
+        json.loads(line)
+        for line in client.uploads[commit_key].decode("utf-8").splitlines()
+        if line.strip()
+    ]
+    # A real create commit: schema metaData plus the data add, no removes.
+    assert len([a for a in actions if "metaData" in a]) == 1
+    assert len([a for a in actions if "add" in a]) == 1
+    assert [a for a in actions if "remove" in a] == []
+
+
 def test_migrate_verification_failure_raises(monkeypatch, tmp_path: Path) -> None:
     path = tmp_path / "ibkr"
     _write(

@@ -240,6 +240,10 @@ def _stage_and_upload(
             for line in staged_commit.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+        # Unlink before rebuilding: for a FRESH destination next_version is 0,
+        # making the rebuilt commit's name identical to the staged commit's --
+        # unlinking afterwards would delete the rebuilt commit itself.
+        staged_commit.unlink()
         now_ms = int(time.time() * 1000)
         actions.extend(
             {
@@ -257,7 +261,6 @@ def _stage_and_upload(
             "".join(json.dumps(action) + "\n" for action in actions),
             encoding="utf-8",
         )
-        staged_commit.unlink()
 
         data_files = sorted(local.rglob("*.parquet"))
         for path in [*data_files, commit]:
