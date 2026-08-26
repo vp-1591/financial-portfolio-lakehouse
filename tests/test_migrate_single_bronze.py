@@ -625,6 +625,151 @@ def test_merge_verification_failure_refuses_delete(monkeypatch, tmp_path: Path) 
     assert _read(events).num_rows == 1
 
 
+def test_merge_s3_destination_requires_client(monkeypatch, tmp_path: Path) -> None:
+    snap, events, _ = _broker_paths(tmp_path, "ibkr")
+    s3_dest = "s3://test-bucket/raw/ibkr"
+    monkeypatch.setattr(mod, "_path_exists", lambda path, opts: False)
+    _write(
+        Path(snap),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "IBKR",
+                    "source": "flex",
+                    "payload_hash": "h1",
+                }
+            ]
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="(?i)s3 client is required"):
+        merge_broker("ibkr", (snap, events), s3_dest, {})
+
+
+def test_merge_s3_destination_uses_staged_upload(monkeypatch, tmp_path: Path) -> None:
+    """S3 destinations go through the staged boto3 rewrite (delta-rs' S3
+    uploader aborts sustained uploads after a 180s retry budget), carrying
+    the destination's live files as stale paths and continuing its version
+    history; a fresh destination starts at version 0 with nothing stale."""
+    import polars as pl
+
+    snap, events, _ = _broker_paths(tmp_path, "ibkr")
+    for hour, source, payload_hash in ((1, "flex", "h1"), (2, "flex_events", "h2")):
+        _write(
+            Path(snap if source == "flex" else events),
+            _raw_table(
+                [
+                    {
+                        "fetched_at": _t(hour),
+                        "broker": "IBKR",
+                        "source": source,
+                        "payload_hash": payload_hash,
+                    }
+                ]
+            ),
+        )
+
+    recorded: dict[str, object] = {}
+    sentinel_client = object()
+    monkeypatch.setattr(mod, "_path_exists", lambda path, opts: False)
+
+    def _fake_rewrite(
+        client: object,
+        table_path: str,
+        new_frame: pl.DataFrame,
+        storage_opts: dict[str, str],
+        *,
+        next_version: int,
+        stale_paths: list[str],
+    ) -> None:
+        recorded["client"] = client
+        recorded["table_path"] = table_path
+        recorded["rows"] = new_frame.height
+        recorded["next_version"] = next_version
+        recorded["stale_paths"] = stale_paths
+
+    monkeypatch.setattr(mod, "_rewrite_table", _fake_rewrite)
+    # The remote write is faked; verification must not hit S3.
+    monkeypatch.setattr(mod, "verify_merged_table", lambda *a, **k: True)
+
+    report = merge_broker(
+        "ibkr", (snap, events), "s3://test-bucket/raw/ibkr", {}, client=sentinel_client
+    )
+
+    assert report.verified is True
+    assert recorded["client"] is sentinel_client
+    assert recorded["table_path"] == "s3://test-bucket/raw/ibkr"
+    assert recorded["rows"] == 2
+    assert recorded["next_version"] == 0
+    assert recorded["stale_paths"] == []
+
+
+def test_merge_s3_existing_destination_carries_stale_paths_and_version(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Re-running against an existing S3 destination removes its live files
+    in the rebuilt commit and continues from its current version."""
+    import polars as pl
+
+    class _FakeDestDeltaTable:
+        def to_pyarrow_table(self) -> pa.Table:
+            return _raw_table([]).slice(0, 0)
+
+        def get_add_actions(self, flatten: bool) -> Any:
+            assert flatten is True
+            return pa.table({"path": ["old-a.parquet", "old-b.parquet"]})
+
+        def version(self) -> int:
+            return 4
+
+    monkeypatch.setattr(
+        mod, "_path_exists", lambda path, opts: path.startswith("s3://")
+    )
+    monkeypatch.setattr(mod, "DeltaTable", lambda *a, **k: _FakeDestDeltaTable())
+    snap, events, _ = _broker_paths(tmp_path, "ibkr")
+    _write(
+        Path(snap),
+        _raw_table(
+            [
+                {
+                    "fetched_at": _t(1),
+                    "broker": "IBKR",
+                    "source": "flex",
+                    "payload_hash": "h1",
+                }
+            ]
+        ),
+    )
+
+    recorded: dict[str, object] = {}
+
+    def _fake_rewrite(
+        client: object,
+        table_path: str,
+        new_frame: pl.DataFrame,
+        storage_opts: dict[str, str],
+        *,
+        next_version: int,
+        stale_paths: list[str],
+    ) -> None:
+        recorded["next_version"] = next_version
+        recorded["stale_paths"] = stale_paths
+
+    monkeypatch.setattr(mod, "_rewrite_table", _fake_rewrite)
+
+    merge_broker(
+        "ibkr",
+        (snap, events),
+        "s3://test-bucket/raw/ibkr",
+        {},
+        client=object(),
+    )
+
+    assert recorded["next_version"] == 5
+    assert recorded["stale_paths"] == ["old-a.parquet", "old-b.parquet"]
+
+
 def test_merge_propagates_non_notfound_errors(monkeypatch, tmp_path: Path) -> None:
     """An auth/region/permission error opening an existing table is NOT
     swallowed as 'absent' (only TableNotFoundError is) -- it propagates so
@@ -833,6 +978,7 @@ def test_run_migration_merges_and_deletes_sources(monkeypatch, tmp_path: Path) -
         dest_path: str,
         storage_opts: dict[str, str],
         *,
+        client: Any = None,
         dry_run: bool = False,
     ) -> mod.MergeReport:
         captured.append((broker, source_paths, dest_path))
