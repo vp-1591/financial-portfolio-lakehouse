@@ -59,6 +59,8 @@ Start with `SELECT *` to discover table and column names — don't guess them:
 
 When a table schema changes (column types, added/removed columns), create a migration script under `pipeline/migrations/` that rewrites the existing Delta table to match the new schema. This ensures the deploy can succeed against pre-existing tables so that quality checks don't flag mismatches between the expected and actual schema.
 
+Migrations are ephemeral: once a migration has been applied to prod (i.e. a prod tag containing it exists), delete the script together with its test file and any runbook docs in the next PR. Git history is the archive — do not keep applied migrations around as "historical artifacts".
+
 ## Deploy logs
 
 When a staging deploy fails, the application error (Python tracebacks) is in the "Print container logs on failure". Check the `=== Container logs: <connector> ===` sections.
